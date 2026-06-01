@@ -34,6 +34,11 @@ class Container:
         self._data_shield = None
         self._scheduler = None
         self._ged_watcher = None
+        self._chunking_router = None
+        self._metadata_extractor = None
+        self._quality_validator = None
+        self._pii_detector = None
+        self._quarantine = None
 
     async def startup(self):
         logger.info("Initialisation des adapters...")
@@ -118,8 +123,21 @@ class Container:
         from core.services.query_dispatcher import QueryDispatcher
         from core.services.ged_indexer import GEDIndexer
         from core.services.data_shield import DataShield
+        from core.services.chunking.router import ChunkingRouter
+        from core.services.metadata_extractor import MetadataExtractor
+        from core.services.quality_validator import QualityValidator
+        from core.services.pii_detector import PIIDetector
+        from adapters.registry.quarantine_adapter import QuarantineAdapter
 
         self._data_shield = DataShield()
+        self._chunking_router = ChunkingRouter(
+            chunk_size=settings.chunk_size,
+            chunk_overlap=settings.chunk_overlap,
+        )
+        self._metadata_extractor = MetadataExtractor(llm=self._llm_haiku)
+        self._quality_validator = QualityValidator()
+        self._pii_detector = PIIDetector()
+        self._quarantine = QuarantineAdapter()
         self._rag_engine = RAGEngine(
             vector_store=self._vector_store,
             sparse_search=self._sparse_search,
@@ -140,8 +158,11 @@ class Container:
             registry=self._doc_registry,
             pdf_parser=self._pdf_parser,
             docx_parser=self._docx_parser,
-            chunk_size=settings.chunk_size,
-            chunk_overlap=settings.chunk_overlap,
+            chunking_router=self._chunking_router,
+            metadata_extractor=self._metadata_extractor,
+            quality_validator=self._quality_validator,
+            pii_detector=self._pii_detector,
+            quarantine=self._quarantine,
         )
 
     async def _start_jobs(self):
@@ -210,3 +231,7 @@ class Container:
     @property
     def docx_parser(self):
         return self._docx_parser
+
+    @property
+    def quarantine(self):
+        return self._quarantine

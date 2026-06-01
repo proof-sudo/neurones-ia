@@ -246,6 +246,57 @@ async def _index_file(ged_indexer, file_path: Path, doc_type: DocumentType):
         logger.error("Erreur indexation %s : %s", file_path.name, e)
 
 
+# ── GET /ged/quarantine ───────────────────────────────────────────────────────
+
+@router.get("/ged/quarantine")
+async def list_quarantine(request: Request):
+    """Fichiers rejetés par le validateur qualité — en attente de correction."""
+    quarantine = _container(request).quarantine
+    entries = await quarantine.list_all()
+    return {
+        "quarantine": [
+            {
+                "id": e.id,
+                "filename": Path(e.file_path).name,
+                "file_path": e.file_path,
+                "doc_type": e.doc_type,
+                "reason": e.reason,
+                "quarantined_at": e.quarantined_at.isoformat(),
+                "retry_count": e.retry_count,
+                "file_size_bytes": e.file_size_bytes,
+                "text_length": e.text_length,
+            }
+            for e in entries
+        ],
+        "total": len(entries),
+    }
+
+
+# ── POST /ged/quarantine/retry ─────────────────────────────────────────────────
+
+class RetryRequest(BaseModel):
+    file_path: str
+
+
+@router.post("/ged/quarantine/retry")
+async def retry_quarantine(
+    body: RetryRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    """Retente l'indexation d'un fichier en quarantaine."""
+    path = Path(body.file_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Fichier introuvable sur le disque")
+
+    parts = path.parts
+    folder_name = next((p for p in parts if p in _TYPE_MAP), None)
+    doc_type = _TYPE_MAP.get(folder_name, {}).get("doc_type", DocumentType.UNKNOWN) if folder_name else DocumentType.UNKNOWN
+    ged_indexer = _container(request).ged_indexer
+    background_tasks.add_task(_index_file, ged_indexer, path, doc_type)
+    return {"status": "retrying", "file_path": body.file_path}
+
+
 # ── DELETE /ged/files/{doc_id} ────────────────────────────────────────────────
 
 @router.delete("/ged/files/{doc_id}")
@@ -260,12 +311,14 @@ async def delete_file(doc_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Document introuvable")
 
     file_path = Path(entry.file_path)
-    await ged_indexer.remove(file_path)
+    # RGPD : hard delete pour les CV (purge complète du registre, pas soft-delete)
+    hard_delete = entry.doc_type.value == "cv"
+    await ged_indexer.remove(file_path, hard_delete=hard_delete)
 
     if file_path.exists():
         file_path.unlink()
 
-    logger.info("Fichier supprimé de la GED : %s", file_path.name)
+    logger.info("Fichier supprimé de la GED : %s (hard_delete=%s)", file_path.name, hard_delete)
     return {"deleted": True, "doc_id": doc_id, "filename": file_path.name}
 
 

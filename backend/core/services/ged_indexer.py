@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import json
 import logging
 import uuid
 from datetime import datetime
@@ -11,16 +12,29 @@ from core.ports.embedder import Embedder
 from core.ports.document_registry import DocumentRegistry
 from core.ports.document_parser import DocumentParser
 from core.domain.document import Chunk, Document, GEDEntry, DocumentType, DocumentMetadata
+from core.services.chunking.router import ChunkingRouter
+from core.services.metadata_extractor import MetadataExtractor
+from core.services.quality_validator import QualityValidator
+from core.services.pii_detector import PIIDetector
 
 logger = logging.getLogger(__name__)
 
-_EMBED_BATCH = 96  # Safe batch size pour OpenAI (évite rate-limit + erreur 400)
+_EMBED_BATCH = 96
 
 
 class GEDIndexer:
     """
     Pipeline d'indexation incrémentale de la GED.
-    Seul le fichier dont le hash a changé est re-traité.
+
+    Ordre d'exécution :
+      1. Hash check (skip si inchangé)
+      2. Extraction texte
+      3. Validation qualité → quarantaine si rejeté
+      4. Extraction métadonnées via LLM (Haiku, tool_use)
+      5. Détection PII (CV uniquement)
+      6. Chunking adapté au type (ChunkingRouter)
+      7. Embedding + upsert ChromaDB
+      8. BM25 + registre SQLite
     """
 
     def __init__(
@@ -31,6 +45,11 @@ class GEDIndexer:
         registry: DocumentRegistry,
         pdf_parser: DocumentParser,
         docx_parser: DocumentParser,
+        chunking_router: ChunkingRouter,
+        metadata_extractor: MetadataExtractor,
+        quality_validator: QualityValidator,
+        pii_detector: PIIDetector,
+        quarantine,  # QuarantineAdapter — import circulaire évité
         chunk_size: int = 600,
         chunk_overlap: int = 60,
     ):
@@ -39,29 +58,53 @@ class GEDIndexer:
         self._embedder = embedder
         self._registry = registry
         self._parsers: list[DocumentParser] = [pdf_parser, docx_parser]
-        self._chunk_size = chunk_size
-        self._chunk_overlap = chunk_overlap
+        self._chunking_router = chunking_router
+        self._metadata_extractor = metadata_extractor
+        self._quality_validator = quality_validator
+        self._pii_detector = pii_detector
+        self._quarantine = quarantine
 
     async def process(self, file_path: Path, doc_type: DocumentType = DocumentType.UNKNOWN) -> bool:
         """
         Indexe un fichier si son contenu a changé depuis la dernière indexation.
-        Retourne True si le fichier a été (re-)indexé, False si ignoré (hash identique).
+        Retourne True si indexé, False si ignoré (hash identique ou quarantaine).
         """
         file_str = str(file_path)
 
-        # Hash en thread (IO synchrone, ne pas bloquer la boucle)
+        # ── 1. Hash check ──────────────────────────────────────────────────
         current_hash = await asyncio.to_thread(self._compute_hash_sync, file_path)
-
         existing = await self._registry.get_entry(file_str)
         if existing and existing.hash_sha256 == current_hash:
             logger.debug("Fichier inchangé, skip : %s", file_path.name)
             return False
 
+        # ── 2. Extraction texte ────────────────────────────────────────────
         text = await self._parse(file_path)
-        if not text.strip():
-            logger.warning("Aucun texte extrait de %s", file_path.name)
+
+        # ── 3. Validation qualité ──────────────────────────────────────────
+        validation = self._quality_validator.validate(text, file_path)
+        if not validation.is_valid:
+            file_size = self._file_size(file_path)
+            await self._quarantine.add(
+                file_path=file_str,
+                doc_type=doc_type.value,
+                reason=validation.reason,
+                file_size_bytes=file_size,
+                text_length=len(text),
+            )
             return False
 
+        if validation.warnings:
+            for w in validation.warnings:
+                logger.warning("QualityValidator [%s] : %s", file_path.name, w)
+
+        # ── 4. Extraction métadonnées ──────────────────────────────────────
+        extracted_fields = await self._metadata_extractor.extract(text, doc_type)
+
+        # ── 5. Détection PII ───────────────────────────────────────────────
+        pii_report = self._pii_detector.detect(text) if doc_type == DocumentType.CV else None
+
+        # ── 6. Construction des métadonnées du document ───────────────────
         if existing:
             await self._vector_store.delete_by_doc_id(existing.doc_id)
             self._sparse_search.remove(existing.vector_ids)
@@ -74,13 +117,18 @@ class GEDIndexer:
             filename=file_path.name,
             doc_type=doc_type,
             source_path=file_str,
+            extracted_fields=extracted_fields,
+            contains_pii=pii_report.has_pii if pii_report else False,
+            pii_categories=pii_report.categories if pii_report else [],
         )
-        chunks = self._chunk_text(text, doc_id, metadata)
+
+        # ── 7. Chunking adapté au type ─────────────────────────────────────
+        chunks = self._chunking_router.chunk(text, doc_id, metadata)
         if not chunks:
             logger.warning("Aucun chunk généré pour %s", file_path.name)
             return False
 
-        # Embeddings en batches pour éviter rate-limit OpenAI
+        # ── 8. Embeddings par batch ────────────────────────────────────────
         embeddings: list[list[float]] = []
         contents = [c.content for c in chunks]
         for i in range(0, len(contents), _EMBED_BATCH):
@@ -90,7 +138,7 @@ class GEDIndexer:
 
         await self._vector_store.upsert(chunks, embeddings)
 
-        # BM25 rebuild en thread (synchrone, potentiellement lent avec gros corpus)
+        # ── 9. BM25 + registre ─────────────────────────────────────────────
         bm25_chunks = [(c.chunk_id, c.content) for c in chunks]
         await asyncio.to_thread(self._sparse_search.index, bm25_chunks)
         await asyncio.to_thread(self._sparse_search.save)
@@ -106,28 +154,51 @@ class GEDIndexer:
         )
         await self._registry.upsert_entry(entry)
 
-        logger.info("Indexé : %s → %d chunks (doc_id=%s)", file_path.name, len(chunks), doc_id)
+        # Retirer de la quarantaine si le fichier y était (ex : retry après correction)
+        await self._quarantine.remove(file_str)
+
+        pii_note = f" [PII: {','.join(pii_report.categories)}]" if pii_report and pii_report.has_pii else ""
+        logger.info(
+            "Indexé : %s → %d chunks (type=%s, doc_id=%s)%s",
+            file_path.name, len(chunks), doc_type.value, doc_id, pii_note,
+        )
         return True
 
-    async def remove(self, file_path: Path) -> None:
-        """Supprime un fichier du RAG (suite à suppression dans la GED)."""
+    async def remove(self, file_path: Path, hard_delete: bool = False) -> None:
+        """
+        Supprime un fichier du RAG.
+        hard_delete=True pour les CV (RGPD : purge complète du registre, pas soft-delete).
+        """
         file_str = str(file_path)
         entry = await self._registry.get_entry(file_str)
         if entry:
             await self._vector_store.delete_by_doc_id(entry.doc_id)
             self._sparse_search.remove(entry.vector_ids)
             await asyncio.to_thread(self._sparse_search.save)
-            await self._registry.mark_deleted(file_str)
-            logger.info("Supprimé du RAG : %s", file_path.name)
+            if hard_delete:
+                await self._registry.hard_delete(file_str)
+                logger.info("RGPD — Purge complète : %s", file_path.name)
+            else:
+                await self._registry.mark_deleted(file_str)
+                logger.info("Supprimé du RAG : %s", file_path.name)
+        await self._quarantine.remove(file_str)
+
+    # ── Helpers ────────────────────────────────────────────────────────────
 
     @staticmethod
     def _compute_hash_sync(file_path: Path) -> str:
-        """Synchrone — à appeler via asyncio.to_thread."""
         h = hashlib.sha256()
         with open(file_path, "rb") as f:
             for block in iter(lambda: f.read(65536), b""):
                 h.update(block)
         return h.hexdigest()
+
+    @staticmethod
+    def _file_size(file_path: Path) -> int:
+        try:
+            return file_path.stat().st_size
+        except OSError:
+            return 0
 
     async def _parse(self, file_path: Path) -> str:
         for parser in self._parsers:
@@ -136,23 +207,3 @@ class GEDIndexer:
         if file_path.suffix == ".txt":
             return file_path.read_text(encoding="utf-8", errors="ignore")
         return ""
-
-    def _chunk_text(self, text: str, doc_id: str, metadata: DocumentMetadata) -> list[Chunk]:
-        words = text.split()
-        if not words:
-            return []
-        chunks = []
-        step = max(1, self._chunk_size - self._chunk_overlap)
-        for i, start in enumerate(range(0, len(words), step)):
-            chunk_words = words[start : start + self._chunk_size]
-            if len(chunk_words) < 20:  # Skip chunks vides ou trop courts
-                continue
-            chunks.append(Chunk(
-                chunk_id=f"{doc_id}_chunk_{i}",
-                doc_id=doc_id,
-                content=" ".join(chunk_words),
-                token_count=len(chunk_words),
-                chunk_index=i,
-                metadata=metadata,
-            ))
-        return chunks

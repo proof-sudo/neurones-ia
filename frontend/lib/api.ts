@@ -314,6 +314,36 @@ export async function deleteGEDFolder(path: string): Promise<void> {
   }
 }
 
+export interface GEDQuarantineEntry {
+  id: number;
+  filename: string;
+  file_path: string;
+  doc_type: string;
+  reason: string;
+  quarantined_at: string;
+  retry_count: number;
+  file_size_bytes: number;
+  text_length: number;
+}
+
+export async function fetchGEDQuarantine(): Promise<{ quarantine: GEDQuarantineEntry[]; total: number }> {
+  const r = await apiFetch(`${API_BASE}/ged/quarantine`);
+  if (!r.ok) throw new Error(`Quarantine error: ${r.status}`);
+  return r.json();
+}
+
+export async function retryGEDQuarantine(filePath: string): Promise<void> {
+  const r = await apiFetch(`${API_BASE}/ged/quarantine/retry`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_path: filePath }),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Retry error: ${r.status}`);
+  }
+}
+
 export async function generateBidStrategy(
   scoringResult: ScoringResult,
   decision: string,

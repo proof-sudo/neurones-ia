@@ -30,6 +30,9 @@ class DocumentMetadata:
     version: Optional[str] = None
     source_path: Optional[str] = None
     tags: list[str] = field(default_factory=list)
+    extracted_fields: dict = field(default_factory=dict)
+    contains_pii: bool = False
+    pii_categories: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -40,6 +43,8 @@ class Chunk:
     token_count: int
     chunk_index: int
     metadata: DocumentMetadata
+    parent_chunk_id: Optional[str] = None
+    is_parent: bool = False
 
 
 @dataclass

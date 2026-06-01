@@ -201,6 +201,20 @@ class OpportunityModel(Base):
     synced_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
+class QuarantineModel(Base):
+    """Fichiers rejetés par le QualityValidator — en attente de correction manuelle."""
+    __tablename__ = "quarantine"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    file_path: Mapped[str] = mapped_column(String, unique=True, index=True)
+    doc_type: Mapped[str] = mapped_column(String(50))
+    reason: Mapped[str] = mapped_column(String(1000))
+    quarantined_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
+    file_size_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    text_length: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class DossierModel(Base):
     """Miroir de neurones.dossier.manager — dossiers commerciaux avec marges."""
     __tablename__ = "dossiers"

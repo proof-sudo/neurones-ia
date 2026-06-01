@@ -1,3 +1,4 @@
+import json
 import logging
 from typing import Optional
 
@@ -41,16 +42,7 @@ class ChromaDBAdapter(VectorStore):
     async def upsert(self, chunks: list[Chunk], embeddings: list[list[float]]) -> None:
         if not chunks:
             return
-        metadatas = [
-            {
-                "doc_id": c.doc_id,
-                "filename": c.metadata.filename,
-                "doc_type": c.metadata.doc_type.value,
-                "client_id": c.metadata.client_id or "",
-                "chunk_index": c.chunk_index,
-            }
-            for c in chunks
-        ]
+        metadatas = [self._build_metadata(c) for c in chunks]
         try:
             self._collection.upsert(
                 ids=[c.chunk_id for c in chunks],
@@ -111,6 +103,31 @@ class ChromaDBAdapter(VectorStore):
             self._collection.delete(ids=results["ids"])
             self._approx_count = max(0, self._approx_count - len(results["ids"]))
             logger.info("Supprimé %d chunks pour doc_id=%s", len(results["ids"]), doc_id)
+
+    @staticmethod
+    def _build_metadata(c: Chunk) -> dict:
+        """
+        Construit le dict de métadonnées ChromaDB.
+        Contrainte ChromaDB : les valeurs doivent être str | int | float | bool.
+        Les listes et dicts extraits sont JSON-sérialisés en str.
+        """
+        meta = {
+            "doc_id": c.doc_id,
+            "filename": c.metadata.filename,
+            "doc_type": c.metadata.doc_type.value,
+            "client_id": c.metadata.client_id or "",
+            "chunk_index": c.chunk_index,
+            "is_parent": c.is_parent,
+            "parent_chunk_id": c.parent_chunk_id or "",
+            "contains_pii": c.metadata.contains_pii,
+        }
+        # Aplatir les champs extraits (scalaires directs, listes → JSON)
+        for key, value in (c.metadata.extracted_fields or {}).items():
+            if isinstance(value, (str, int, float, bool)):
+                meta[f"ef_{key}"] = value
+            elif value is not None:
+                meta[f"ef_{key}"] = json.dumps(value, ensure_ascii=False)
+        return meta
 
     async def get_doc_ids(self) -> list[str]:
         results = self._collection.get(include=["metadatas"])

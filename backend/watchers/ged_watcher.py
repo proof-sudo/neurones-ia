@@ -78,6 +78,7 @@ class GEDWatcher:
         self._handler: _GEDEventHandler | None = None
 
     def start(self):
+        self._ged_path.mkdir(parents=True, exist_ok=True)
         # Capturer la boucle ICI (dans start(), pas dans __init__) — la boucle est running
         loop = asyncio.get_running_loop()
         self._handler = _GEDEventHandler(self._ged_indexer, loop)

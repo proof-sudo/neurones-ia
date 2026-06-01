@@ -3,13 +3,14 @@ import { useState, useEffect, useRef, useCallback, DragEvent } from "react";
 import {
   FolderOpen, Folder, FileText, Upload, Trash2, Plus, RefreshCw,
   ChevronRight, ChevronDown, File, Search, X, AlertCircle, CheckCircle2,
-  FilePlus, AlertTriangle,
+  FilePlus, AlertTriangle, ShieldAlert, RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   fetchGEDTree, fetchGEDFiles, fetchGEDStatus, uploadGEDFile,
   deleteGEDFile, createGEDFolder, reindexGED, deleteGEDFolder,
-  type GEDCategory, type GEDFile, type GEDFolder, type GEDStatus,
+  fetchGEDQuarantine, retryGEDQuarantine,
+  type GEDCategory, type GEDFile, type GEDFolder, type GEDStatus, type GEDQuarantineEntry,
 } from "@/lib/api";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -386,6 +387,58 @@ function CreateFolderModal({ categories, initialParent, onClose, onCreated }: {
   );
 }
 
+// ── QuarantinePanel ───────────────────────────────────────────────────────────
+
+function QuarantinePanel({ entries, onRetry }: { entries: GEDQuarantineEntry[]; onRetry: (e: GEDQuarantineEntry) => Promise<void> }) {
+  const [retrying, setRetrying] = useState<number | null>(null);
+
+  if (entries.length === 0) return null;
+
+  const handleRetry = async (entry: GEDQuarantineEntry) => {
+    setRetrying(entry.id);
+    try { await onRetry(entry); } finally { setRetrying(null); }
+  };
+
+  return (
+    <div className="rounded-2xl overflow-hidden border border-amber-200" style={{ background: "rgba(255,251,235,0.9)" }}>
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-amber-200">
+        <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0" />
+        <span className="text-sm font-semibold text-amber-800">
+          {entries.length} fichier{entries.length > 1 ? "s" : ""} en quarantaine
+        </span>
+        <span className="text-xs text-amber-500 ml-1">— rejetés par le validateur qualité</span>
+      </div>
+      <div className="flex flex-col divide-y divide-amber-100">
+        {entries.map((e) => (
+          <div key={e.id} className="flex items-start gap-3 px-4 py-3">
+            <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-slate-800 truncate">{e.filename}</p>
+              <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">{e.reason}</p>
+              <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-400">
+                <span>{new Date(e.quarantined_at).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" })}</span>
+                {e.retry_count > 0 && <span>{e.retry_count} tentative{e.retry_count > 1 ? "s" : ""}</span>}
+                {e.text_length > 0 && <span>{e.text_length} chars extraits</span>}
+                {e.file_size_bytes > 0 && <span>{(e.file_size_bytes / 1024).toFixed(0)} Ko</span>}
+              </div>
+            </div>
+            <button
+              onClick={() => handleRetry(e)}
+              disabled={retrying === e.id}
+              className="shrink-0 flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-amber-300 text-amber-700 hover:bg-amber-100 transition-colors font-medium disabled:opacity-50"
+            >
+              {retrying === e.id
+                ? <RefreshCw className="w-3 h-3 animate-spin" />
+                : <RotateCcw className="w-3 h-3" />}
+              Réessayer
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 const PAGE_BG = "linear-gradient(160deg, #eef0f8 0%, #e8ecf5 50%, #edf0f8 100%)";
@@ -405,6 +458,7 @@ export default function GEDPage() {
   const [categories, setCategories] = useState<GEDCategory[]>([]);
   const [files, setFiles] = useState<GEDFile[]>([]);
   const [status, setStatus] = useState<GEDStatus | null>(null);
+  const [quarantine, setQuarantine] = useState<GEDQuarantineEntry[]>([]);
   const [selectedFolder, setSelectedFolder] = useState("cvs");
   const [search, setSearch] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -419,9 +473,14 @@ export default function GEDPage() {
 
   const loadTree = useCallback(async () => {
     try {
-      const [treeData, statusData] = await Promise.all([fetchGEDTree(), fetchGEDStatus()]);
+      const [treeData, statusData, quarantineData] = await Promise.all([
+        fetchGEDTree(),
+        fetchGEDStatus(),
+        fetchGEDQuarantine().catch(() => ({ quarantine: [], total: 0 })),
+      ]);
       setCategories(treeData.categories);
       setStatus(statusData);
+      setQuarantine(quarantineData.quarantine);
     } catch { /* backend may be offline */ }
   }, []);
 
@@ -504,6 +563,17 @@ export default function GEDPage() {
     setDeletingFolder(null);
   };
 
+  const handleRetryQuarantine = async (entry: GEDQuarantineEntry) => {
+    try {
+      await retryGEDQuarantine(entry.file_path);
+      setUploadMsg({ type: "ok", text: `Réindexation lancée pour ${entry.filename}…` });
+      startPolling(selectedFolder, search);
+    } catch (e: unknown) {
+      setUploadMsg({ type: "err", text: e instanceof Error ? e.message : "Erreur réessai" });
+    }
+    setTimeout(() => setUploadMsg(null), 5000);
+  };
+
   const selectedLabel = categories.find((c) => selectedFolder.startsWith(c.name))?.label ?? selectedFolder;
   const filteredFiles = files.filter((f) => !search || f.filename.toLowerCase().includes(search.toLowerCase()));
 
@@ -517,6 +587,12 @@ export default function GEDPage() {
             {status
               ? `${status.total_indexed} indexé${status.total_indexed !== 1 ? "s" : ""} · ${status.total_on_disk} sur disque · ${fmtDate(status.last_indexed_at)}`
               : "Chargement…"}
+            {quarantine.length > 0 && (
+              <span className="ml-2 inline-flex items-center gap-1 text-amber-600 font-semibold">
+                <ShieldAlert className="w-3 h-3" />
+                {quarantine.length} en quarantaine
+              </span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -668,6 +744,9 @@ export default function GEDPage() {
                 <strong className="text-slate-600">{selectedLabel}</strong>
               </p>
             </div>
+
+            {/* Quarantine panel */}
+            <QuarantinePanel entries={quarantine} onRetry={handleRetryQuarantine} />
 
             {/* File list */}
             {loadingFiles ? (
