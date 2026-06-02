@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import select, delete
@@ -33,6 +33,9 @@ class QuarantineAdapter:
         file_size_bytes: int = 0,
         text_length: int = 0,
     ) -> None:
+        # Normaliser en chemin absolu résolu : un même fichier physique enregistré
+        # via des chemins différents (absolu vs relatif) ne crée plus de doublon.
+        file_path = str(Path(file_path).resolve())
         async with AsyncSessionLocal() as session:
             stmt = (
                 insert(QuarantineModel)
@@ -85,3 +88,34 @@ class QuarantineAdapter:
                 delete(QuarantineModel).where(QuarantineModel.file_path == file_path)
             )
             await session.commit()
+
+    async def remove_resolved(self, file_path: str) -> int:
+        """Supprime TOUTES les entrées dont le chemin résout vers le même fichier
+        physique (gère les doublons absolu/relatif). Retourne le nb supprimé."""
+        target = str(Path(file_path).resolve())
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(select(QuarantineModel))
+            ids = [r.id for r in result.scalars().all() if str(Path(r.file_path).resolve()) == target]
+            if ids:
+                await session.execute(delete(QuarantineModel).where(QuarantineModel.id.in_(ids)))
+                await session.commit()
+        return len(ids)
+
+    async def purge_expired(self, retention_days: int) -> list[str]:
+        """Supprime les entrées plus vieilles que retention_days (dernière tentative).
+        Retourne les file_path concernés pour que l'appelant supprime aussi les fichiers.
+        retention_days <= 0 → désactivé."""
+        if retention_days <= 0:
+            return []
+        cutoff = datetime.utcnow() - timedelta(days=retention_days)
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(
+                select(QuarantineModel).where(QuarantineModel.quarantined_at < cutoff)
+            )
+            paths = [r.file_path for r in result.scalars().all()]
+            if paths:
+                await session.execute(
+                    delete(QuarantineModel).where(QuarantineModel.quarantined_at < cutoff)
+                )
+                await session.commit()
+        return paths

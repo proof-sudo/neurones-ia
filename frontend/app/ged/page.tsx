@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import {
   fetchGEDTree, fetchGEDFiles, fetchGEDStatus, uploadGEDFile,
   deleteGEDFile, createGEDFolder, reindexGED, deleteGEDFolder,
-  fetchGEDQuarantine, retryGEDQuarantine,
+  fetchGEDQuarantine, retryGEDQuarantine, deleteGEDQuarantine,
   fetchGEDDocumentChunks, fetchGEDIndexHealth, searchGEDDebug, searchGEDProd,
   type GEDCategory, type GEDFile, type GEDFolder, type GEDStatus, type GEDQuarantineEntry,
   type GEDDocumentChunks, type GEDChunk, type GEDIndexHealth, type GEDSearchHit, type GEDProdHit,
@@ -397,15 +397,80 @@ function CreateFolderModal({ categories, initialParent, onClose, onCreated }: {
 
 // ── QuarantinePanel ───────────────────────────────────────────────────────────
 
-function QuarantinePanel({ entries, onRetry }: { entries: GEDQuarantineEntry[]; onRetry: (e: GEDQuarantineEntry) => Promise<void> }) {
-  const [retrying, setRetrying] = useState<number | null>(null);
+function QuarantineRow({ e, retentionDays, onRetry, onDelete }: {
+  e: GEDQuarantineEntry; retentionDays: number;
+  onRetry: (e: GEDQuarantineEntry) => Promise<void>;
+  onDelete: (e: GEDQuarantineEntry) => Promise<void>;
+}) {
+  const [retrying, setRetrying] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirming, setConfirming] = useState(false);
 
+  // Jours restants avant auto-suppression (depuis la dernière tentative)
+  const daysLeft = retentionDays > 0
+    ? Math.max(0, retentionDays - Math.floor((Date.now() - new Date(e.quarantined_at).getTime()) / 86400000))
+    : null;
+
+  return (
+    <div className="flex items-start gap-3 px-4 py-3">
+      <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-slate-800 truncate">{e.filename}</p>
+        <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">{e.reason}</p>
+        <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-400">
+          <span>{new Date(e.quarantined_at).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" })}</span>
+          {e.retry_count > 0 && <span>{e.retry_count} tentative{e.retry_count > 1 ? "s" : ""}</span>}
+          {e.text_length > 0 && <span>{e.text_length} chars extraits</span>}
+          {e.file_size_bytes > 0 && <span>{(e.file_size_bytes / 1024).toFixed(0)} Ko</span>}
+          {daysLeft !== null && (
+            <span className={cn(daysLeft <= 1 ? "text-red-500 font-medium" : "text-slate-400")}>
+              suppr. auto dans {daysLeft} j
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-1.5 shrink-0">
+        <button
+          onClick={async () => { setRetrying(true); try { await onRetry(e); } finally { setRetrying(false); } }}
+          disabled={retrying || deleting}
+          className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-amber-300 text-amber-700 hover:bg-amber-100 transition-colors font-medium disabled:opacity-50"
+        >
+          {retrying ? <RefreshCw className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+          Réessayer
+        </button>
+        {confirming ? (
+          <>
+            <button
+              onClick={async () => { setDeleting(true); try { await onDelete(e); } finally { setDeleting(false); setConfirming(false); } }}
+              disabled={deleting}
+              className="text-xs px-2 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors font-medium disabled:opacity-50"
+            >
+              {deleting ? <RefreshCw className="w-3 h-3 animate-spin" /> : "Confirmer"}
+            </button>
+            <button onClick={() => setConfirming(false)} className="text-xs px-2 py-1.5 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors">
+              Annuler
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => setConfirming(true)}
+            className="p-1.5 rounded-lg text-amber-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+            title="Supprimer le fichier (non indexable)"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function QuarantinePanel({ entries, retentionDays, onRetry, onDelete }: {
+  entries: GEDQuarantineEntry[]; retentionDays: number;
+  onRetry: (e: GEDQuarantineEntry) => Promise<void>;
+  onDelete: (e: GEDQuarantineEntry) => Promise<void>;
+}) {
   if (entries.length === 0) return null;
-
-  const handleRetry = async (entry: GEDQuarantineEntry) => {
-    setRetrying(entry.id);
-    try { await onRetry(entry); } finally { setRetrying(null); }
-  };
 
   return (
     <div className="rounded-2xl overflow-hidden border border-amber-200" style={{ background: "rgba(255,251,235,0.9)" }}>
@@ -415,32 +480,13 @@ function QuarantinePanel({ entries, onRetry }: { entries: GEDQuarantineEntry[]; 
           {entries.length} fichier{entries.length > 1 ? "s" : ""} en quarantaine
         </span>
         <span className="text-xs text-amber-500 ml-1">— rejetés par le validateur qualité</span>
+        {retentionDays > 0 && (
+          <span className="text-[11px] text-amber-500 ml-auto">auto-suppression après {retentionDays} j d&apos;inactivité</span>
+        )}
       </div>
       <div className="flex flex-col divide-y divide-amber-100">
         {entries.map((e) => (
-          <div key={e.id} className="flex items-start gap-3 px-4 py-3">
-            <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-medium text-slate-800 truncate">{e.filename}</p>
-              <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">{e.reason}</p>
-              <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-400">
-                <span>{new Date(e.quarantined_at).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" })}</span>
-                {e.retry_count > 0 && <span>{e.retry_count} tentative{e.retry_count > 1 ? "s" : ""}</span>}
-                {e.text_length > 0 && <span>{e.text_length} chars extraits</span>}
-                {e.file_size_bytes > 0 && <span>{(e.file_size_bytes / 1024).toFixed(0)} Ko</span>}
-              </div>
-            </div>
-            <button
-              onClick={() => handleRetry(e)}
-              disabled={retrying === e.id}
-              className="shrink-0 flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-amber-300 text-amber-700 hover:bg-amber-100 transition-colors font-medium disabled:opacity-50"
-            >
-              {retrying === e.id
-                ? <RefreshCw className="w-3 h-3 animate-spin" />
-                : <RotateCcw className="w-3 h-3" />}
-              Réessayer
-            </button>
-          </div>
+          <QuarantineRow key={e.id} e={e} retentionDays={retentionDays} onRetry={onRetry} onDelete={onDelete} />
         ))}
       </div>
     </div>
@@ -966,6 +1012,7 @@ export default function GEDPage() {
   const [files, setFiles] = useState<GEDFile[]>([]);
   const [status, setStatus] = useState<GEDStatus | null>(null);
   const [quarantine, setQuarantine] = useState<GEDQuarantineEntry[]>([]);
+  const [quarantineRetention, setQuarantineRetention] = useState(0);
   const [selectedFolder, setSelectedFolder] = useState("cvs");
   const [search, setSearch] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -987,11 +1034,12 @@ export default function GEDPage() {
       const [treeData, statusData, quarantineData] = await Promise.all([
         fetchGEDTree(),
         fetchGEDStatus(),
-        fetchGEDQuarantine().catch(() => ({ quarantine: [], total: 0 })),
+        fetchGEDQuarantine().catch(() => ({ quarantine: [], total: 0, retention_days: 0 })),
       ]);
       setCategories(treeData.categories);
       setStatus(statusData);
       setQuarantine(quarantineData.quarantine);
+      setQuarantineRetention(quarantineData.retention_days ?? 0);
       setHealthKey((k) => k + 1);
     } catch { /* backend may be offline */ }
   }, []);
@@ -1082,6 +1130,19 @@ export default function GEDPage() {
       startPolling(selectedFolder, search);
     } catch (e: unknown) {
       setUploadMsg({ type: "err", text: e instanceof Error ? e.message : "Erreur réessai" });
+    }
+    setTimeout(() => setUploadMsg(null), 5000);
+  };
+
+  const handleDeleteQuarantine = async (entry: GEDQuarantineEntry) => {
+    try {
+      await deleteGEDQuarantine(entry.file_path);
+      setQuarantine((prev) => prev.filter((q) => q.id !== entry.id));
+      setUploadMsg({ type: "ok", text: `${entry.filename} supprimé` });
+      await loadTree();
+      await loadFiles(selectedFolder, search);
+    } catch (e: unknown) {
+      setUploadMsg({ type: "err", text: e instanceof Error ? e.message : "Erreur suppression" });
     }
     setTimeout(() => setUploadMsg(null), 5000);
   };
@@ -1301,7 +1362,7 @@ export default function GEDPage() {
             <IndexHealthPanel refreshKey={healthKey} />
 
             {/* Quarantine panel */}
-            <QuarantinePanel entries={quarantine} onRetry={handleRetryQuarantine} />
+            <QuarantinePanel entries={quarantine} retentionDays={quarantineRetention} onRetry={handleRetryQuarantine} onDelete={handleDeleteQuarantine} />
 
             {/* File list */}
             {loadingFiles ? (

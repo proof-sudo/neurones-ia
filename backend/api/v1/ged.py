@@ -432,7 +432,34 @@ async def list_quarantine(request: Request):
             for e in entries
         ],
         "total": len(entries),
+        "retention_days": settings.quarantine_retention_days,
     }
+
+
+# ── DELETE /ged/quarantine ─────────────────────────────────────────────────────
+
+@router.delete("/ged/quarantine")
+async def delete_quarantine(file_path: str, request: Request):
+    """Supprime un fichier en quarantaine : le fichier sur disque + son enregistrement.
+    Utile pour les documents non indexables (ex. PDF scannés sans texte)."""
+    path = Path(file_path)
+    # Sécurité : le fichier doit rester dans la GED
+    try:
+        path.resolve().relative_to(_GED_ROOT.resolve())
+    except (ValueError, RuntimeError):
+        raise HTTPException(status_code=400, detail="Chemin invalide ou hors de la GED")
+
+    quarantine = _container(request).quarantine
+    deleted_file = False
+    if path.exists():
+        try:
+            path.unlink()
+            deleted_file = True
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=f"Suppression impossible : {e}")
+    removed = await quarantine.remove_resolved(file_path)
+    logger.info("Quarantaine supprimée : %s (fichier supprimé=%s, %d entrée(s))", path.name, deleted_file, removed)
+    return {"deleted": True, "file_path": file_path, "file_removed": deleted_file, "entries_removed": removed}
 
 
 # ── POST /ged/quarantine/retry ─────────────────────────────────────────────────

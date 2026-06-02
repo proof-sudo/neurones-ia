@@ -327,7 +327,7 @@ export interface GEDQuarantineEntry {
   text_length: number;
 }
 
-export async function fetchGEDQuarantine(): Promise<{ quarantine: GEDQuarantineEntry[]; total: number }> {
+export async function fetchGEDQuarantine(): Promise<{ quarantine: GEDQuarantineEntry[]; total: number; retention_days: number }> {
   const r = await apiFetch(`${API_BASE}/ged/quarantine`);
   if (!r.ok) throw new Error(`Quarantine error: ${r.status}`);
   return r.json();
@@ -342,6 +342,14 @@ export async function retryGEDQuarantine(filePath: string): Promise<void> {
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));
     throw new Error(err.detail ?? `Retry error: ${r.status}`);
+  }
+}
+
+export async function deleteGEDQuarantine(filePath: string): Promise<void> {
+  const r = await apiFetch(`${API_BASE}/ged/quarantine?file_path=${encodeURIComponent(filePath)}`, { method: "DELETE" });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Delete error: ${r.status}`);
   }
 }
 

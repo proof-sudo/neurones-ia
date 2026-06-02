@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     token_budget_monthly_fcfa: int = 130_000
     token_alert_threshold_pct: int = 80
 
+    # Quarantaine — auto-suppression des fichiers non indexables (ex. PDF scannés
+    # sans texte) après N jours d'inactivité. 0 = désactivé.
+    quarantine_retention_days: int = 7
+
     # Cache
     redis_url: str = "redis://localhost:6379"
     cache_ttl_seconds: int = 3600
