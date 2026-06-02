@@ -344,6 +344,102 @@ export async function retryGEDQuarantine(filePath: string): Promise<void> {
   }
 }
 
+// ── GED — Inspection (chunks, métadonnées, recherche, santé) ──────────────────
+
+export interface GEDChunk {
+  chunk_id: string;
+  chunk_index: number;
+  is_parent: boolean;
+  parent_chunk_id: string | null;
+  word_count: number;
+  char_count: number;
+  content: string;
+}
+
+export interface GEDDocumentChunks {
+  doc_id: string;
+  filename: string;
+  doc_type: string;
+  contains_pii: boolean;
+  chunk_count: number;
+  extracted_fields: Record<string, unknown>;
+  chunks: GEDChunk[];
+}
+
+export async function fetchGEDDocumentChunks(docId: string): Promise<GEDDocumentChunks> {
+  const r = await apiFetch(`${API_BASE}/ged/documents/${docId}/chunks`);
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Chunks error: ${r.status}`);
+  }
+  return r.json();
+}
+
+export interface GEDSearchHit {
+  chunk_id: string;
+  doc_id: string | null;
+  filename: string | null;
+  doc_type: string | null;
+  dense_rank: number | null;
+  dense_score: number | null;
+  sparse_rank: number | null;
+  sparse_score: number | null;
+  rrf_score: number;
+  excerpt: string;
+  word_count: number;
+}
+
+export interface GEDSearchDebug {
+  query: string;
+  doc_type: string | null;
+  top_k: number;
+  dense_hits: number;
+  sparse_hits: number;
+  results: GEDSearchHit[];
+}
+
+export async function searchGEDDebug(query: string, topK = 10, docType?: string): Promise<GEDSearchDebug> {
+  const r = await apiFetch(`${API_BASE}/ged/search-debug`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, top_k: topK, doc_type: docType ?? null }),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Search error: ${r.status}`);
+  }
+  return r.json();
+}
+
+export interface GEDIndexHealth {
+  total_chunks: number;
+  total_documents: number;
+  parent_chunks: number;
+  child_chunks: number;
+  avg_chunks_per_doc: number;
+  avg_words_per_chunk: number;
+  by_doc_type: Record<string, { documents: number; chunks: number }>;
+  per_document: {
+    doc_id: string;
+    filename: string;
+    doc_type: string;
+    chunk_count: number;
+    parent_count: number;
+    avg_words: number;
+  }[];
+  registry_documents: number;
+  anomalies: {
+    in_registry_without_chunks: { doc_id: string; filename: string }[];
+    in_vector_without_registry: string[];
+  };
+}
+
+export async function fetchGEDIndexHealth(): Promise<GEDIndexHealth> {
+  const r = await apiFetch(`${API_BASE}/ged/index-health`);
+  if (!r.ok) throw new Error(`Index health error: ${r.status}`);
+  return r.json();
+}
+
 export async function generateBidStrategy(
   scoringResult: ScoringResult,
   decision: string,

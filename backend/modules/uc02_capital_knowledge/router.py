@@ -60,6 +60,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["UC02 - Capital Knowledge"])
 
 
+def _dedup_sources_for_display(sources: list) -> list:
+    """Citations utilisateur : un seul extrait par fichier (le mieux classé).
+    La recherche peut remonter plusieurs chunks d'un même document — utile pour
+    le contexte LLM, mais redondant à l'affichage."""
+    seen: set[str] = set()
+    out = []
+    for s in sources:
+        if s.filename in seen:
+            continue
+        seen.add(s.filename)
+        out.append(s)
+    return out
+
+
 async def _parse_uploaded_files(
     files: list[UploadFile],
     pdf_parser,
@@ -253,17 +267,58 @@ _CRM_TOOLS = [
     {
         "name": "rechercher_documents_ged",
         "description": (
-            "Recherche dans la base documentaire GED (Gestion Électronique de Documents) "
-            "de Neurones Technologies. Contient : CVs des ingénieurs, offres techniques soumises, "
-            "procédures internes, PV de réunion, fiches techniques produits, appels d'offres. "
-            "Utilise cet outil pour : contenu d'un document, compétences d'un ingénieur, "
-            "spécifications d'un appel d'offres, texte d'une procédure, références de projets passés. "
-            "Utilise aussi pour 'combien de documents', 'quels fichiers', 'liste des documents GED'."
+            "Recherche sémantique dans la GED (base documentaire interne) de Neurones Technologies.\n\n"
+
+            "QUAND UTILISER :\n"
+            "- Compétences, certifications ou expérience d'un ingénieur précis\n"
+            "- Texte ou contenu d'une procédure interne (inclure son code si connu, ex: P-001)\n"
+            "- Contenu d'une offre technique passée ou références d'un projet similaire\n"
+            "- Critères ou spécifications d'un appel d'offres\n"
+            "- Décisions ou actions consignées dans un PV de réunion\n"
+            "- Caractéristiques techniques d'un produit (fiche technique)\n\n"
+
+            "NE PAS UTILISER pour :\n"
+            "- Données financières (CA, factures, commandes) → outils CRM\n"
+            "- Compter ou lister les documents GED → utilise statut_ged\n"
+            "- Informations non documentées (salaires, effectifs, organigramme)\n\n"
+
+            "RÉSULTATS : passages les plus pertinents (plusieurs par document possible) avec score de pertinence (0-100). "
+            "Score < 50 = résultat peu fiable, à mentionner. "
+            "Si l'information cherchée n'apparaît pas dans les extraits, dis-le explicitement — "
+            "ne jamais déduire ni compléter. "
+            "Cite toujours le fichier source (champ 'fichier') dans ta réponse."
         ),
         "input_schema": {
             "type": "object",
-            "properties": {"query": {"type": "string", "description": "Recherche dans les documents"}},
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Mots-clés de recherche précis. "
+                        "REFORMULE toujours en mots-clés — ne copie jamais la question de l'utilisateur. "
+                        "Exemples par type de document :\n"
+                        "• CV : 'Jean Dupont certifications AWS DevOps' ou 'ingénieur Kubernetes 5 ans expérience'\n"
+                        "• Procédure : 'procédure onboarding nouveau client' ou 'procédure gestion incident réseau'\n"
+                        "• Offre : 'offre technique SONABEL infrastructure réseau 2024 gagnée'\n"
+                        "• PV : 'décision budget projet Cloud novembre 2024'\n"
+                        "• Fiche : 'fiche technique switch Cisco référence SG-350'"
+                    ),
+                }
+            },
             "required": ["query"],
+        },
+    },
+    {
+        "name": "statut_ged",
+        "description": (
+            "Retourne le nombre de documents indexés dans la GED, répartis par type. "
+            "UTILISE pour : 'combien de CVs avez-vous', 'combien de documents dans la GED', "
+            "'quels types de documents sont disponibles', 'nombre de procédures indexées'. "
+            "NE PAS utiliser pour lire le contenu des documents → utilise rechercher_documents_ged."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {},
         },
     },
     {
@@ -584,6 +639,7 @@ _TOOL_LABELS = {
     "statistiques_globales": "Calcul des statistiques…",
     "requete_analytique": "Analyse des données Odoo…",
     "rechercher_documents_ged": "Recherche dans les documents GED…",
+    "statut_ged": "Consultation des statistiques GED…",
     "rechercher_commandes_par_produit": "Recherche de commandes par produit…",
     "analyse_ca_par_produit": "Analyse du CA par produit…",
     "obtenir_dossier": "Consultation du dossier commercial…",
@@ -645,7 +701,7 @@ async def _cleanup_old_sessions():
 
 # ─── Exécution des outils ─────────────────────────────────────────────────────
 
-async def _execute_tool(tool_name: str, tool_input: dict, crm_repo, rag_engine) -> tuple[str, bool]:
+async def _execute_tool(tool_name: str, tool_input: dict, crm_repo, rag_engine, doc_registry=None) -> tuple[str, bool]:
     """
     Exécute un outil CRM ou GED.
     Retourne (résultat_json, is_error).
@@ -1052,7 +1108,7 @@ async def _execute_tool(tool_name: str, tool_input: dict, crm_repo, rag_engine) 
                         {
                             "fichier": s.filename,
                             "type": s.doc_type.value,
-                            "extrait": s.excerpt,
+                            "extrait": (s.content or s.excerpt)[:1200],
                             "pertinence": round(s.relevance_score * 100),
                         }
                         for s in sources
@@ -1060,6 +1116,33 @@ async def _execute_tool(tool_name: str, tool_input: dict, crm_repo, rag_engine) 
                 }, ensure_ascii=False), False
             except Exception as e:
                 return json.dumps({"erreur": f"GED indisponible : {e}. Essaie un autre outil."}), True
+
+        elif tool_name == "statut_ged":
+            try:
+                if doc_registry is None:
+                    return json.dumps({"erreur": "Registre GED indisponible."}), True
+                entries = await doc_registry.list_active_entries()
+                by_type: dict[str, int] = {}
+                for e in entries:
+                    by_type[e.doc_type.value] = by_type.get(e.doc_type.value, 0) + 1
+                _TYPE_LABELS = {
+                    "cv": "CVs ingénieurs",
+                    "offre_technique": "Offres techniques",
+                    "abe": "ABE / Marchés publics",
+                    "pv_recette": "PV de recette",
+                    "procedure": "Procédures internes",
+                    "fiche_technique": "Fiches techniques",
+                    "compte_rendu": "Comptes rendus",
+                    "ao": "Appels d'offres",
+                }
+                return json.dumps({
+                    "total_indexe": len(entries),
+                    "par_type": {
+                        _TYPE_LABELS.get(k, k): v for k, v in sorted(by_type.items(), key=lambda x: -x[1])
+                    },
+                }, ensure_ascii=False), False
+            except Exception as e:
+                return json.dumps({"erreur": f"GED indisponible : {e}"}), True
 
         return json.dumps({"erreur": f"Outil inconnu : {tool_name}"}), True
 
@@ -1248,8 +1331,7 @@ async def chat_query(
             if injected != user_content:
                 messages[-1] = {"role": "user", "content": injected}
 
-            relevant_sources = [s for s in sources if s.relevance_score >= 0.40]
-            yield f"data: {json.dumps({'type': 'sources', 'sources': [{'doc_id': s.doc_id, 'filename': s.filename, 'doc_type': s.doc_type.value, 'excerpt': s.excerpt, 'relevance_score': s.relevance_score} for s in relevant_sources]})}\n\n"
+            yield f"data: {json.dumps({'type': 'sources', 'sources': [{'doc_id': s.doc_id, 'filename': s.filename, 'doc_type': s.doc_type.value, 'excerpt': s.excerpt, 'relevance_score': s.relevance_score} for s in _dedup_sources_for_display(sources)]})}\n\n"
 
             # ── 4. Boucle agentique avec streaming réel ────────────────────
             full_answer = ""
@@ -1319,7 +1401,8 @@ async def chat_query(
                     yield f"data: {json.dumps({'type': 'tool_call', 'tool': call['name'], 'label': tool_label})}\n\n"
 
                     content, is_error = await _execute_tool(
-                        call["name"], call["input"], crm_repo, rag_engine
+                        call["name"], call["input"], crm_repo, rag_engine,
+                        doc_registry=container.doc_registry,
                     )
                     if is_error:
                         logger.warning("Tool %s échoué (iter %d): %s", call["name"], iteration, content[:100])
@@ -1345,7 +1428,8 @@ async def chat_query(
                     {"role": "assistant", "content": full_answer},
                 ], user_id=current_user.id)
 
-            yield f"data: {json.dumps({'type': 'done', 'intent': 'local_db'})}\n\n"
+            final_intent = intent_hint or "rag"
+            yield f"data: {json.dumps({'type': 'done', 'intent': final_intent})}\n\n"
 
         except Exception as exc:
             logger.error("Erreur event_stream: %s\n%s", exc, traceback.format_exc())
@@ -1457,6 +1541,6 @@ async def chat_query_sync(body: ChatRequest, request: Request):
                 doc_id=s.doc_id, filename=s.filename, doc_type=s.doc_type.value,
                 excerpt=s.excerpt, relevance_score=s.relevance_score,
             )
-            for s in result.sources
+            for s in _dedup_sources_for_display(result.sources)
         ],
     )

@@ -4,13 +4,16 @@ import {
   FolderOpen, Folder, FileText, Upload, Trash2, Plus, RefreshCw,
   ChevronRight, ChevronDown, File, Search, X, AlertCircle, CheckCircle2,
   FilePlus, AlertTriangle, ShieldAlert, RotateCcw,
+  Layers, Tag, Boxes,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   fetchGEDTree, fetchGEDFiles, fetchGEDStatus, uploadGEDFile,
   deleteGEDFile, createGEDFolder, reindexGED, deleteGEDFolder,
   fetchGEDQuarantine, retryGEDQuarantine,
+  fetchGEDDocumentChunks, fetchGEDIndexHealth, searchGEDDebug,
   type GEDCategory, type GEDFile, type GEDFolder, type GEDStatus, type GEDQuarantineEntry,
+  type GEDDocumentChunks, type GEDChunk, type GEDIndexHealth, type GEDSearchHit,
 } from "@/lib/api";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -148,14 +151,19 @@ function FolderNode({ path, name, label, fileCount, subfolders, selected, onSele
 
 // ── FileCard ──────────────────────────────────────────────────────────────────
 
-function FileCard({ file, onDelete }: { file: GEDFile; onDelete: (id: string) => void }) {
+function FileCard({ file, onDelete, onInspect }: { file: GEDFile; onDelete: (id: string) => void; onInspect: (file: GEDFile) => void }) {
   const [confirming, setConfirming] = useState(false);
   const badge = DOC_TYPE_LABELS[file.doc_type] ?? DOC_TYPE_LABELS.unknown;
   const ext = file.filename.split(".").pop()?.toLowerCase() ?? "";
+  const inspectable = file.is_indexed && !!file.doc_id;
 
   return (
     <div
-      className="flex items-center gap-3 px-4 py-3 rounded-xl transition-all group hover:-translate-y-px"
+      onClick={() => inspectable && onInspect(file)}
+      className={cn(
+        "flex items-center gap-3 px-4 py-3 rounded-xl transition-all group hover:-translate-y-px",
+        inspectable && "cursor-pointer hover:ring-2 hover:ring-blue-200",
+      )}
       style={GLASS}
     >
       <div className={cn("shrink-0", EXT_COLORS[ext] ?? "text-slate-400")}>
@@ -188,13 +196,13 @@ function FileCard({ file, onDelete }: { file: GEDFile; onDelete: (id: string) =>
           confirming ? (
             <div className="flex items-center gap-1">
               <button
-                onClick={() => { onDelete(file.doc_id!); setConfirming(false); }}
+                onClick={(e) => { e.stopPropagation(); onDelete(file.doc_id!); setConfirming(false); }}
                 className="text-xs text-red-600 font-semibold px-2 py-1 rounded-lg hover:bg-red-50 transition-colors"
               >
                 Confirmer
               </button>
               <button
-                onClick={() => setConfirming(false)}
+                onClick={(e) => { e.stopPropagation(); setConfirming(false); }}
                 className="text-xs text-slate-500 px-2 py-1 rounded-lg hover:bg-slate-100 transition-colors"
               >
                 Annuler
@@ -202,7 +210,7 @@ function FileCard({ file, onDelete }: { file: GEDFile; onDelete: (id: string) =>
             </div>
           ) : (
             <button
-              onClick={() => setConfirming(true)}
+              onClick={(e) => { e.stopPropagation(); setConfirming(true); }}
               className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500"
               title="Supprimer"
             >
@@ -439,6 +447,384 @@ function QuarantinePanel({ entries, onRetry }: { entries: GEDQuarantineEntry[]; 
   );
 }
 
+// ── IndexHealthPanel ──────────────────────────────────────────────────────────
+
+function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex flex-col px-3 py-2 rounded-xl bg-white/70 border border-slate-100">
+      <span className="text-base font-bold text-slate-800 tabular-nums leading-none">{value}</span>
+      <span className="text-[10px] text-slate-400 mt-1 uppercase tracking-wide">{label}</span>
+    </div>
+  );
+}
+
+function IndexHealthPanel({ refreshKey }: { refreshKey: number }) {
+  const [data, setData] = useState<GEDIndexHealth | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchGEDIndexHealth()
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch(() => { if (!cancelled) setData(null); });
+    return () => { cancelled = true; };
+  }, [refreshKey]);
+
+  if (!data) return null;
+  const anomalies = data.anomalies.in_registry_without_chunks.length + data.anomalies.in_vector_without_registry.length;
+
+  return (
+    <div className="rounded-2xl overflow-hidden" style={GLASS}>
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 px-4 py-3 hover:bg-white/40 transition-colors">
+        <Boxes className="w-4 h-4 text-blue-500 shrink-0" />
+        <span className="text-sm font-semibold text-slate-700">Santé de l&apos;index</span>
+        <span className="text-xs text-slate-400">{data.total_chunks} chunks · {data.total_documents} documents</span>
+        {anomalies > 0 && (
+          <span className="flex items-center gap-1 text-[11px] font-semibold text-amber-600">
+            <AlertTriangle className="w-3 h-3" /> {anomalies} anomalie{anomalies > 1 ? "s" : ""}
+          </span>
+        )}
+        <span className="ml-auto">{open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}</span>
+      </button>
+      {open && (
+        <div className="px-4 pb-4 flex flex-col gap-4 border-t border-slate-100 pt-4">
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+            <Stat label="Chunks" value={data.total_chunks} />
+            <Stat label="Documents" value={data.total_documents} />
+            <Stat label="Chunks/doc" value={data.avg_chunks_per_doc} />
+            <Stat label="Mots/chunk" value={data.avg_words_per_chunk} />
+            <Stat label="Parents" value={data.parent_chunks} />
+            <Stat label="Enfants" value={data.child_chunks} />
+          </div>
+
+          {/* Répartition par type */}
+          <div className="flex flex-col gap-1.5">
+            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Par type de document</p>
+            {Object.entries(data.by_doc_type).map(([type, v]) => {
+              const badge = DOC_TYPE_LABELS[type] ?? DOC_TYPE_LABELS.unknown;
+              return (
+                <div key={type} className="flex items-center gap-2 text-xs">
+                  <span className={cn("font-semibold px-1.5 py-0.5 rounded-md border w-20 text-center shrink-0", badge.color)}>{badge.label}</span>
+                  <span className="text-slate-500">{v.documents} doc · {v.chunks} chunks</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Anomalies */}
+          {anomalies > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2.5">
+              <p className="text-[11px] font-semibold text-amber-700 uppercase tracking-wide mb-1.5">Anomalies</p>
+              {data.anomalies.in_registry_without_chunks.map((o) => (
+                <p key={o.doc_id} className="text-xs text-amber-800 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3 h-3 shrink-0" /> {o.filename} — indexé au registre mais 0 chunk vectoriel
+                </p>
+              ))}
+              {data.anomalies.in_vector_without_registry.map((id) => (
+                <p key={id} className="text-xs text-amber-800 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3 h-3 shrink-0" /> doc_id {id.slice(0, 8)}… — chunks vectoriels sans entrée registre
+                </p>
+              ))}
+            </div>
+          )}
+
+          {/* Documents avec le moins de chunks (détection découpage anormal) */}
+          {data.per_document.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Découpage par document (croissant)</p>
+              <div className="rounded-xl border border-slate-200 overflow-hidden divide-y divide-slate-100">
+                {data.per_document.slice(0, 8).map((d) => (
+                  <div key={d.doc_id} className="flex items-center gap-2 px-3 py-1.5 text-xs even:bg-slate-50/50">
+                    <span className="text-slate-700 truncate flex-1">{d.filename}</span>
+                    <span className="text-slate-400 shrink-0 tabular-nums">{d.chunk_count} chunk{d.chunk_count > 1 ? "s" : ""} · {d.avg_words} mots/ch.</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── ChunkInspectorDrawer ──────────────────────────────────────────────────────
+
+function fmtFieldValue(value: unknown): string {
+  if (value === null || value === undefined || value === "null") return "—";
+  if (Array.isArray(value)) return value.length ? value.map(String).join(", ") : "—";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function ChunkRow({ chunk }: { chunk: GEDChunk }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white/70 overflow-hidden">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 transition-colors"
+      >
+        {open ? <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+        <span className="text-xs font-mono text-slate-400 shrink-0">#{chunk.chunk_index}</span>
+        {chunk.is_parent ? (
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-violet-50 text-violet-600 border border-violet-100 shrink-0">parent</span>
+        ) : chunk.parent_chunk_id ? (
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-sky-50 text-sky-600 border border-sky-100 shrink-0">enfant</span>
+        ) : null}
+        <span className="text-xs text-slate-500 truncate flex-1">
+          {chunk.content.slice(0, 90)}
+        </span>
+        <span className="text-[10px] text-slate-400 shrink-0 tabular-nums">{chunk.word_count} mots</span>
+      </button>
+      {open && (
+        <pre className="text-xs text-slate-700 whitespace-pre-wrap break-words px-3 py-2.5 border-t border-slate-100 bg-slate-50/60 max-h-72 overflow-y-auto font-mono leading-relaxed">
+          {chunk.content}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function ChunkInspectorDrawer({ file, onClose }: { file: GEDFile; onClose: () => void }) {
+  const [tab, setTab] = useState<"chunks" | "meta">("chunks");
+  const [data, setData] = useState<GEDDocumentChunks | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    fetchGEDDocumentChunks(file.doc_id!)
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : "Erreur de chargement"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [file.doc_id]);
+
+  const badge = DOC_TYPE_LABELS[file.doc_type] ?? DOC_TYPE_LABELS.unknown;
+  const metaEntries = data ? Object.entries(data.extracted_fields) : [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-xl h-full bg-white shadow-2xl flex flex-col animate-in slide-in-from-right">
+        {/* Header */}
+        <div className="shrink-0 px-5 py-4 border-b border-slate-100">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-slate-900 truncate">{file.filename}</p>
+              <div className="flex items-center gap-2 mt-1.5">
+                <span className={cn("text-[11px] font-semibold px-1.5 py-0.5 rounded-md border", badge.color)}>{badge.label}</span>
+                {data && <span className="text-xs text-slate-400">{data.chunk_count} chunk{data.chunk_count > 1 ? "s" : ""}</span>}
+                {data?.contains_pii && (
+                  <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md bg-red-50 text-red-600 border border-red-100">PII</span>
+                )}
+              </div>
+            </div>
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors shrink-0">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          {/* Tabs */}
+          <div className="flex gap-1 mt-3">
+            <button
+              onClick={() => setTab("chunks")}
+              className={cn("flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors",
+                tab === "chunks" ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-100")}
+            >
+              <Layers className="w-3.5 h-3.5" /> Découpage
+            </button>
+            <button
+              onClick={() => setTab("meta")}
+              className={cn("flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors",
+                tab === "meta" ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-100")}
+            >
+              <Tag className="w-3.5 h-3.5" /> Métadonnées
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5">
+          {loading ? (
+            <div className="flex items-center justify-center py-16 text-slate-400 gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin" /> <span className="text-sm">Chargement…</span>
+            </div>
+          ) : error ? (
+            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+              <AlertCircle className="w-4 h-4 shrink-0" /> {error}
+            </div>
+          ) : tab === "chunks" ? (
+            <div className="flex flex-col gap-2">
+              {data!.chunks.map((c) => <ChunkRow key={c.chunk_id} chunk={c} />)}
+            </div>
+          ) : (
+            metaEntries.length === 0 ? (
+              <p className="text-sm text-slate-400 italic text-center py-10">Aucune métadonnée extraite</p>
+            ) : (
+              <div className="rounded-xl border border-slate-200 overflow-hidden divide-y divide-slate-100">
+                {metaEntries.map(([key, value]) => (
+                  <div key={key} className="flex gap-3 px-4 py-2.5 even:bg-slate-50/50">
+                    <span className="text-xs font-semibold text-slate-500 w-36 shrink-0 capitalize">{key.replace(/_/g, " ")}</span>
+                    <span className="text-xs text-slate-700 break-words">{fmtFieldValue(value)}</span>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── SearchPlaygroundDrawer ────────────────────────────────────────────────────
+
+function ScoreCell({ label, rank, score, color }: { label: string; rank: number | null; score: number | null; color: string }) {
+  return (
+    <div className="flex flex-col items-center px-2 py-1 rounded-lg border border-slate-100 bg-white/70 min-w-[64px]">
+      <span className="text-[9px] uppercase tracking-wide text-slate-400">{label}</span>
+      {rank === null ? (
+        <span className="text-xs text-slate-300">—</span>
+      ) : (
+        <>
+          <span className={cn("text-xs font-bold tabular-nums", color)}>#{rank}</span>
+          <span className="text-[10px] text-slate-400 tabular-nums">{score}</span>
+        </>
+      )}
+    </div>
+  );
+}
+
+function HitRow({ hit, rrfRank }: { hit: GEDSearchHit; rrfRank: number }) {
+  const badge = DOC_TYPE_LABELS[hit.doc_type ?? "unknown"] ?? DOC_TYPE_LABELS.unknown;
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white/70 p-3 flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded-md border shrink-0", badge.color)}>{badge.label}</span>
+        <span className="text-xs font-medium text-slate-700 truncate flex-1">{hit.filename ?? hit.chunk_id}</span>
+        <span className="text-[10px] text-slate-400 shrink-0">{hit.word_count} mots</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <ScoreCell label="RRF" rank={rrfRank} score={hit.rrf_score} color="text-blue-600" />
+        <ScoreCell label="Dense" rank={hit.dense_rank} score={hit.dense_score} color="text-violet-600" />
+        <ScoreCell label="BM25" rank={hit.sparse_rank} score={hit.sparse_score} color="text-emerald-600" />
+        <p className="text-[11px] text-slate-500 leading-snug line-clamp-3 flex-1">{hit.excerpt}</p>
+      </div>
+    </div>
+  );
+}
+
+function SearchPlaygroundDrawer({ onClose }: { onClose: () => void }) {
+  const [query, setQuery] = useState("");
+  const [docType, setDocType] = useState("");
+  const [topK, setTopK] = useState(10);
+  const [hits, setHits] = useState<GEDSearchHit[]>([]);
+  const [meta, setMeta] = useState<{ dense: number; sparse: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [searched, setSearched] = useState(false);
+
+  const run = async () => {
+    if (!query.trim()) return;
+    setLoading(true);
+    setError("");
+    try {
+      const res = await searchGEDDebug(query, topK, docType || undefined);
+      setHits(res.results);
+      setMeta({ dense: res.dense_hits, sparse: res.sparse_hits });
+      setSearched(true);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Erreur de recherche");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-2xl h-full bg-white shadow-2xl flex flex-col animate-in slide-in-from-right">
+        {/* Header */}
+        <div className="shrink-0 px-5 py-4 border-b border-slate-100">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Search className="w-4 h-4 text-blue-500" />
+              <h3 className="text-sm font-semibold text-slate-900">Playground de recherche</h3>
+              <span className="text-[11px] text-slate-400">dense · BM25 · RRF, sans dédup</span>
+            </div>
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={query} autoFocus
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && run()}
+              placeholder="Saisir une requête de test…"
+              className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+            <button
+              onClick={run} disabled={loading || !query.trim()}
+              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium flex items-center gap-1.5 transition-colors"
+            >
+              {loading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+              Chercher
+            </button>
+          </div>
+          <div className="flex items-center gap-2 mt-2">
+            <select
+              value={docType} onChange={(e) => setDocType(e.target.value)}
+              className="border border-slate-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+            >
+              <option value="">Tous les types</option>
+              {Object.entries(DOC_TYPE_LABELS).filter(([k]) => k !== "unknown").map(([k, v]) => (
+                <option key={k} value={k}>{v.label}</option>
+              ))}
+            </select>
+            <label className="text-xs text-slate-400 flex items-center gap-1.5">
+              top_k
+              <input
+                type="number" min={1} max={50} value={topK}
+                onChange={(e) => setTopK(Math.max(1, Math.min(50, Number(e.target.value) || 10)))}
+                className="w-14 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </label>
+            {meta && (
+              <span className="text-xs text-slate-400 ml-auto">{meta.dense} dense · {meta.sparse} BM25</span>
+            )}
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-2">
+          {error ? (
+            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+              <AlertCircle className="w-4 h-4 shrink-0" /> {error}
+            </div>
+          ) : loading ? (
+            <div className="flex items-center justify-center py-16 text-slate-400 gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin" /> <span className="text-sm">Recherche…</span>
+            </div>
+          ) : !searched ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center text-slate-400">
+              <Search className="w-8 h-8 mb-2 text-slate-300" />
+              <p className="text-sm">Lancez une requête pour voir les chunks remontés</p>
+            </div>
+          ) : hits.length === 0 ? (
+            <p className="text-sm text-slate-400 italic text-center py-10">Aucun résultat</p>
+          ) : (
+            hits.map((h, i) => <HitRow key={h.chunk_id} hit={h} rrfRank={i + 1} />)
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 const PAGE_BG = "linear-gradient(160deg, #eef0f8 0%, #e8ecf5 50%, #edf0f8 100%)";
@@ -466,6 +852,9 @@ export default function GEDPage() {
   const [uploadMsg, setUploadMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [deletingFolder, setDeletingFolder] = useState<{ path: string; name: string } | null>(null);
+  const [inspectingFile, setInspectingFile] = useState<GEDFile | null>(null);
+  const [showSearch, setShowSearch] = useState(false);
+  const [healthKey, setHealthKey] = useState(0);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -481,6 +870,7 @@ export default function GEDPage() {
       setCategories(treeData.categories);
       setStatus(statusData);
       setQuarantine(quarantineData.quarantine);
+      setHealthKey((k) => k + 1);
     } catch { /* backend may be offline */ }
   }, []);
 
@@ -596,6 +986,14 @@ export default function GEDPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowSearch(true)}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors font-medium"
+            title="Tester le retrieval (dense / BM25 / RRF)"
+          >
+            <Search className="w-3.5 h-3.5" />
+            Recherche
+          </button>
           <button
             onClick={async () => {
               try {
@@ -745,6 +1143,9 @@ export default function GEDPage() {
               </p>
             </div>
 
+            {/* Index health panel */}
+            <IndexHealthPanel refreshKey={healthKey} />
+
             {/* Quarantine panel */}
             <QuarantinePanel entries={quarantine} onRetry={handleRetryQuarantine} />
 
@@ -768,7 +1169,7 @@ export default function GEDPage() {
                   {filteredFiles.length} fichier{filteredFiles.length !== 1 ? "s" : ""}
                 </p>
                 {filteredFiles.map((f) => (
-                  <FileCard key={f.doc_id ?? f.file_path} file={f} onDelete={handleDelete} />
+                  <FileCard key={f.doc_id ?? f.file_path} file={f} onDelete={handleDelete} onInspect={setInspectingFile} />
                 ))}
               </div>
             )}
@@ -789,6 +1190,12 @@ export default function GEDPage() {
           folderPath={deletingFolder.path} folderName={deletingFolder.name}
           onClose={() => setDeletingFolder(null)} onDeleted={handleDeleteFolder}
         />
+      )}
+      {inspectingFile && (
+        <ChunkInspectorDrawer file={inspectingFile} onClose={() => setInspectingFile(null)} />
+      )}
+      {showSearch && (
+        <SearchPlaygroundDrawer onClose={() => setShowSearch(false)} />
       )}
     </div>
   );

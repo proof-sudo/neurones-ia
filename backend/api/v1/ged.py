@@ -196,6 +196,111 @@ async def list_files(
     return {"files": result, "total": len(result)}
 
 
+# ── GET /ged/documents/{doc_id}/chunks ────────────────────────────────────────
+
+def _extracted_fields_from_meta(meta: dict) -> dict:
+    """Reconstruit extracted_fields depuis les clés aplaties ef_* (JSON décodé si besoin)."""
+    import json
+    fields: dict = {}
+    for key, value in meta.items():
+        if not key.startswith("ef_"):
+            continue
+        name = key[3:]
+        if isinstance(value, str) and value[:1] in ("[", "{"):
+            try:
+                fields[name] = json.loads(value)
+                continue
+            except (ValueError, TypeError):
+                pass
+        fields[name] = value
+    return fields
+
+
+@router.get("/ged/documents/{doc_id}/chunks")
+async def get_document_chunks(doc_id: str, request: Request):
+    """Détail du découpage d'un document : liste de ses chunks + métadonnées extraites."""
+    vector_store = _container(request).vector_store
+    items = await vector_store.get_chunks_by_doc_id(doc_id)
+    if not items:
+        raise HTTPException(status_code=404, detail="Aucun chunk trouvé pour ce document")
+
+    first_meta = items[0]["metadata"]
+    chunks = []
+    for it in items:
+        meta = it["metadata"]
+        content = it["content"] or ""
+        chunks.append({
+            "chunk_id": it["chunk_id"],
+            "chunk_index": meta.get("chunk_index", 0),
+            "is_parent": bool(meta.get("is_parent", False)),
+            "parent_chunk_id": meta.get("parent_chunk_id") or None,
+            "word_count": len(content.split()),
+            "char_count": len(content),
+            "content": content,
+        })
+
+    return {
+        "doc_id": doc_id,
+        "filename": first_meta.get("filename", "?"),
+        "doc_type": first_meta.get("doc_type", "unknown"),
+        "contains_pii": bool(first_meta.get("contains_pii", False)),
+        "chunk_count": len(chunks),
+        "extracted_fields": _extracted_fields_from_meta(first_meta),
+        "chunks": chunks,
+    }
+
+
+# ── POST /ged/search-debug ────────────────────────────────────────────────────
+
+class SearchDebugRequest(BaseModel):
+    query: str
+    top_k: int = 10
+    doc_type: Optional[str] = None
+
+
+@router.post("/ged/search-debug")
+async def search_debug(body: SearchDebugRequest, request: Request):
+    """Playground d'inspection du retrieval : scores dense / BM25 / RRF par chunk, sans dédup."""
+    if not body.query.strip():
+        raise HTTPException(status_code=400, detail="Requête vide")
+    rag_engine = _container(request).rag_engine
+    return await rag_engine.search_debug(
+        query=body.query,
+        top_k=max(1, min(body.top_k, 50)),
+        doc_type=body.doc_type,
+    )
+
+
+# ── GET /ged/index-health ─────────────────────────────────────────────────────
+
+@router.get("/ged/index-health")
+async def index_health(request: Request):
+    """Métriques de santé de l'index vectoriel + détection d'anomalies (orphelins)."""
+    vector_store = _container(request).vector_store
+    registry = _container(request).doc_registry
+
+    stats = await vector_store.get_index_stats()
+    entries = await registry.list_active_entries()
+
+    registry_ids = {e.doc_id for e in entries}
+    indexed_ids = set(stats.pop("indexed_doc_ids", []))
+
+    # Anomalies : présent au registre mais 0 chunk vectoriel (et inversement)
+    filename_by_id = {e.doc_id: Path(e.file_path).name for e in entries}
+    orphans_registry = [
+        {"doc_id": did, "filename": filename_by_id.get(did, "?")}
+        for did in (registry_ids - indexed_ids)
+    ]
+    orphans_vector = list(indexed_ids - registry_ids)
+
+    stats["registry_documents"] = len(registry_ids)
+    stats["anomalies"] = {
+        "in_registry_without_chunks": orphans_registry,
+        "in_vector_without_registry": orphans_vector,
+    }
+    return stats
+
+
 # ── POST /ged/upload ──────────────────────────────────────────────────────────
 
 @router.post("/ged/upload", status_code=201)

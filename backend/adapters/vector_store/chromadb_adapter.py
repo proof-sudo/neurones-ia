@@ -81,7 +81,8 @@ class ChromaDBAdapter(VectorStore):
             include=["documents", "metadatas", "distances"],
         )
         sources = []
-        for doc, meta, dist in zip(
+        for cid, doc, meta, dist in zip(
+            results["ids"][0],
             results["documents"][0],
             results["metadatas"][0],
             results["distances"][0],
@@ -93,6 +94,8 @@ class ChromaDBAdapter(VectorStore):
                     doc_type=DocumentType(meta.get("doc_type", "unknown")),
                     excerpt=doc[:300],
                     relevance_score=1.0 - dist,
+                    chunk_id=cid,
+                    content=doc,
                 )
             )
         return sources
@@ -132,3 +135,148 @@ class ChromaDBAdapter(VectorStore):
     async def get_doc_ids(self) -> list[str]:
         results = self._collection.get(include=["metadatas"])
         return list({m["doc_id"] for m in results["metadatas"]})
+
+    # --- Lecture / observabilité ----------------------------------------------
+
+    @staticmethod
+    def _extracted_fields_from_meta(meta: dict) -> dict:
+        """Reconstruit extracted_fields depuis les clés aplaties ef_* (JSON décodé si besoin)."""
+        fields: dict = {}
+        for key, value in meta.items():
+            if not key.startswith("ef_"):
+                continue
+            name = key[3:]
+            if isinstance(value, str) and value[:1] in ("[", "{"):
+                try:
+                    fields[name] = json.loads(value)
+                    continue
+                except (ValueError, TypeError):
+                    pass
+            fields[name] = value
+        return fields
+
+    async def get_chunks_by_doc_id(self, doc_id: str) -> list[dict]:
+        results = self._collection.get(
+            where={"doc_id": doc_id},
+            include=["documents", "metadatas"],
+        )
+        items = [
+            {"chunk_id": cid, "content": doc, "metadata": meta}
+            for cid, doc, meta in zip(
+                results["ids"], results["documents"], results["metadatas"]
+            )
+        ]
+        items.sort(key=lambda it: it["metadata"].get("chunk_index", 0))
+        return items
+
+    async def get_by_chunk_ids(self, chunk_ids: list[str]) -> dict[str, dict]:
+        if not chunk_ids:
+            return {}
+        results = self._collection.get(
+            ids=chunk_ids,
+            include=["documents", "metadatas"],
+        )
+        return {
+            cid: {"content": doc, "metadata": meta}
+            for cid, doc, meta in zip(
+                results["ids"], results["documents"], results["metadatas"]
+            )
+        }
+
+    async def get_index_stats(self) -> dict:
+        results = self._collection.get(include=["documents", "metadatas"])
+        metas = results["metadatas"] or []
+        docs = results["documents"] or []
+
+        total_chunks = len(metas)
+        by_type: dict[str, dict] = {}
+        per_doc: dict[str, dict] = {}
+        parent_count = 0
+        total_words = 0
+
+        for meta, content in zip(metas, docs):
+            doc_id = meta.get("doc_id", "?")
+            doc_type = meta.get("doc_type", "unknown")
+            words = len((content or "").split())
+            total_words += words
+            if meta.get("is_parent"):
+                parent_count += 1
+
+            d = per_doc.setdefault(doc_id, {
+                "doc_id": doc_id,
+                "filename": meta.get("filename", "?"),
+                "doc_type": doc_type,
+                "chunk_count": 0,
+                "parent_count": 0,
+                "total_words": 0,
+            })
+            d["chunk_count"] += 1
+            d["total_words"] += words
+            if meta.get("is_parent"):
+                d["parent_count"] += 1
+
+            t = by_type.setdefault(doc_type, {"documents": set(), "chunks": 0})
+            t["chunks"] += 1
+            t["documents"].add(doc_id)
+
+        per_document = []
+        for d in per_doc.values():
+            cc = d["chunk_count"] or 1
+            per_document.append({
+                "doc_id": d["doc_id"],
+                "filename": d["filename"],
+                "doc_type": d["doc_type"],
+                "chunk_count": d["chunk_count"],
+                "parent_count": d["parent_count"],
+                "avg_words": round(d["total_words"] / cc, 1),
+            })
+        per_document.sort(key=lambda x: x["chunk_count"])
+
+        by_doc_type = {
+            t: {"documents": len(v["documents"]), "chunks": v["chunks"]}
+            for t, v in by_type.items()
+        }
+
+        total_docs = len(per_doc)
+        return {
+            "total_chunks": total_chunks,
+            "total_documents": total_docs,
+            "parent_chunks": parent_count,
+            "child_chunks": total_chunks - parent_count,
+            "avg_chunks_per_doc": round(total_chunks / total_docs, 1) if total_docs else 0,
+            "avg_words_per_chunk": round(total_words / total_chunks, 1) if total_chunks else 0,
+            "by_doc_type": by_doc_type,
+            "per_document": per_document,
+            "indexed_doc_ids": list(per_doc.keys()),
+        }
+
+    async def search_dense_debug(
+        self,
+        query_embedding: list[float],
+        top_k: int = 10,
+        doc_type: Optional[str] = None,
+    ) -> list[dict]:
+        where = {"doc_type": doc_type} if doc_type else None
+        n = max(1, min(top_k, self._approx_count or top_k))
+        results = self._collection.query(
+            query_embeddings=[query_embedding],
+            n_results=n,
+            where=where,
+            include=["documents", "metadatas", "distances"],
+        )
+        out = []
+        for cid, doc, meta, dist in zip(
+            results["ids"][0],
+            results["documents"][0],
+            results["metadatas"][0],
+            results["distances"][0],
+        ):
+            out.append({
+                "chunk_id": cid,
+                "doc_id": meta.get("doc_id", "?"),
+                "filename": meta.get("filename", "?"),
+                "doc_type": meta.get("doc_type", "unknown"),
+                "content": doc,
+                "score": round(1.0 - dist, 4),
+            })
+        return out

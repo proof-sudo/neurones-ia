@@ -77,3 +77,5 @@ class Source:
     excerpt: str
     relevance_score: float
     page: Optional[int] = None
+    chunk_id: Optional[str] = None
+    content: Optional[str] = None  # Contenu complet du chunk (pour le contexte LLM) ; excerpt reste court (citations)

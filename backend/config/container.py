@@ -225,6 +225,10 @@ class Container:
         return self._doc_registry
 
     @property
+    def vector_store(self):
+        return self._vector_store
+
+    @property
     def pdf_parser(self):
         return self._pdf_parser
 

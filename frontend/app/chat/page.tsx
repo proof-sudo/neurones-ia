@@ -3,7 +3,7 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Send, Bot, User, FileText, Loader2, AlertTriangle,
   Plus, Paperclip, X, Sparkles, MessageSquare, Square,
-  History, Trash2,
+  History, Trash2, ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { streamChat, fetchChatSessions, fetchSessionHistory, deleteChatSession, type Source, type ChatSession } from "@/lib/api";
@@ -41,6 +41,54 @@ const THINKING_STEPS = [
   "Recherche documentaire…",
   "Rédaction de la réponse…",
 ];
+
+function SourcesDropdown({ sources }: { sources: Source[] }) {
+  const [open, setOpen] = useState(false);
+  if (sources.length === 0) return null;
+
+  return (
+    <div className="w-full mt-1">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-1.5 text-[11px] font-semibold text-slate-500 hover:text-slate-700 transition-colors group"
+      >
+        <FileText className="w-3.5 h-3.5 text-violet-400" />
+        <span>{sources.length} source{sources.length > 1 ? "s" : ""}</span>
+        <ChevronDown
+          className={cn(
+            "w-3.5 h-3.5 transition-transform duration-200",
+            open ? "rotate-180" : "rotate-0"
+          )}
+        />
+      </button>
+
+      {open && (
+        <div className="mt-2 flex flex-col gap-1.5">
+          {sources.map((src, j) => (
+            <div
+              key={j}
+              className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl"
+              style={{
+                background: "rgba(255,255,255,0.8)",
+                backdropFilter: "blur(8px)",
+                border: "1px solid rgba(255,255,255,0.9)",
+              }}
+            >
+              <FileText className="w-3.5 h-3.5 text-violet-400 shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-xs font-semibold text-slate-700 truncate">{src.filename}</p>
+                <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">{src.excerpt}</p>
+              </div>
+              <span className="text-[11px] font-bold text-violet-600 shrink-0 bg-violet-50 px-1.5 py-0.5 rounded-full border border-violet-100">
+                #{j + 1}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function ThinkingIndicator({ label }: { label?: string }) {
   const [step, setStep] = useState(0);
@@ -668,31 +716,9 @@ export default function ChatPage() {
                     </span>
                   )}
 
-                  {/* Sources — affichées uniquement si pertinence ≥ 40% */}
-                  {msg.sources && msg.sources.filter(s => s.relevance_score >= 0.40).length > 0 && !msg.streaming && (
-                    <div className="flex flex-col gap-1.5 w-full">
-                      <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-0.5">Sources</p>
-                      {msg.sources.filter(s => s.relevance_score >= 0.40).map((src, j) => (
-                        <div
-                          key={j}
-                          className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl"
-                          style={{
-                            background: "rgba(255,255,255,0.8)",
-                            backdropFilter: "blur(8px)",
-                            border: "1px solid rgba(255,255,255,0.9)",
-                          }}
-                        >
-                          <FileText className="w-3.5 h-3.5 text-violet-400 shrink-0 mt-0.5" />
-                          <div className="flex-1 min-w-0">
-                            <p className="text-xs font-semibold text-slate-700 truncate">{src.filename}</p>
-                            <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">{src.excerpt}</p>
-                          </div>
-                          <span className="text-[11px] font-bold text-violet-600 shrink-0 bg-violet-50 px-1.5 py-0.5 rounded-full border border-violet-100">
-                            {Math.round(src.relevance_score * 100)}%
-                          </span>
-                        </div>
-                      ))}
-                    </div>
+                  {/* Sources dropdown */}
+                  {msg.sources && !msg.streaming && (
+                    <SourcesDropdown sources={msg.sources} />
                   )}
                 </div>
               </div>
