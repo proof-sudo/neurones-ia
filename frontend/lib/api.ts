@@ -300,8 +300,9 @@ export async function createGEDFolder(path: string): Promise<void> {
   }
 }
 
-export async function reindexGED(): Promise<{ queued: number; message: string }> {
-  const r = await apiFetch(`${API_BASE}/ged/reindex`, { method: "POST" });
+export async function reindexGED(force = false): Promise<{ queued: number; message: string }> {
+  const url = `${API_BASE}/ged/reindex${force ? "?force=true" : ""}`;
+  const r = await apiFetch(url, { method: "POST" });
   if (!r.ok) throw new Error(`Reindex error: ${r.status}`);
   return r.json();
 }
@@ -403,6 +404,45 @@ export async function searchGEDDebug(query: string, topK = 10, docType?: string)
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ query, top_k: topK, doc_type: docType ?? null }),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Search error: ${r.status}`);
+  }
+  return r.json();
+}
+
+export interface GEDProdHit {
+  chunk_id: string;
+  doc_id: string;
+  filename: string;
+  doc_type: string;
+  relevance_score: number;
+  expanded_from_parent: boolean;
+  parent_chunk_id: string | null;
+  excerpt: string;
+  context_words: number;
+  context_tokens: number;
+  context_chars: number;
+  context_preview: string;
+}
+
+export interface GEDSearchProd {
+  query: string;
+  doc_type: string | null;
+  count: number;
+  rerank_requested: boolean;
+  reranker_available: boolean;
+  rerank_applied: boolean;
+  score_label: string;
+  results: GEDProdHit[];
+}
+
+export async function searchGEDProd(query: string, topK = 10, docType?: string, rerank = false): Promise<GEDSearchProd> {
+  const r = await apiFetch(`${API_BASE}/ged/search-prod`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, top_k: topK, doc_type: docType ?? null, rerank }),
   });
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));

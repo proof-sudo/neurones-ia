@@ -11,9 +11,9 @@ import {
   fetchGEDTree, fetchGEDFiles, fetchGEDStatus, uploadGEDFile,
   deleteGEDFile, createGEDFolder, reindexGED, deleteGEDFolder,
   fetchGEDQuarantine, retryGEDQuarantine,
-  fetchGEDDocumentChunks, fetchGEDIndexHealth, searchGEDDebug,
+  fetchGEDDocumentChunks, fetchGEDIndexHealth, searchGEDDebug, searchGEDProd,
   type GEDCategory, type GEDFile, type GEDFolder, type GEDStatus, type GEDQuarantineEntry,
-  type GEDDocumentChunks, type GEDChunk, type GEDIndexHealth, type GEDSearchHit,
+  type GEDDocumentChunks, type GEDChunk, type GEDIndexHealth, type GEDSearchHit, type GEDProdHit,
 } from "@/lib/api";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -717,24 +717,88 @@ function HitRow({ hit, rrfRank }: { hit: GEDSearchHit; rrfRank: number }) {
   );
 }
 
+function ProdHitRow({ hit, rank, scoreLabel }: { hit: GEDProdHit; rank: number; scoreLabel: string }) {
+  const [open, setOpen] = useState(false);
+  const badge = DOC_TYPE_LABELS[hit.doc_type ?? "unknown"] ?? DOC_TYPE_LABELS.unknown;
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white/70 overflow-hidden">
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 transition-colors">
+        <span className="text-xs font-bold text-blue-600 tabular-nums shrink-0">#{rank}</span>
+        <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded-md border shrink-0", badge.color)}>{badge.label}</span>
+        <span className="text-xs font-medium text-slate-700 truncate flex-1">{hit.filename}</span>
+        {hit.expanded_from_parent && (
+          <span
+            className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-violet-50 text-violet-600 border border-violet-100 shrink-0"
+            title="Contexte remonté au chunk parent (small-to-big)"
+          >
+            via parent
+          </span>
+        )}
+        <span className="text-[10px] text-slate-500 shrink-0 tabular-nums" title={`Score ${scoreLabel}`}>
+          {scoreLabel} {hit.relevance_score.toFixed(scoreLabel === "rerank" ? 2 : 4)}
+        </span>
+        <span className="text-[10px] text-slate-400 shrink-0 tabular-nums">{hit.context_words} mots · {hit.context_tokens} tok</span>
+        {open ? <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+      </button>
+      {open && (
+        <div className="border-t border-slate-100 px-3 py-2.5 flex flex-col gap-2 bg-slate-50/40">
+          <div>
+            <p className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">Extrait (citation)</p>
+            <p className="text-[11px] text-slate-600 leading-snug">{hit.excerpt}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">
+              Contexte injecté au LLM — {hit.context_chars} c.{hit.expanded_from_parent ? " (parent)" : ""}
+            </p>
+            <pre className="text-[11px] text-slate-700 whitespace-pre-wrap break-words max-h-56 overflow-y-auto font-mono leading-relaxed">
+              {hit.context_preview}{hit.context_chars > hit.context_preview.length ? " …" : ""}
+            </pre>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SearchPlaygroundDrawer({ onClose }: { onClose: () => void }) {
+  const [mode, setMode] = useState<"prod" | "debug">("prod");
   const [query, setQuery] = useState("");
   const [docType, setDocType] = useState("");
   const [topK, setTopK] = useState(10);
+  const [rerank, setRerank] = useState(false);
   const [hits, setHits] = useState<GEDSearchHit[]>([]);
+  const [prodHits, setProdHits] = useState<GEDProdHit[]>([]);
+  const [prodMeta, setProdMeta] = useState<{ scoreLabel: string; rerankApplied: boolean; rerankerAvailable: boolean } | null>(null);
   const [meta, setMeta] = useState<{ dense: number; sparse: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [searched, setSearched] = useState(false);
+
+  const switchMode = (m: "prod" | "debug") => {
+    setMode(m);
+    setSearched(false);
+    setHits([]);
+    setProdHits([]);
+    setMeta(null);
+    setProdMeta(null);
+    setError("");
+  };
 
   const run = async () => {
     if (!query.trim()) return;
     setLoading(true);
     setError("");
     try {
-      const res = await searchGEDDebug(query, topK, docType || undefined);
-      setHits(res.results);
-      setMeta({ dense: res.dense_hits, sparse: res.sparse_hits });
+      if (mode === "debug") {
+        const res = await searchGEDDebug(query, topK, docType || undefined);
+        setHits(res.results);
+        setMeta({ dense: res.dense_hits, sparse: res.sparse_hits });
+      } else {
+        const res = await searchGEDProd(query, topK, docType || undefined, rerank);
+        setProdHits(res.results);
+        setProdMeta({ scoreLabel: res.score_label, rerankApplied: res.rerank_applied, rerankerAvailable: res.reranker_available });
+        setMeta(null);
+      }
       setSearched(true);
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Erreur de recherche");
@@ -753,12 +817,35 @@ function SearchPlaygroundDrawer({ onClose }: { onClose: () => void }) {
             <div className="flex items-center gap-2">
               <Search className="w-4 h-4 text-blue-500" />
               <h3 className="text-sm font-semibold text-slate-900">Playground de recherche</h3>
-              <span className="text-[11px] text-slate-400">dense · BM25 · RRF, sans dédup</span>
             </div>
             <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors">
               <X className="w-4 h-4" />
             </button>
           </div>
+
+          {/* Bascule de mode */}
+          <div className="flex gap-1 mb-3 p-0.5 rounded-xl bg-slate-100 w-fit">
+            <button
+              onClick={() => switchMode("prod")}
+              className={cn("text-xs font-medium px-3 py-1.5 rounded-lg transition-colors",
+                mode === "prod" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700")}
+            >
+              Production
+            </button>
+            <button
+              onClick={() => switchMode("debug")}
+              className={cn("text-xs font-medium px-3 py-1.5 rounded-lg transition-colors",
+                mode === "debug" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700")}
+            >
+              Diagnostic
+            </button>
+            <span className="text-[11px] text-slate-400 self-center pl-2">
+              {mode === "prod"
+                ? "ce que le chat reçoit : fusion chunk + expansion parent + dédup"
+                : "fusion brute : scores dense / BM25 / RRF par chunk"}
+            </span>
+          </div>
+
           <div className="flex gap-2">
             <input
               value={query} autoFocus
@@ -793,6 +880,15 @@ function SearchPlaygroundDrawer({ onClose }: { onClose: () => void }) {
                 className="w-14 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
               />
             </label>
+            {mode === "prod" && (
+              <label className="text-xs text-slate-500 flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox" checked={rerank} onChange={(e) => setRerank(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded border-slate-300 accent-blue-600"
+                />
+                Reranker
+              </label>
+            )}
             {meta && (
               <span className="text-xs text-slate-400 ml-auto">{meta.dense} dense · {meta.sparse} BM25</span>
             )}
@@ -812,12 +908,37 @@ function SearchPlaygroundDrawer({ onClose }: { onClose: () => void }) {
           ) : !searched ? (
             <div className="flex flex-col items-center justify-center py-16 text-center text-slate-400">
               <Search className="w-8 h-8 mb-2 text-slate-300" />
-              <p className="text-sm">Lancez une requête pour voir les chunks remontés</p>
+              <p className="text-sm">
+                {mode === "prod"
+                  ? "Lancez une requête pour voir les blocs envoyés au LLM"
+                  : "Lancez une requête pour voir les chunks remontés"}
+              </p>
             </div>
-          ) : hits.length === 0 ? (
-            <p className="text-sm text-slate-400 italic text-center py-10">Aucun résultat</p>
+          ) : mode === "prod" ? (
+            prodHits.length === 0 ? (
+              <p className="text-sm text-slate-400 italic text-center py-10">Aucun résultat</p>
+            ) : (
+              <>
+                {rerank && prodMeta && !prodMeta.rerankerAvailable && (
+                  <div className="flex items-center gap-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    Reranker non disponible côté serveur — résultats classés par RRF.
+                  </div>
+                )}
+                {prodMeta?.rerankApplied && (
+                  <div className="text-[11px] text-violet-600 font-medium px-1">
+                    Re-classement cross-encoder appliqué (scores « rerank »).
+                  </div>
+                )}
+                {prodHits.map((h, i) => (
+                  <ProdHitRow key={h.chunk_id} hit={h} rank={i + 1} scoreLabel={prodMeta?.scoreLabel ?? "RRF"} />
+                ))}
+              </>
+            )
           ) : (
-            hits.map((h, i) => <HitRow key={h.chunk_id} hit={h} rrfRank={i + 1} />)
+            hits.length === 0
+              ? <p className="text-sm text-slate-400 italic text-center py-10">Aucun résultat</p>
+              : hits.map((h, i) => <HitRow key={h.chunk_id} hit={h} rrfRank={i + 1} />)
           )}
         </div>
       </div>
@@ -855,6 +976,7 @@ export default function GEDPage() {
   const [inspectingFile, setInspectingFile] = useState<GEDFile | null>(null);
   const [showSearch, setShowSearch] = useState(false);
   const [healthKey, setHealthKey] = useState(0);
+  const [forceConfirm, setForceConfirm] = useState(false);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1010,6 +1132,38 @@ export default function GEDPage() {
             <RefreshCw className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />
             {refreshing ? "Indexation…" : "Réindexer"}
           </button>
+          {forceConfirm ? (
+            <div className="flex items-center gap-1 px-2 py-1 rounded-lg border border-amber-300 bg-amber-50">
+              <span className="text-[11px] text-amber-700 font-medium">Re-découper TOUT ?</span>
+              <button
+                onClick={async () => {
+                  setForceConfirm(false);
+                  try {
+                    const res = await reindexGED(true);
+                    setUploadMsg({ type: "ok", text: res.message });
+                    if (res.queued > 0) startPolling(selectedFolder, search);
+                  } catch (e: unknown) {
+                    setUploadMsg({ type: "err", text: e instanceof Error ? e.message : "Erreur réindexation" });
+                  }
+                }}
+                className="text-[11px] font-semibold text-amber-700 px-1.5 py-0.5 rounded hover:bg-amber-100"
+              >
+                Confirmer
+              </button>
+              <button onClick={() => setForceConfirm(false)} className="text-[11px] text-slate-500 px-1.5 py-0.5 rounded hover:bg-slate-100">
+                Annuler
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setForceConfirm(true)}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200 transition-colors font-medium"
+              title="Ré-indexer TOUS les documents (re-découpage complet, ex. après changement de chunking). Consomme le LLM."
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Tout ré-indexer
+            </button>
+          )}
           <button
             onClick={() => { loadTree(); loadFiles(selectedFolder, search); }}
             className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors font-medium"

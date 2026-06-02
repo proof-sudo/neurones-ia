@@ -12,13 +12,16 @@ Stratégie :
 from core.domain.document import Chunk, DocumentMetadata, DocumentType
 from .base import BaseChunker
 
-# Pour les CV : chunks larges pour éviter de couper un profil en deux.
-# Un CV de 5 pages fait ~1 500-2 000 mots — 3 000 mots garantit un seul chunk dans 95 % des cas.
-_CV_CHUNK_SIZE = 3000
-_CV_CHUNK_OVERLAP = 150
+# Small-to-big : on cherche sur de PETITS enfants (matching précis, embeddés sans
+# troncature) et on remonte un PARENT large (contexte complet) au retrieval.
+# Le parent garde tout le profil/projet ; l'enfant porte aussi l'en-tête structuré
+# pour rester autonome au matching.
+_CHILD_SIZE = 200          # mots par enfant (≈ sous la limite 256 tokens de MiniLM)
+_CHILD_OVERLAP = 30
 
-_OFFRE_CHUNK_SIZE = 1500
-_OFFRE_CHUNK_OVERLAP = 100
+_CV_PARENT_SIZE = 1600     # un CV tient en général dans un seul parent
+_OFFRE_PARENT_SIZE = 1200  # offres plus longues → plusieurs parents bornés
+_PARENT_OVERLAP = 0
 
 
 def _list_to_str(value) -> str:
@@ -86,53 +89,65 @@ class ContextualChunker(BaseChunker):
         fields = metadata.extracted_fields or {}
 
         if metadata.doc_type == DocumentType.CV:
-            return self._chunk_cv(text, words, doc_id, metadata, fields)
-        return self._chunk_offre(words, doc_id, metadata, fields)
+            prefix = _build_cv_header(fields)
+            parent_size = _CV_PARENT_SIZE
+        else:
+            prefix = _build_offre_prefix(fields)
+            parent_size = _OFFRE_PARENT_SIZE
 
-    def _chunk_cv(
-        self, text: str, words: list[str], doc_id: str, metadata: DocumentMetadata, fields: dict
+        return self._chunk_small_to_big(words, doc_id, metadata, prefix, parent_size)
+
+    def _chunk_small_to_big(
+        self,
+        words: list[str],
+        doc_id: str,
+        metadata: DocumentMetadata,
+        prefix: str,
+        parent_size: int,
     ) -> list[Chunk]:
-        header = _build_cv_header(fields)
-        step = max(1, _CV_CHUNK_SIZE - _CV_CHUNK_OVERLAP)
+        """
+        Découpe en blocs PARENTS larges (contexte) ; chaque parent est re-découpé en
+        petits ENFANTS (matching précis). L'en-tête/préfixe structuré est injecté dans
+        le parent ET dans chaque enfant pour qu'ils restent autonomes.
+        """
         chunks: list[Chunk] = []
+        global_idx = 0
+        parent_step = max(1, parent_size - _PARENT_OVERLAP)
+        child_step = max(1, _CHILD_SIZE - _CHILD_OVERLAP)
 
-        for i, start in enumerate(range(0, len(words), step)):
-            block = words[start : start + _CV_CHUNK_SIZE]
+        for p, p_start in enumerate(range(0, len(words), parent_step)):
+            block = words[p_start : p_start + parent_size]
             if len(block) < 20:
                 continue
-            # L'en-tête structuré est répété dans CHAQUE chunk :
-            # si le CV est coupé, chaque partie reste autonome et contient les certifications.
-            content = header + " ".join(block)
+
+            parent_id = f"{doc_id}_p{p}_parent"
+            parent_content = prefix + " ".join(block)
             chunks.append(Chunk(
-                chunk_id=f"{doc_id}_chunk_{i}",
+                chunk_id=parent_id,
                 doc_id=doc_id,
-                content=content,
-                token_count=len(content.split()),
-                chunk_index=i,
+                content=parent_content,
+                token_count=len(parent_content.split()),
+                chunk_index=global_idx,
                 metadata=metadata,
+                is_parent=True,
             ))
+            global_idx += 1
 
-        return chunks
-
-    def _chunk_offre(
-        self, words: list[str], doc_id: str, metadata: DocumentMetadata, fields: dict
-    ) -> list[Chunk]:
-        prefix = _build_offre_prefix(fields)
-        step = max(1, _OFFRE_CHUNK_SIZE - _OFFRE_CHUNK_OVERLAP)
-        chunks: list[Chunk] = []
-
-        for i, start in enumerate(range(0, len(words), step)):
-            block = words[start : start + _OFFRE_CHUNK_SIZE]
-            if len(block) < 20:
-                continue
-            content = prefix + " ".join(block)
-            chunks.append(Chunk(
-                chunk_id=f"{doc_id}_chunk_{i}",
-                doc_id=doc_id,
-                content=content,
-                token_count=len(content.split()),
-                chunk_index=i,
-                metadata=metadata,
-            ))
+            for c_start in range(0, len(block), child_step):
+                child_words = block[c_start : c_start + _CHILD_SIZE]
+                if len(child_words) < 20:
+                    continue
+                child_content = prefix + " ".join(child_words)
+                chunks.append(Chunk(
+                    chunk_id=f"{doc_id}_p{p}_c{global_idx}",
+                    doc_id=doc_id,
+                    content=child_content,
+                    token_count=len(child_content.split()),
+                    chunk_index=global_idx,
+                    metadata=metadata,
+                    parent_chunk_id=parent_id,
+                    is_parent=False,
+                ))
+                global_idx += 1
 
         return chunks

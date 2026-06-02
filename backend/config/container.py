@@ -20,6 +20,7 @@ class Container:
         self._embedder = None
         self._vector_store = None
         self._sparse_search = None
+        self._reranker = None
         self._pdf_parser = None
         self._docx_parser = None
         self._ged_storage = None
@@ -110,6 +111,15 @@ class Container:
         self._odoo_adapter = OdooAdapter()
         self._cache = RedisAdapter()
         self._token_budget = self._build_token_budget()
+        # Reranker cross-encoder (P6) — instance toujours créée (modèle chargé
+        # paresseusement au 1er usage), pour rester testable à la demande même si
+        # rerank_enabled=False (le chat ne l'active alors pas par défaut).
+        try:
+            from adapters.reranker.cross_encoder_adapter import CrossEncoderRerankAdapter
+            self._reranker = CrossEncoderRerankAdapter(settings.rerank_model)
+        except Exception as e:
+            logger.warning("Reranker non initialisé : %s", e)
+            self._reranker = None
 
     def _build_token_budget(self):
         from core.services.token_budget_manager import TokenBudgetManager
@@ -145,6 +155,10 @@ class Container:
             llm=self._llm_haiku,
             top_k=settings.retrieval_top_k,
             rerank_top_k=settings.rerank_top_k,
+            token_budget=self._token_budget,
+            reranker=self._reranker,
+            rerank_default=settings.rerank_enabled,
+            rerank_candidates=settings.rerank_candidates,
         )
         self._query_dispatcher = QueryDispatcher(
             llm=self._llm_haiku,
@@ -227,6 +241,10 @@ class Container:
     @property
     def vector_store(self):
         return self._vector_store
+
+    @property
+    def reranker(self):
+        return self._reranker
 
     @property
     def pdf_parser(self):

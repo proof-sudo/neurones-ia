@@ -256,6 +256,7 @@ class SearchDebugRequest(BaseModel):
     query: str
     top_k: int = 10
     doc_type: Optional[str] = None
+    rerank: Optional[bool] = None
 
 
 @router.post("/ged/search-debug")
@@ -269,6 +270,63 @@ async def search_debug(body: SearchDebugRequest, request: Request):
         top_k=max(1, min(body.top_k, 50)),
         doc_type=body.doc_type,
     )
+
+
+@router.post("/ged/search-prod")
+async def search_prod(body: SearchDebugRequest, request: Request):
+    """Recherche de PRODUCTION (telle que le chat la consomme) : fusion chunk-level,
+    expansion parent (small-to-big) et dédup par parent. Montre les blocs réellement
+    injectés au LLM — contrairement à /search-debug qui montre la fusion brute."""
+    if not body.query.strip():
+        raise HTTPException(status_code=400, detail="Requête vide")
+    container = _container(request)
+    rag_engine = container.rag_engine
+    token_budget = container.token_budget
+    filt = {"doc_type": body.doc_type} if body.doc_type else None
+
+    rerank_requested = bool(body.rerank)
+    reranker_available = container.reranker is not None
+    rerank_applied = rerank_requested and reranker_available
+
+    sources = await rag_engine.search(
+        query=body.query,
+        filter_metadata=filt,
+        top_k=max(1, min(body.top_k, 50)),
+        rerank=body.rerank,
+    )
+
+    def _tokens(text: str) -> int:
+        try:
+            return token_budget.estimate_tokens(text)
+        except Exception:
+            return len((text or "").split())
+
+    return {
+        "query": body.query,
+        "doc_type": body.doc_type,
+        "count": len(sources),
+        "rerank_requested": rerank_requested,
+        "reranker_available": reranker_available,
+        "rerank_applied": rerank_applied,
+        "score_label": "rerank" if rerank_applied else "RRF",
+        "results": [
+            {
+                "chunk_id": s.chunk_id,
+                "doc_id": s.doc_id,
+                "filename": s.filename,
+                "doc_type": s.doc_type.value,
+                "relevance_score": round(s.relevance_score, 6),
+                "expanded_from_parent": s.parent_chunk_id is not None,
+                "parent_chunk_id": s.parent_chunk_id,
+                "excerpt": s.excerpt,
+                "context_words": len((s.content or "").split()),
+                "context_tokens": _tokens(s.content or ""),
+                "context_chars": len(s.content or ""),
+                "context_preview": (s.content or "")[:700],
+            }
+            for s in sources
+        ],
+    }
 
 
 # ── GET /ged/index-health ─────────────────────────────────────────────────────
@@ -343,9 +401,9 @@ async def upload_file(
     }
 
 
-async def _index_file(ged_indexer, file_path: Path, doc_type: DocumentType):
+async def _index_file(ged_indexer, file_path: Path, doc_type: DocumentType, force: bool = False):
     try:
-        indexed = await ged_indexer.process(file_path, doc_type)
+        indexed = await ged_indexer.process(file_path, doc_type, force=force)
         logger.info("Indexation %s : %s", file_path.name, "OK" if indexed else "ignoré (inchangé)")
     except Exception as e:
         logger.error("Erreur indexation %s : %s", file_path.name, e)
@@ -445,8 +503,10 @@ async def create_folder(body: FolderRequest):
 
 
 @router.post("/ged/reindex")
-async def reindex_all(request: Request, background_tasks: BackgroundTasks):
-    """Relance l'indexation de tous les fichiers non encore indexés (ou modifiés)."""
+async def reindex_all(request: Request, background_tasks: BackgroundTasks, force: bool = False):
+    """Relance l'indexation des fichiers non encore indexés.
+    force=true : ré-indexe TOUS les fichiers (re-découpage complet, ex. après
+    changement de stratégie de chunking) en contournant le check de hash."""
     registry = _container(request).doc_registry
     ged_indexer = _container(request).ged_indexer
     ged_root_abs = _GED_ROOT.resolve()
@@ -461,13 +521,14 @@ async def reindex_all(request: Request, background_tasks: BackgroundTasks):
             continue
         for f in root.rglob("*"):
             if f.is_file() and f.suffix.lower() in _SUPPORTED_EXT:
-                if str(f.resolve()) not in indexed_paths:
+                if force or str(f.resolve()) not in indexed_paths:
                     pending.append((f, meta["doc_type"]))
 
     for file_path, doc_type in pending:
-        background_tasks.add_task(_index_file, ged_indexer, file_path, doc_type)
+        background_tasks.add_task(_index_file, ged_indexer, file_path, doc_type, force)
 
-    return {"queued": len(pending), "message": f"{len(pending)} fichier(s) mis en file d'indexation"}
+    verb = "ré-indexation complète" if force else "indexation"
+    return {"queued": len(pending), "message": f"{len(pending)} fichier(s) en file de {verb}"}
 
 
 @router.delete("/ged/folders")

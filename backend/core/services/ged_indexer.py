@@ -64,9 +64,16 @@ class GEDIndexer:
         self._pii_detector = pii_detector
         self._quarantine = quarantine
 
-    async def process(self, file_path: Path, doc_type: DocumentType = DocumentType.UNKNOWN) -> bool:
+    async def process(
+        self,
+        file_path: Path,
+        doc_type: DocumentType = DocumentType.UNKNOWN,
+        force: bool = False,
+    ) -> bool:
         """
         Indexe un fichier si son contenu a changé depuis la dernière indexation.
+        force=True : ré-indexe même si le hash est identique (ex. après changement
+        de stratégie de chunking).
         Retourne True si indexé, False si ignoré (hash identique ou quarantaine).
         """
         file_str = str(file_path)
@@ -74,7 +81,7 @@ class GEDIndexer:
         # ── 1. Hash check ──────────────────────────────────────────────────
         current_hash = await asyncio.to_thread(self._compute_hash_sync, file_path)
         existing = await self._registry.get_entry(file_str)
-        if existing and existing.hash_sha256 == current_hash:
+        if existing and existing.hash_sha256 == current_hash and not force:
             logger.debug("Fichier inchangé, skip : %s", file_path.name)
             return False
 

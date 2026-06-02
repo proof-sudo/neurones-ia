@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     rerank_top_k: int = 5
     max_context_tokens: int = 3000
 
+    # Reranker (P6) — cross-encoder local optionnel après la fusion RRF
+    rerank_enabled: bool = False     # si True, le chat re-classe par défaut
+    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    rerank_candidates: int = 20      # nb de candidats RRF re-scorés par le cross-encoder
+
     # Chat
     max_history_turns: int = 6
 

@@ -96,6 +96,7 @@ class ChromaDBAdapter(VectorStore):
                     relevance_score=1.0 - dist,
                     chunk_id=cid,
                     content=doc,
+                    parent_chunk_id=meta.get("parent_chunk_id") or None,
                 )
             )
         return sources

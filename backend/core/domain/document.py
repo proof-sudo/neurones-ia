@@ -79,3 +79,4 @@ class Source:
     page: Optional[int] = None
     chunk_id: Optional[str] = None
     content: Optional[str] = None  # Contenu complet du chunk (pour le contexte LLM) ; excerpt reste court (citations)
+    parent_chunk_id: Optional[str] = None  # Si défini, le contexte LLM remonte le parent (small-to-big)
