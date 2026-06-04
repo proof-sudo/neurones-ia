@@ -1,0 +1,151 @@
+=== Étape : analyze ===
+=== Exception : JSONDecodeError: Expecting ',' delimiter: line 139 column 6 (char 13787) ===
+=== Longueur réponse : 14327 chars ===
+=== Raw response (complet) ===
+```json
+{
+  "criteria": [
+    {
+      "id": "exp_societe",
+      "estimated_score": 4,
+      "risk_level": "ÉLEVÉ",
+      "rationale": "Nos références fournies (Offre_Technique_MCI_CARE.docx, ND-PROSUMA, ND-OCI) montrent une expérience en gestion financière et comptable, non en déploiement de solutions Commvault ou backup d'infrastructure bancaire. Ancienneté insuffisante démontrée sur sauvegarde/PRA.",
+      "sources_ged": ["Offre_Technique_MCI_CARE.docx", "ND - PROSUMA - ABE - PROSUMA.docx", "ND - OCI - 07 ABE APM.pdf"]
+    },
+    {
+      "id": "ref_similaires",
+      "estimated_score": 2,
+      "risk_level": "CRITIQUE",
+      "rationale": "Seules 2 références partielles en GED (PROSUMA, OCI APM), aucune attestation explicite de déploiement Commvault, solution backup, ou architecture cyber-résilience pour groupe bancaire. AO exige 5 références minimales (10 pts max). Risque d'élimination à phase 1 (seuil conformité).",
+      "sources_ged": ["ND - PROSUMA - ABE - PROSUMA.docx", "ND - OCI - 07 ABE APM.pdf"]
+    },
+    {
+      "id": "profils_cles",
+      "estimated_score": 0,
+      "risk_level": "CRITIQUE",
+      "rationale": "Aucun CV fourni en RAG. AO exige CVs de directeur projet, chef projet, consultants certifiés Commvault (min 3 ans exp.), ingénieur sécurité/réseau. Absence totale = élimination technique garantie.",
+      "sources_ged": []
+    },
+    {
+      "id": "methodologie",
+      "estimated_score": 1,
+      "risk_level": "CRITIQUE",
+      "rationale": "Aucun document de méthodologie projet, RACI, gestion des risques, ou planning détaillé en RAG. AO demande structuration projet claire (cadrage, architecture, mise en œuvre, formation). Exigence bloquante non satisfaite.",
+      "sources_ged": []
+    },
+    {
+      "id": "planning",
+      "estimated_score": 0,
+      "risk_level": "CRITIQUE",
+      "rationale": "Pas de planning d'exécution, calendrier de déploiement multi-filiales, ou tableau de bord en RAG. AO impose phasage détaillé par entité + mobilisation réaliste. Document absent = non-conforme.",
+      "sources_ged": []
+    },
+    {
+      "id": "certifications",
+      "estimated_score": 0,
+      "risk_level": "CRITIQUE",
+      "rationale": "Aucune certification Commvault, PMP, ou agrément partenaire éditeur démontré. AO exige Commvault certifiés, PMP/équivalent. Absence totale éliminatoire (15 pts attendus sur évaluation technique).",
+      "sources_ged": []
+    },
+    {
+      "id": "qualite_offre",
+      "estimated_score": 0,
+      "risk_level": "CRITIQUE",
+      "rationale": "Aucun document technique de conformité (Annexe 7 structure technique obligatoire), tableau de conformité, schémas d'architecture, ou dimensionnement détaillé. AO exige tableau RACI, architecture logique/physique, sécurité WORM/MFA/ransomware, plan recette. Dossier technique inexistant = élimination phase 2.",
+      "sources_ged": []
+    }
+  ],
+  "gaps_analysis": "**ÉCARTS CRITIQUES – Impossibilité de soumissionner en l'état :**\n\n1. **EXPERIENCE (20 pts)** : Références actuelles limités à gestion financière/comptable (MCI CARE), pas de déploiement infrastructure backup, Commvault, ou cyber-résilience bancaire. Aucune preuve d'ancienneté 5+ ans sur sauvegarde/PRA.\n\n2. **REFERENCES (15 pts)** : 2 ABE partielles vs 5 exigées. Aucune attestation explicite Commvault, architecture WORM/immutabilité, ou déploiement multisites bancaires. Non-conforme phase 1.\n\n3. **PROFILS CLES (20 pts)** : Zéro CV fourni. Absence certifications Commvault, PMP, expérience sécurité/réseau. Bloquant évaluation RH.\n\n4. **METHODOLOGIE (15 pts)** : Aucune documentation projet (RACI, gestion risques, cadrage, architecture proposée). Non-conforme.\n\n5. **PLANNING (10 pts)** : Pas de calendrier exécution, phasage filiales, ou tableau suivi. Non-conforme.\n\n6. **CERTIFICATIONS (10 pts)** : Aucune certification Commvault, PMP, ou partenariat éditeur formel attesté.\n\n7. **QUALITE OFFRE (10 pts)** : Absence complète Annexe 7 (structuration technique obligatoire), tableau conformité, architecture, dimensionnement, sécurité détaillée, intégration Commvault, documentation exploitation.\n\n**TOTAL ESTIMÉ : ~7/100 = ELIMINATION PHASE 1-2** (seuil minimum 70 pts requis phase 2).",
+  "strengths": [
+    "Présence régionale potentielle en Côte d'Ivoire (mention PROSUMA/OCI Abidjan)",
+    "Expérience démontrée en gestion de projets complexes multi-entités (bilan 3 ans)"
+  ],
+  "risks": [
+    {
+      "label": "Non-conformité administrative et techniquereference insuffisante",
+      "criticite": "BLOQUANT",
+      "pourquoi": "AO exige ≥5 références bancaires Commvault/backup (10 pts), 2 references en RAG dont aucune explicitement dédiée backup/Commvault. Élimination garantie phase 1 sauf constitution de partenariat de rang 2.",
+      "mitigation": "URGENT : Signer accord partenariat avec intégrateur Commvault AGILE (partenaire Gold/Platinium certifié) en Côte d'Ivoire/Sénégal. Faire valider les 5 ABE du partenaire (SQL, Exchange, VMware, appliance Commvault 100+TB). Signer engagement éditeur Commvault formel avant soumission (Design Review dédié pour architectures >100TB).",
+      "items_affected": ["ref_similaires", "exp_societe", "certifications"]
+    },
+    {
+      "label": "Absence totale d'équipe projet certifiée et qualifiée",
+      "criticite": "BLOQUANT",
+      "pourquoi": "AO demande CVs certifiés Commvault (3+ ans), PMP/équivalent, ingénieur sécurité. Zéro profil en RAG = 0/20 (profils_cles). Évaluation technique échouée dès phase 2.",
+      "mitigation": "IMPÉRATIF : Recruter ou formaliser avec partenaire : (1) Chef projet PMP certifié Commvault (5+ ans déploiements bancaires). (2) Architecte Commvault CCCA ou expert solution (4+ ans, >5 projets 100+TB). (3) Ingénieur sécurité/réseaux expérience WORM/MFA/ransomware. Fournir CVs détaillés + certificats officiels Commvault + références clients signées. Engagement éditeur Commvault de support/escalade inclus.",
+      "items_affected": ["profils_cles", "methodologie", "certifications"]
+    },
+    {
+      "label": "Absence d'offre technique structurée (Annexe 7, conformité sécurité)",
+      "criticite": "BLOQUANT",
+      "pourquoi": "Annexe 7 (structuration technique) OBLIGATOIRE. AO évalue : architecture logique/physique détaillée, dimensionnement RAM/CPU/RAID, WORM/MFA/ransomware proof, intégration Commvault multi-filiales, tableau conformité point-par-point (10 exigences sécurité). Absence = rejet automatique phase 2.",
+      "mitigation": "OBLIGATOIRE : Produire offre technique complète incluant : (1) Annexe 7 signée 100% complétée (schémas architecture, hypothèses sizing, taux compresssion). (2) Tableau conformité détaillé (Commvault + stockage WORM native + MFA/RBAC proof, anti-ransomware détection comportementale, chiffrement AES-256, journalisation 365j, Auxiliary Copy géographie). (3) Design Review Commvault approuvé (sites >100TB obligatoire). (4) Documentation exploitation complète (procédures backup/restore/DR, SLA support 7j/7, escalade éditeur SLA).",
+      "items_affected": ["qualite_offre", "methodologie"]
+    },
+    {
+      "label": "Manque de capacité déploiement multisites bancaires 10 entités UEMOA",
+      "criticite": "ÉLEVÉ",
+      "pourquoi": "AO : 10 filiales (ABI + BACI + BABN + BABF + BANE + BASN + BATG + BAML + BIAN + BAGB) déploiement autonome par filiale (50-150 TB), calendrier serré, support 7j/7 multi-pays. Aucune preuve d'expérience déploiement coordonné Côte d'Ivoire + Bénin + Burkina + Mali + Niger + Sénégal + Togo + Guinée-Bissau.",
+      "mitigation": "Formaliser partnership opérationnel avec intégrateurs locaux partenaires Commvault par pays (BACI→CI, BABN→BJ, BABF→BF, etc.). Structurer PMO unique ABI-Partenaire. Cadrer planning : phase déploiement appliances/serveurs (4 mois), phase tests/recette (1 mois), phase formation (1 mois), go-live échelonné par filiale (2 mois). SLA support local + escalade éditeur. Gouvernance hebdomadaire centralisée.",
+      "items_affected": ["planning", "methodologie", "profils_cles"]
+    },
+    {
+      "label": "Absence de preuve de solidité financière et capacité d'exécution",
+      "criticite": "ÉLEVÉ",
+      "pourquoi": "AO phase 1 filtre administratif strict : attestation solvabilité bancaire, capacité financière ≥montant marché (CAPEX appliances + services intégration + maintenance 3 ans), ratio liquidité >1, fonds propres. RAG ne contient aucun bilan, trésorerie, ligne crédit constructeur.",
+      "mitigation": "Produire dossier administratif complet : (1) Bilans 3 ans (CA progression, fonds propres, liquidité). (2) Attestation solvabilité bancaire récente (> 500 M FCFA CA ou équivalent). (3) Ligne de crédit confirmée constructeur Commvault/stockage (garantie CAPEX). (4) Assurances multirisque + RC (>1 B FCFA couverture). (5) Attestation fiscale régularité + cotisations sociales. Score > 6/10 capacité financière = pré-requis qualification.",
+      "items_affected": ["exp_societe"]
+    },
+    {
+      "label": "Engagement éditeur Commvault absent",
+      "criticite": "ÉLEVÉ",
+      "pourquoi": "AO section 4.3 : 'Engagement formel éditeur Commvault confirmant support projet et escalade directe incident majeur OBLIGATOIRE. Design Review >100TB DEMANDÉ. Absence = pénalisation évaluation technique (mention explicite).'",
+      "mitigation": "Obtenir et fournir en annexe offre technique : (1) Lettre engagement Commvault formal (partenaire channel, niveau support), (2) SLA support 7j/7 temps réponse critique <1h, (3) Accès TAC Commvault direct escalade, (4) Engagement Design Review pré-production pour architectures >100TB (BACI 150TB, filiales 100TB), (5) Certification partenariat Commvault du signataire.",
+      "items_affected": ["certifications", "methodologie"]
+    },
+    {
+      "label": "Risque retard exécution multi-site (pénalités 0.5%/jour max 10%)",
+      "criticite": "MODÉRÉ",
+      "pourquoi": "AO section 3.21 : pénalité 0.5%/jour retard sans plafond >10%. Absence capacité déploiement coordonné 10 filiales risque délai x échecs recette x non-conformité sécurité WORM/MFA post-installation.",
+      "mitigation": "Planning réaliste structuré : Phase 1 (1.5 mois) : audit infra + cadrage BACI + ABI. Phase 2 (2 mois) : déploiement appliance/serveur BACI + BAGB. Phase 3 (2.5 mois) : déploiement 7 filiales (2/semaine cadence). Phase 4 (1 mois) : tests/recette globale + remediation. Phase 5 (0.5 mois) : go-live + formation. Buffer 0.5 mois contingence. SLA support technique immédiat (24h escalade éditeur). Tableaux RACI + reporting hebdomadaire.",
+      "items_affected": ["planning", "methodologie"]
+    }
+  ],
+  "recommendation": "NO_BID",
+  "justification": "Évaluation : **IMPOSSIBILITÉ DE PRÉSENTER OFFRE CONFORME EN L'ÉTAT.** Profils 0/7 critères majeurs non satisfaits : (1) Références insuffisantes/non-similaires (2/15 pt estimé). (2) Profils équipe absent (0/20). (3) Méthodologie projet inexistante (1/15). (4) Certifications Commvault/PMP nulles (0/10). (5) Qualité offre technique : tableau conformité obligatoire (Annexe 7) absent (0/10). Score estimé phase technique : ~7/100 vs seuil 70/100 = **ÉLIMINATION GARANTIE phase 2.** AO bancaire stricte (phase 1 filtre administratif + 5 références min) : absence partenaire certifié Commvault + CVs experts + références déploiement backup => **REJET ADMINISTRATIF phase 1 altement probable.** Seule solution : **PARTENARIAT INTÉGRATEUR COMMVAULT AGILE** avec références validées, mais nécessiterait restructuration complète dossier vs délai soumission. **Recommandation : NE PAS SOUMISSIONNER** sauf intégration partenaire stratégique formel avant J-15.",
+  "preconditions": [
+    {
+      "label": "Signer accord partenariat formel intégrateur Commvault certifié (Gold/Platinum) avec ≥5 références ABE bancaires Commvault/backup (sélectionner depuis liste Commvault CI/Sénégal/Bénin préférentiellement)",
+      "type": "STRATÉGIQUE",
+      "deadline": "J-21 (3 semaines avant soumission)",
+      "responsable": "Directeur Commercial + VP Offre",
+      "blocking": true
+    },
+    {
+      "label": "Constituer équipe projet certifiée : (1) Chef Projet PMP/PRINCE2 + Commvault CCCA (5+ ans déploiement bancaire). (2) Architecte Commvault expertise WORM/ransomware (4+ ans, >5 projets 100+TB validés). (3) Ingénieur Sécurité/Réseaux certifié (3+ ans MFA/chiffrement/journalisation bancaire). Fournir CVs + certificats officiels Commvault.",
+      "type": "RH",
+      "deadline": "J-18 (2.5 semaines avant soumission)",
+      "responsable": "Directeur RH + VP Delivery",
+      "blocking": true
+    },
+    {
+      "label": "Produire offre technique complète conformité obligatoire : (1) Annexe 7 structuration signée 100% remplie (architecture détaillée, dimensionnement, hypothèses). (2) Tableau conformité point-par-point 10 exigences sécurité (WORM native, MFA, anti-ransomware détection comportementale, chiffrement AES-256, journalisation, scan intégrité, RBAC, Auxiliary Copy, LDAP/AD, support multi-OS/hyperviseur). (3) Design Review Commvault approuvé écrit (obligatoire sites >100TB : BACI 150TB). (4) Dossier PRA/BC complet (RPO/RTO, isolation réseau, air-gap logique, procédures restore/DR documentées).",
+      "type": "TECHNIQUE",
+      "deadline": "J-14 (2 semaines avant soumission)",
+      "responsable": "VP Offre + Architecte Solution",
+      "blocking": true
+    },
+    {
+      "label": "Formaliser engagement éditeur Commvault : (1) Lettre engagement partenaire channel approuvée Commvault. (2) SLA support 7j/7 temps critique <1h. (3) TAC escalade direct formalisé. (4) Design Review pré-production. (5) Engagement maintenance/mises à jour 3+ ans incluses.",
+      "type": "COMMERCIAL",
+      "deadline": "J-12 (12 jours avant soumission)",
+      "responsable": "Directeur Commercial + Account Manager Commvault",
+      "blocking": true
+    },
+    {
+      "label": "Satisfaire tests capacité financière phase 1 : (1) Bilans comptables 3 ans (CA >500 M FCFA progression). (2) Attestation solvabilité bancaire récente. (3) Ligne crédit constructeur confirmée (>30% CAPEX). (4) Assurances multirisque + RC (>1 B FCFA). (5) Attestations fiscales + cotisations sociales à jour. Score ≥6/10 requis pour phase 2.",
+      "type": "FINANCIER",
+      "deadline": "J-7 (1 semaine avant soumission)",
+      "responsable": "Responsable Financier + Trésorier",
+      "blocking": true
+    

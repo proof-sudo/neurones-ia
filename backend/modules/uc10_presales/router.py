@@ -10,12 +10,31 @@ from fastapi.responses import Response
 from modules.uc10_presales.schemas import (
     ScoringResultSchema, OfferGenerationRequest, OfferGenerationResponse,
     KeyElementSchema, MatchedDocumentSchema, BidRecommendationSchema,
-    BidStrategyRequest, BidStrategyResponse, AnalysisExportRequest,
+    BidStrategyRequest, BidStrategySchema, AnalysisExportRequest,
     StrategyExportRequest, ChecklistExportRequest,
     TeamMatchRequest, TeamMatchResponse,
+    MarketIdentitySchema, CalendarEventSchema, EvaluationModalitiesSchema,
+    ScoringCriterionSchema, RiskSchema, PreconditionSchema, AppendixSchema,
+    PartnerSchema, PhaseActionSchema, StrategyPhaseSchema,
+    RequiredProfileSchema, EligibilityThresholdSchema, FinancialDataSchema,
 )
 from modules.uc10_presales.use_case import PresalesUseCase
-from core.domain.offer import ScoringResult
+from core.domain.offer import ScoringResult, BidStrategy, Partner, Appendix
+
+# Checklist générique inférée (CI / marchés publics) — utilisée quand l'AO ne liste
+# aucune pièce explicite. Affichée avec un avertissement « inférée ».
+_GENERIC_CHECKLIST: list[Appendix] = [
+    Appendix(code="—", label="Registre du commerce (RCCM)", type="ADMIN"),
+    Appendix(code="—", label="Attestation de régularité fiscale (DGI)", type="ADMIN"),
+    Appendix(code="—", label="Attestation de régularité sociale (CNPS)", type="ADMIN"),
+    Appendix(code="—", label="Statuts de la société et pouvoir du signataire", type="ADMIN"),
+    Appendix(code="—", label="Attestation de non-faillite / non-exclusion", type="ADMIN"),
+    Appendix(code="—", label="Références similaires avec attestations de bonne fin", type="TECHNIQUE"),
+    Appendix(code="—", label="Méthodologie d'intervention et moyens techniques", type="TECHNIQUE"),
+    Appendix(code="—", label="Bilans des 3 derniers exercices", type="FINANCIER"),
+    Appendix(code="—", label="Caution bancaire de soumission", type="FINANCIER"),
+    Appendix(code="—", label="CVs des profils clés et certifications", type="RH"),
+]
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/presales", tags=["UC10 - Pre-Sales"])
@@ -77,22 +96,46 @@ async def generate_offer(body: OfferGenerationRequest, request: Request):
     )
 
 
-@router.post("/bid-strategy", response_model=BidStrategyResponse)
+@router.post("/bid-strategy", response_model=BidStrategySchema)
 async def bid_strategy(body: BidStrategyRequest, request: Request):
-    """Génère une stratégie de réponse et chronogramme pour un AO."""
+    """Génère une stratégie de réponse structurée (5 phases + étape 0 + appendices)."""
     use_case = _get_use_case(request)
     scoring = _from_schema(body.scoring_result)
+    partner = Partner(**body.partner.model_dump()) if body.partner else None
     try:
         result = await use_case.generate_bid_strategy(
             scoring=scoring,
             client_name=body.client_name or "",
             decision=body.decision,
             decision_reason=body.decision_reason or "",
+            partner=partner,
         )
-        return BidStrategyResponse(**result)
+        return _strategy_to_schema(result)
     except Exception as e:
         logger.exception("Bid strategy generation failed")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _strategy_to_schema(s: BidStrategy) -> BidStrategySchema:
+    return BidStrategySchema(
+        phases=[
+            StrategyPhaseSchema(
+                id=p.id, name=p.name, description=p.description,
+                start_day=p.start_day, end_day=p.end_day,
+                actions=[PhaseActionSchema(**a.__dict__) for a in p.actions],
+                prerequisites=p.prerequisites, is_blocking_next=p.is_blocking_next,
+            )
+            for p in s.phases
+        ],
+        strategy_text=s.strategy_text,
+        response_plan=s.response_plan,
+        appendices=[AppendixSchema(**a.__dict__) for a in s.appendices],
+        partner=PartnerSchema(**s.partner.__dict__) if s.partner else None,
+        partner_validation=[PreconditionSchema(**pv.__dict__) for pv in s.partner_validation],
+        version=s.version,
+        parent_version=s.parent_version,
+        generated_at=s.generated_at,
+    )
 
 
 def _docx_helpers(doc):
@@ -181,6 +224,10 @@ def _docx_helpers(doc):
 
     def _render_rich_text(text: str):
         """Convertit du texte avec markdown basique en paragraphes Word bien formatés."""
+        # Normalise les patterns inline "(1) … (2) … (3) …" en liste numérotée
+        # multi-lignes pour que chaque item s'affiche sur sa propre ligne.
+        if re.search(r"\(\d+\)", text):
+            text = re.sub(r"\s*\((\d+)\)\s*", lambda m: f"\n\n{m.group(1)}. ", text)
         paragraphs = re.split(r"\n{2,}", text.strip())
         for block in paragraphs:
             lines = [l.strip() for l in block.split("\n") if l.strip()]
@@ -315,15 +362,73 @@ async def export_analysis(body: AnalysisExportRequest, request: Request):
 
     doc.add_page_break()
 
-    # ── 1. RÉSUMÉ EXÉCUTIF ────────────────────────────────────────────────────
-    h["section_title"]("Résumé exécutif", num="1")
+    section_num = 0
+    def _next_num() -> str:
+        nonlocal section_num
+        section_num += 1
+        return str(section_num)
+
+    # ── FICHE D'IDENTITÉ DU MARCHÉ ────────────────────────────────────────────
+    identity = scoring.market_identity
+    identity_rows = [
+        ("Type de marché", identity.type_marche),
+        ("Référence", identity.reference),
+        ("Autorité contractante", identity.autorite_contractante),
+        ("Durée du contrat", identity.duree_contrat),
+        ("Date de démarrage", identity.date_demarrage),
+        ("Deadline de soumission", identity.deadline_soumission),
+        ("Validité de l'offre", identity.validite_offre),
+        ("Périmètre géographique", identity.perimetre_geographique),
+        ("Éligibilité candidat", identity.eligibilite_candidat),
+    ]
+    identity_rows = [(lbl, val) for lbl, val in identity_rows if val and val.strip()]
+    if identity_rows:
+        h["section_title"]("Fiche d'identité du marché", num=_next_num())
+        conf_p = doc.add_paragraph()
+        conf_p.paragraph_format.space_after = Pt(4)
+        conf_r = conf_p.add_run(f"Fiabilité de l'extraction : {int(identity.confidence * 100)}%")
+        conf_r.italic = True; conf_r.font.size = Pt(9); conf_r.font.color.rgb = h["C_GRAY"]
+        h["cover_table"](identity_rows)
+        doc.add_paragraph("")
+
+    # ── RÉSUMÉ EXÉCUTIF ───────────────────────────────────────────────────────
+    h["section_title"]("Résumé exécutif", num=_next_num())
     if scoring.summary:
         h["body_para"](scoring.summary)
 
-    # ── 2. POINTS CLÉS ───────────────────────────────────────────────────────
+    # ── CALENDRIER DE L'AO ────────────────────────────────────────────────────
+    if scoring.calendar:
+        h["section_title"]("Calendrier de l'AO", num=_next_num())
+        cal_t = doc.add_table(rows=1, cols=3)
+        cal_t.style = "Table Grid"
+        for cell, lbl in zip(cal_t.rows[0].cells, ["Criticité", "Événement", "Date"]):
+            cell.text = lbl
+            h["cell_bg"](cell, "1E40AF")
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.bold = True; run.font.color.rgb = h["C_WHITE"]; run.font.size = Pt(10)
+        crit_color = {"BLOQUANT": "FEE2E2", "CRITIQUE": "FEF3C7", "INFO": "F1F5F9"}
+        for i, ev in enumerate(scoring.calendar):
+            row = cal_t.add_row().cells
+            row[0].text = ev.criticite
+            label_text = ev.label + (f"\n({ev.source_section})" if ev.source_section else "")
+            row[1].text = label_text
+            row[2].text = ev.date
+            h["cell_bg"](row[0], crit_color.get(ev.criticite, "F1F5F9"))
+            h["cell_bg"](row[1], "FFFFFF" if i % 2 == 0 else "F8FAFC")
+            h["cell_bg"](row[2], "FFFFFF" if i % 2 == 0 else "F8FAFC")
+            for cell in row:
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        run.font.size = Pt(10)
+            if row[0].paragraphs[0].runs:
+                row[0].paragraphs[0].runs[0].bold = True
+            row[0].width = Cm(3); row[1].width = Cm(9); row[2].width = Cm(4)
+        doc.add_paragraph("")
+
+    # ── POINTS CLÉS ───────────────────────────────────────────────────────────
     if scoring.key_elements:
-        h["section_title"]("Points clés identifiés par l'IA", num="2")
-        from docx.enum.table import WD_TABLE_ALIGNMENT
+        h["section_title"]("Points clés identifiés par l'IA", num=_next_num())
         kp_t = doc.add_table(rows=1, cols=2)
         kp_t.style = "Table Grid"
         for cell, lbl in zip(kp_t.rows[0].cells, ["Critère", "Valeur"]):
@@ -347,17 +452,159 @@ async def export_analysis(body: AnalysisExportRequest, request: Request):
             row[0].width = Cm(6); row[1].width = Cm(10)
         doc.add_paragraph("")
 
-    # ── 3-7. SECTIONS DOSSIER ─────────────────────────────────────────────────
+    # ── MODALITÉS D'ÉVALUATION ────────────────────────────────────────────────
+    evaluation = scoring.evaluation_modalities
+    eval_has_content = (
+        evaluation.ponderation_technique > 0 or evaluation.ponderation_financiere > 0
+        or evaluation.seuil_minimum_technique > 0
+        or bool(evaluation.formule_notation_financiere) or bool(evaluation.modalites)
+    )
+    if eval_has_content:
+        h["section_title"]("Modalités d'évaluation", num=_next_num())
+        conf_p = doc.add_paragraph()
+        conf_p.paragraph_format.space_after = Pt(4)
+        conf_r = conf_p.add_run(f"Fiabilité de l'extraction : {int(evaluation.confidence * 100)}%")
+        conf_r.italic = True; conf_r.font.size = Pt(9); conf_r.font.color.rgb = h["C_GRAY"]
+
+        eval_t = doc.add_table(rows=1, cols=3)
+        eval_t.style = "Table Grid"
+        for cell, lbl in zip(
+            eval_t.rows[0].cells,
+            ["Pondération technique", "Pondération financière", "Seuil min. technique"],
+        ):
+            cell.text = lbl
+            h["cell_bg"](cell, "1E40AF")
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.bold = True; run.font.color.rgb = h["C_WHITE"]; run.font.size = Pt(10)
+        vals_row = eval_t.add_row().cells
+        vals_row[0].text = f"{evaluation.ponderation_technique} %"
+        vals_row[1].text = f"{evaluation.ponderation_financiere} %"
+        vals_row[2].text = f"{evaluation.seuil_minimum_technique} / 100"
+        for cell, bg in zip(vals_row, ["EFF6FF", "EEF2FF", "F1F5F9"]):
+            h["cell_bg"](cell, bg)
+            for para in cell.paragraphs:
+                para.alignment = h["WD_ALIGN_PARAGRAPH"].CENTER
+                for run in para.runs:
+                    run.bold = True; run.font.size = Pt(14); run.font.color.rgb = h["C_NAVY"]
+        doc.add_paragraph("")
+
+        if evaluation.formule_notation_financiere:
+            p = doc.add_paragraph()
+            p.paragraph_format.space_after = Pt(5)
+            lbl_r = p.add_run("Formule de notation financière : ")
+            lbl_r.bold = True; lbl_r.font.size = Pt(10); lbl_r.font.color.rgb = h["C_NAVY"]
+            val_r = p.add_run(evaluation.formule_notation_financiere)
+            val_r.font.size = Pt(10); val_r.font.color.rgb = h["C_TEXT"]; val_r.font.name = "Consolas"
+
+        if evaluation.modalites:
+            p = doc.add_paragraph()
+            p.paragraph_format.space_before = Pt(4)
+            p.paragraph_format.space_after = Pt(3)
+            r = p.add_run("Modalités complémentaires")
+            r.bold = True; r.font.size = Pt(10); r.font.color.rgb = h["C_NAVY"]
+            for m in evaluation.modalites:
+                h["bullet"](m, h["C_BLUE"])
+        doc.add_paragraph("")
+
+    # ── PROFILS DEMANDÉS (effectifs + compétences détaillées) ─────────────────
+    if scoring.profils_demandes:
+        total_postes = sum(p.quantite for p in scoring.profils_demandes)
+        titre = "Profils demandés" + (f" — {total_postes} postes au total" if total_postes else "")
+        h["section_title"](titre, color=h["C_NAVY"], num=_next_num())
+        prof_t = doc.add_table(rows=1, cols=5)
+        prof_t.style = "Table Grid"
+        for cell, lbl in zip(prof_t.rows[0].cells, ["Profil", "Qté", "Niveau / Exp.", "Compétences", "Certifications"]):
+            cell.text = lbl
+            h["cell_bg"](cell, "1E40AF")
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.bold = True; run.font.color.rgb = h["C_WHITE"]; run.font.size = Pt(9)
+        for i, p in enumerate(scoring.profils_demandes):
+            bg = ["EFF6FF", "F8FAFC", "F8FAFC", "F8FAFC", "F8FAFC"] if i % 2 == 0 else ["FFFFFF"] * 5
+            row = prof_t.add_row().cells
+            # Col 0 : nom (gras) + domaine (gris) + missions (petites lignes)
+            row[0].text = ""
+            p0 = row[0].paragraphs[0]
+            rn = p0.add_run(p.profil); rn.bold = True; rn.font.size = Pt(9); rn.font.color.rgb = h["C_NAVY"]
+            if p.domaine:
+                rd = p0.add_run(f"  ·  {p.domaine}"); rd.font.size = Pt(8); rd.font.color.rgb = h["C_GRAY"]
+            for m in p.missions:
+                mp = row[0].add_paragraph(); mp.paragraph_format.space_after = Pt(0)
+                rm = mp.add_run(f"› {m}"); rm.font.size = Pt(8); rm.font.color.rgb = h["C_TEXT"]
+            # Cols 1-4
+            row[1].text = str(p.quantite) if p.quantite else "—"
+            row[2].text = " / ".join(x for x in (p.niveau, p.experience_min) if x) or "—"
+            row[3].text = " · ".join(p.competences) if p.competences else "—"
+            row[4].text = " · ".join(p.certifications) if p.certifications else "—"
+            for ci in range(1, 5):
+                for para in row[ci].paragraphs:
+                    for run in para.runs:
+                        run.font.size = Pt(9); run.font.color.rgb = h["C_TEXT"]
+            row[1].paragraphs[0].alignment = h["WD_ALIGN_PARAGRAPH"].CENTER
+            for ci in range(5):
+                h["cell_bg"](row[ci], bg[ci])
+            row[0].width = Cm(4.0); row[1].width = Cm(1.2); row[2].width = Cm(2.8); row[3].width = Cm(4.4); row[4].width = Cm(3.2)
+        doc.add_paragraph("")
+
+    # ── SEUILS D'ÉLIGIBILITÉ (recevabilité chiffrée) ──────────────────────────
+    if scoring.seuils_eligibilite:
+        h["section_title"]("Seuils d'éligibilité", color=h["C_RED"], num=_next_num())
+        seuil_t = doc.add_table(rows=1, cols=4)
+        seuil_t.style = "Table Grid"
+        for cell, lbl in zip(seuil_t.rows[0].cells, ["Critère d'éligibilité", "Valeur", "Type", "Éliminatoire"]):
+            cell.text = lbl
+            h["cell_bg"](cell, "1E40AF")
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.bold = True; run.font.color.rgb = h["C_WHITE"]; run.font.size = Pt(9)
+        for i, s in enumerate(scoring.seuils_eligibilite):
+            row = seuil_t.add_row().cells
+            row[0].text = s.libelle
+            row[1].text = (s.valeur + (f" {s.unite}" if s.unite else "")).strip() or "—"
+            row[2].text = s.type
+            row[3].text = "OUI" if s.blocking else "non"
+            base_bg = "FFFFFF" if i % 2 else "F8FAFC"
+            for ci in range(4):
+                h["cell_bg"](row[ci], base_bg)
+                for para in row[ci].paragraphs:
+                    for run in para.runs:
+                        run.font.size = Pt(9); run.font.color.rgb = h["C_TEXT"]
+            if row[1].paragraphs[0].runs:
+                row[1].paragraphs[0].runs[0].bold = True
+                row[1].paragraphs[0].runs[0].font.color.rgb = h["C_NAVY"]
+            if s.blocking and row[3].paragraphs[0].runs:
+                row[3].paragraphs[0].runs[0].bold = True
+                row[3].paragraphs[0].runs[0].font.color.rgb = h["C_RED"]
+                h["cell_bg"](row[3], "FEE2E2")
+            row[3].paragraphs[0].alignment = h["WD_ALIGN_PARAGRAPH"].CENTER
+            row[0].width = Cm(7.0); row[1].width = Cm(4.0); row[2].width = Cm(3.0); row[3].width = Cm(2.5)
+        doc.add_paragraph("")
+
+    # ── DONNÉES FINANCIÈRES ───────────────────────────────────────────────────
+    fin = scoring.donnees_financieres
+    fin_rows = [(lbl, val) for lbl, val in [
+        ("Budget estimé", fin.budget_estime),
+        ("Modalités de paiement", fin.modalites_paiement),
+        ("Garantie de soumission", fin.garantie_soumission),
+        ("Pénalités", fin.penalites),
+    ] if val]
+    if fin_rows:
+        h["section_title"]("Données financières", color=h["C_GREEN"], num=_next_num())
+        h["cover_table"](fin_rows)
+        doc.add_paragraph("")
+
+    # ── SECTIONS DOSSIER ──────────────────────────────────────────────────────
     sections = [
-        ("Critères de sélection", scoring.criteres_selection, "3", h["C_BLUE"]),
-        ("Besoins identifiés", scoring.besoins, "4", h["C_BLUE"]),
-        ("Prérequis", scoring.prerequis, "5", h["C_NAVY"]),
-        ("Ressources demandées", scoring.ressources_demandees, "6", h["C_NAVY"]),
-        ("Points de vigilance", scoring.points_vigilance, "7", h["C_AMBER"]),
+        ("Critères de sélection", scoring.criteres_selection, h["C_BLUE"]),
+        ("Besoins identifiés", scoring.besoins, h["C_BLUE"]),
+        ("Prérequis", scoring.prerequis, h["C_NAVY"]),
+        ("Ressources demandées", scoring.ressources_demandees, h["C_NAVY"]),
+        ("Points de vigilance", scoring.points_vigilance, h["C_AMBER"]),
     ]
-    for title, items, num, color in sections:
+    for title, items, color in sections:
         if items:
-            h["section_title"](title, color=color, num=num)
+            h["section_title"](title, color=color, num=_next_num())
             for item in items:
                 h["bullet"](item, color)
             doc.add_paragraph("")
@@ -434,8 +681,14 @@ async def export_scoring(body: AnalysisExportRequest, request: Request):
 
     doc.add_page_break()
 
-    # ── 1. RECOMMANDATION & JUSTIFICATION ─────────────────────────────────────
-    h["section_title"]("Recommandation & Justification", num="1")
+    # Numérotation dynamique : la section "Préalables" n'apparaît que si CONDITIONAL.
+    from itertools import count as _count
+    _counter = _count(1)
+    def _next_num() -> str:
+        return str(next(_counter))
+
+    # ── RECOMMANDATION & JUSTIFICATION ────────────────────────────────────────
+    h["section_title"]("Recommandation & Justification", num=_next_num())
     if scoring.justification:
         jp = doc.add_paragraph()
         jp.paragraph_format.space_after = Pt(8)
@@ -443,27 +696,136 @@ async def export_scoring(body: AnalysisExportRequest, request: Request):
         jr = jp.add_run(scoring.justification)
         jr.font.size = Pt(10); jr.italic = True; jr.font.color.rgb = h["C_TEXT"]
 
-    # ── 2. FORCES & ATOUTS ────────────────────────────────────────────────────
+    # ── GRILLE D'ÉVALUATION DÉTAILLÉE ─────────────────────────────────────────
+    if scoring.criteria_breakdown:
+        h["section_title"]("Grille d'évaluation détaillée", num=_next_num(), color=h["C_NAVY"])
+        total_est = sum(c.estimated_score for c in scoring.criteria_breakdown)
+        total_max = sum(c.max_points for c in scoring.criteria_breakdown)
+        grid_t = doc.add_table(rows=1, cols=5)
+        grid_t.style = "Table Grid"
+        for cell, lbl in zip(grid_t.rows[0].cells, ["Critère", "Max", "Estimé", "Risque", "Justification"]):
+            cell.text = lbl
+            h["cell_bg"](cell, "0F295A")
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.bold = True; run.font.color.rgb = h["C_WHITE"]; run.font.size = Pt(10)
+        # Code couleur par niveau de risque du critère
+        risk_color = {"FAIBLE": "DCFCE7", "MODÉRÉ": "FEF9C3", "ÉLEVÉ": "FFEDD5", "CRITIQUE": "FEE2E2"}
+        for i, c in enumerate(scoring.criteria_breakdown):
+            row = grid_t.add_row().cells
+            # Critère inféré (non trouvé verbatim) → marqué « (estimé) »
+            row[0].text = c.label + (" (estimé)" if c.is_inferred else "")
+            row[1].text = str(c.max_points)
+            row[2].text = str(c.estimated_score)
+            row[3].text = c.risk_level
+            row[4].text = c.rationale
+            zebra = "FFFFFF" if i % 2 == 0 else "F8FAFC"
+            h["cell_bg"](row[0], zebra); h["cell_bg"](row[1], zebra); h["cell_bg"](row[2], zebra)
+            h["cell_bg"](row[3], risk_color.get(c.risk_level, "F1F5F9")); h["cell_bg"](row[4], zebra)
+            for cell in row:
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        run.font.size = Pt(9)
+            # Label du critère en italique si inféré (signale qu'il n'est pas dans l'AO)
+            if c.is_inferred and row[0].paragraphs[0].runs:
+                row[0].paragraphs[0].runs[0].italic = True
+            row[0].width = Cm(6.5); row[1].width = Cm(1.3); row[2].width = Cm(1.5)
+            row[3].width = Cm(2.2); row[4].width = Cm(5)
+        # Ligne de total
+        tot = grid_t.add_row().cells
+        tot[0].text = "TOTAL"
+        tot[1].text = str(total_max)
+        tot[2].text = str(total_est)
+        tot[3].text = f"{scoring.score}/100"
+        tot[4].text = ""
+        for cell in tot:
+            h["cell_bg"](cell, "E2E8F0")
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.bold = True; run.font.size = Pt(9); run.font.color.rgb = h["C_NAVY"]
+        doc.add_paragraph("")
+
+    # ── RISQUES & MITIGATION ──────────────────────────────────────────────────
+    if scoring.risks:
+        h["section_title"]("Risques & mitigation", num=_next_num(), color=h["C_RED"])
+        risk_t = doc.add_table(rows=1, cols=4)
+        risk_t.style = "Table Grid"
+        for cell, lbl in zip(risk_t.rows[0].cells, ["Risque", "Criticité", "Pourquoi", "Mitigation"]):
+            cell.text = lbl
+            h["cell_bg"](cell, "B91C1C")
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.bold = True; run.font.color.rgb = h["C_WHITE"]; run.font.size = Pt(10)
+        crit_color = {"MODÉRÉ": "FEF9C3", "ÉLEVÉ": "FFEDD5", "CRITIQUE": "FEE2E2", "BLOQUANT": "FECACA"}
+        for i, r in enumerate(scoring.risks):
+            row = risk_t.add_row().cells
+            row[0].text = r.label
+            row[1].text = r.criticite
+            row[2].text = r.pourquoi
+            row[3].text = r.mitigation or "— (à définir)"
+            zebra = "FFFFFF" if i % 2 == 0 else "F8FAFC"
+            h["cell_bg"](row[0], zebra); h["cell_bg"](row[1], crit_color.get(r.criticite, "F1F5F9"))
+            h["cell_bg"](row[2], zebra); h["cell_bg"](row[3], "F0FDF4")
+            for cell in row:
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        run.font.size = Pt(9)
+            if row[1].paragraphs[0].runs:
+                row[1].paragraphs[0].runs[0].bold = True
+            row[0].width = Cm(4.5); row[1].width = Cm(2); row[2].width = Cm(4.5); row[3].width = Cm(5.5)
+        doc.add_paragraph("")
+
+    # ── PRÉALABLES CONDITIONNELS (seulement si CONDITIONAL) ───────────────────
+    if scoring.recommendation.value == "CONDITIONAL":
+        h["section_title"]("Préalables conditionnels", num=_next_num(), color=h["C_AMBER"])
+        if scoring.preconditions:
+            intro = doc.add_paragraph()
+            intro.paragraph_format.space_after = Pt(6)
+            ir = intro.add_run("Conditions à lever pour faire passer la recommandation de CONDITIONNEL à GO :")
+            ir.font.size = Pt(10); ir.italic = True; ir.font.color.rgb = h["C_TEXT"]
+            for p in scoring.preconditions:
+                line = doc.add_paragraph()
+                line.paragraph_format.left_indent = Cm(0.6)
+                line.paragraph_format.space_after = Pt(3)
+                box = line.add_run("☐  ")
+                box.font.size = Pt(11)
+                box.font.color.rgb = h["C_RED"] if p.blocking else h["C_AMBER"]
+                meta = f"[{p.type}]"
+                if p.deadline:
+                    meta += f" {p.deadline}"
+                if p.responsable:
+                    meta += f" · {p.responsable}"
+                lbl_r = line.add_run(p.label + " ")
+                lbl_r.font.size = Pt(10); lbl_r.font.color.rgb = h["C_TEXT"]
+                if p.blocking:
+                    lbl_r.bold = True
+                meta_r = line.add_run(meta)
+                meta_r.font.size = Pt(8); meta_r.font.color.rgb = h["C_GRAY"]; meta_r.italic = True
+        else:
+            # Garde-fou : CONDITIONAL sans préalables (dégradation gracieuse côté pipeline)
+            warn = doc.add_paragraph()
+            warn.paragraph_format.space_after = Pt(6)
+            wr = warn.add_run(
+                "⚠ Recommandation conditionnelle sans préalables explicites — "
+                "à compléter manuellement avant décision."
+            )
+            wr.font.size = Pt(10); wr.italic = True; wr.font.color.rgb = h["C_AMBER"]
+        doc.add_paragraph("")
+
+    # ── FORCES & ATOUTS ───────────────────────────────────────────────────────
     if scoring.strengths:
-        h["section_title"]("Forces & Atouts de Neurones", num="2", color=h["C_GREEN"])
+        h["section_title"]("Forces & Atouts de Neurones", num=_next_num(), color=h["C_GREEN"])
         for s in scoring.strengths:
             h["bullet"](s, h["C_GREEN"])
         doc.add_paragraph("")
 
-    # ── 3. RISQUES IDENTIFIÉS ─────────────────────────────────────────────────
-    if scoring.risks:
-        h["section_title"]("Risques identifiés", num="3", color=h["C_RED"])
-        for r in scoring.risks:
-            h["bullet"](r, h["C_RED"])
-        doc.add_paragraph("")
-
-    # ── 4. ANALYSE DES ÉCARTS ─────────────────────────────────────────────────
+    # ── ANALYSE DES ÉCARTS ────────────────────────────────────────────────────
     if scoring.gaps_analysis:
-        h["section_title"]("Analyse des écarts", num="4", color=h["C_AMBER"])
+        h["section_title"]("Analyse des écarts", num=_next_num(), color=h["C_AMBER"])
         h["render_rich_text"](scoring.gaps_analysis)
         doc.add_paragraph("")
 
-    # ── 5. DOCUMENTS GED PERTINENTS ──────────────────────────────────────────
+    # ── DOCUMENTS GED PERTINENTS ──────────────────────────────────────────────
     all_docs = list(scoring.team_matches or []) + list(scoring.similar_projects or []) + list(scoring.matched_documents or [])
     seen_keys: set = set()
     unique_docs = []
@@ -474,7 +836,7 @@ async def export_scoring(body: AnalysisExportRequest, request: Request):
             unique_docs.append(d)
     unique_docs.sort(key=lambda d: d.relevance_score, reverse=True)
     if unique_docs:
-        h["section_title"]("Documents GED pertinents", num="5", color=h["C_NAVY"])
+        h["section_title"]("Documents GED pertinents", num=_next_num(), color=h["C_NAVY"])
         ged_t = doc.add_table(rows=1, cols=3)
         ged_t.style = "Table Grid"
         for cell, lbl in zip(ged_t.rows[0].cells, ["Document", "Type", "Pertinence"]):
@@ -509,9 +871,8 @@ async def export_scoring(body: AnalysisExportRequest, request: Request):
 
 @router.post("/export-strategy")
 async def export_strategy(body: StrategyExportRequest):
-    """Exporte la stratégie de réponse en document Word professionnel."""
+    """Exporte la stratégie de réponse en document Word professionnel (7 sections)."""
     from docx import Document as DocxDocument
-    from docx.enum.table import WD_TABLE_ALIGNMENT
 
     scoring = _from_schema(body.scoring_result)
     client_name = body.client_name or "Non précisé"
@@ -567,8 +928,54 @@ async def export_strategy(body: StrategyExportRequest):
 
     doc.add_page_break()
 
-    # ── 1. CONTEXTE DE L'AO ───────────────────────────────────────────────────
-    h["section_title"]("Contexte de l'appel d'offres", num="1")
+    bid = body.bid_strategy
+    from itertools import count as _count
+    _counter = _count(1)
+    def _next_num() -> str:
+        return str(next(_counter))
+
+    # ── VALIDATION PARTENAIRE / PRÉALABLES (étape 0, si applicable) ────────────
+    if bid.partner_validation:
+        title = "Validation partenaire (étape 0)" if bid.partner else "Préalables à lever (étape 0)"
+        h["section_title"](title, num=_next_num(), color=h["C_AMBER"])
+        if bid.partner:
+            pp = doc.add_paragraph()
+            pp.paragraph_format.space_after = Pt(6)
+            pr = pp.add_run(f"Partenaire de groupement : {bid.partner.name} "
+                            f"({bid.partner.role}, {bid.partner.type})")
+            pr.font.size = Pt(10); pr.bold = True; pr.font.color.rgb = h["C_NAVY"]
+        pv_t = doc.add_table(rows=1, cols=5)
+        pv_t.style = "Table Grid"
+        for cell, lbl in zip(pv_t.rows[0].cells, ["Critère", "Type", "Pièces requises", "Bloquant", "Statut"]):
+            cell.text = lbl
+            h["cell_bg"](cell, "92400E")
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.bold = True; run.font.color.rgb = h["C_WHITE"]; run.font.size = Pt(10)
+        for i, pv in enumerate(bid.partner_validation):
+            row = pv_t.add_row().cells
+            row[0].text = pv.label
+            row[1].text = pv.type
+            row[2].text = "\n".join(pv.pieces_requises) if pv.pieces_requises else "—"
+            row[3].text = "OUI" if pv.blocking else "non"
+            row[4].text = pv.status
+            zebra = "FFFFFF" if i % 2 == 0 else "F8FAFC"
+            # Code couleur : bloquant non levé = rouge clair
+            crit_bg = "FECACA" if pv.blocking else "FEF9C3"
+            h["cell_bg"](row[0], zebra); h["cell_bg"](row[1], zebra)
+            h["cell_bg"](row[2], zebra); h["cell_bg"](row[3], crit_bg); h["cell_bg"](row[4], zebra)
+            for cell in row:
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        run.font.size = Pt(9)
+            if row[3].paragraphs[0].runs:
+                row[3].paragraphs[0].runs[0].bold = True
+            row[0].width = Cm(4.5); row[1].width = Cm(2.2); row[2].width = Cm(5)
+            row[3].width = Cm(1.8); row[4].width = Cm(2.5)
+        doc.add_paragraph("")
+
+    # ── CONTEXTE DE L'AO ──────────────────────────────────────────────────────
+    h["section_title"]("Contexte de l'appel d'offres", num=_next_num())
     if scoring.summary:
         h["body_para"](scoring.summary)
     if scoring.key_elements:
@@ -595,53 +1002,102 @@ async def export_strategy(body: StrategyExportRequest):
             row[0].width = Cm(5.5); row[1].width = Cm(10.5)
         doc.add_paragraph("")
 
-    # ── 2. STRATÉGIE DE RÉPONSE ───────────────────────────────────────────────
-    h["section_title"]("Stratégie de réponse", num="2")
-    if body.strategy.strip():
-        h["render_rich_text"](body.strategy)
+    # ── STRATÉGIE DE RÉPONSE ──────────────────────────────────────────────────
+    h["section_title"]("Stratégie de réponse", num=_next_num())
+    if bid.strategy_text.strip():
+        h["render_rich_text"](bid.strategy_text)
     else:
         h["body_para"]("Stratégie non définie.")
     doc.add_paragraph("")
 
-    # ── 3. CHRONOGRAMME ───────────────────────────────────────────────────────
-    if body.chronogram:
-        h["section_title"]("Chronogramme de traitement", num="3")
-        chrono_t = doc.add_table(rows=1, cols=3)
-        chrono_t.style = "Table Grid"
-        chrono_t.alignment = WD_TABLE_ALIGNMENT.CENTER
-        for cell, lbl in zip(chrono_t.rows[0].cells, ["Période", "Action à mener", "Responsable"]):
-            cell.text = lbl
-            h["cell_bg"](cell, "1E40AF")
-            for para in cell.paragraphs:
-                for run in para.runs:
-                    run.bold = True; run.font.color.rgb = h["C_WHITE"]; run.font.size = Pt(10)
-        chrono_t.rows[0].cells[0].width = Cm(2.5)
-        chrono_t.rows[0].cells[1].width = Cm(11)
-        chrono_t.rows[0].cells[2].width = Cm(3)
-
-        for i, item in enumerate(body.chronogram):
-            row = chrono_t.add_row().cells
-            row[0].text = str(item.get("semaine", ""))
-            row[1].text = str(item.get("action", ""))
-            row[2].text = str(item.get("responsable", ""))
-            bg = "EFF6FF" if i % 2 == 0 else "FFFFFF"
-            h["cell_bg"](row[1], bg); h["cell_bg"](row[2], bg)
-            h["cell_bg"](row[0], "DBEAFE")
-            for cell in row:
+    # ── PLAN DE RÉPONSE EN PHASES ─────────────────────────────────────────────
+    if bid.phases:
+        h["section_title"]("Plan de réponse en phases", num=_next_num(), color=h["C_NAVY"])
+        for ph in bid.phases:
+            # En-tête de phase
+            hp = doc.add_paragraph()
+            hp.paragraph_format.space_before = Pt(8)
+            hp.paragraph_format.space_after = Pt(3)
+            day_range = f" ({ph.start_day}→{ph.end_day})" if ph.start_day else ""
+            hr = hp.add_run(f"{ph.id} · {ph.name}{day_range}")
+            hr.bold = True; hr.font.size = Pt(10); hr.font.color.rgb = h["C_BLUE"]
+            if ph.is_blocking_next:
+                br = hp.add_run("   ⛔ bloque la phase suivante tant que non terminée")
+                br.font.size = Pt(8); br.italic = True; br.font.color.rgb = h["C_RED"]
+            if not ph.actions:
+                h["body_para"]("Actions à préciser.")
+                continue
+            ph_t = doc.add_table(rows=1, cols=4)
+            ph_t.style = "Table Grid"
+            for cell, lbl in zip(ph_t.rows[0].cells, ["Jour", "Action", "Responsable", "Livrable"]):
+                cell.text = lbl
+                h["cell_bg"](cell, "1E40AF")
                 for para in cell.paragraphs:
                     for run in para.runs:
-                        run.font.size = Pt(10)
-            if row[0].paragraphs[0].runs:
-                row[0].paragraphs[0].runs[0].bold = True
-                row[0].paragraphs[0].runs[0].font.color.rgb = h["C_BLUE"]
-            row[0].width = Cm(2.5); row[1].width = Cm(11); row[2].width = Cm(3)
+                        run.bold = True; run.font.color.rgb = h["C_WHITE"]; run.font.size = Pt(9)
+            for i, a in enumerate(ph.actions):
+                row = ph_t.add_row().cells
+                row[0].text = a.day_label
+                row[1].text = a.action
+                row[2].text = a.responsable
+                row[3].text = a.deliverable or "—"
+                zebra = "EFF6FF" if i % 2 == 0 else "FFFFFF"
+                h["cell_bg"](row[0], "DBEAFE")
+                h["cell_bg"](row[1], zebra); h["cell_bg"](row[2], zebra); h["cell_bg"](row[3], zebra)
+                for cell in row:
+                    for para in cell.paragraphs:
+                        for run in para.runs:
+                            run.font.size = Pt(9)
+                if row[0].paragraphs[0].runs:
+                    row[0].paragraphs[0].runs[0].bold = True
+                    row[0].paragraphs[0].runs[0].font.color.rgb = h["C_BLUE"]
+                row[0].width = Cm(1.8); row[1].width = Cm(7.5); row[2].width = Cm(3.5); row[3].width = Cm(3.2)
         doc.add_paragraph("")
 
-    # ── 4. PLAN DE RÉPONSE ────────────────────────────────────────────────────
-    if body.response_plan.strip():
-        h["section_title"]("Plan de réponse détaillé", num="4")
-        h["render_rich_text"](body.response_plan)
+    # ── PLAN DE RÉPONSE DÉTAILLÉ ──────────────────────────────────────────────
+    if bid.response_plan.strip():
+        h["section_title"]("Plan de réponse détaillé", num=_next_num())
+        h["render_rich_text"](bid.response_plan)
         doc.add_paragraph("")
+
+    # ── CHECKLIST DES PIÈCES & ANNEXES ────────────────────────────────────────
+    if bid.appendices:
+        h["section_title"]("Checklist des pièces & annexes", num=_next_num(), color=h["C_NAVY"])
+        ap_t = doc.add_table(rows=1, cols=6)
+        ap_t.style = "Table Grid"
+        for cell, lbl in zip(ap_t.rows[0].cells, ["Code", "Pièce", "Type", "Responsable", "Langue", "Statut"]):
+            cell.text = lbl
+            h["cell_bg"](cell, "0F295A")
+            for para in cell.paragraphs:
+                for run in para.runs:
+                    run.bold = True; run.font.color.rgb = h["C_WHITE"]; run.font.size = Pt(9)
+        for i, ap in enumerate(bid.appendices):
+            row = ap_t.add_row().cells
+            row[0].text = ap.code
+            row[1].text = ap.label + ("" if ap.obligatoire else "  (facultatif)")
+            row[2].text = ap.type
+            row[3].text = ap.responsable or "—"
+            row[4].text = ap.langue or "—"
+            row[5].text = ap.statut
+            zebra = "EFF6FF" if i % 2 == 0 else "FFFFFF"
+            for cell in row:
+                h["cell_bg"](cell, zebra)
+                for para in cell.paragraphs:
+                    for run in para.runs:
+                        run.font.size = Pt(9)
+            if row[0].paragraphs[0].runs:
+                row[0].paragraphs[0].runs[0].bold = True
+            row[0].width = Cm(1.8); row[1].width = Cm(6); row[2].width = Cm(2.2)
+            row[3].width = Cm(3); row[4].width = Cm(1.8); row[5].width = Cm(1.7)
+        doc.add_paragraph("")
+
+    # Numéro de version du plan
+    ver_p = doc.add_paragraph()
+    ver_p.alignment = WD.CENTER
+    ver_p.paragraph_format.space_before = Pt(10)
+    vr = ver_p.add_run(f"Version {bid.version} du plan de réponse"
+                       + (f" · généré le {bid.generated_at}" if bid.generated_at else ""))
+    vr.font.size = Pt(8); vr.italic = True; vr.font.color.rgb = h["C_GRAY"]
 
     h["footer_line"]()
     buffer = BytesIO()
@@ -683,90 +1139,107 @@ async def export_checklist(body: ChecklistExportRequest):
         ("Date d'export", datetime.now().strftime("%d %B %Y")),
     ])
 
-    # Score de complétude
-    required_items = [it for it in body.items if it.required]
-    checked_required = [it for it in required_items if it.checked]
-    total_all = len(body.items)
+    # Pièces réelles de l'AO ; sinon checklist générique inférée
+    appendices = list(body.appendices)
+    inferred = not appendices
+    if inferred:
+        appendices = _GENERIC_CHECKLIST
+
+    # Score de complétude : pièces obligatoires au statut OK / total obligatoire
+    obligatoires = [a for a in appendices if a.obligatoire]
+    ok_oblig = [a for a in obligatoires if a.statut == "OK"]
+    ok_total = sum(1 for a in appendices if a.statut == "OK")
     score_p = doc.add_paragraph()
     score_p.alignment = WD.CENTER
     score_p.paragraph_format.space_before = Pt(14)
-    score_p.paragraph_format.space_after = Pt(20)
-    score_color = h["C_GREEN"] if len(checked_required) == len(required_items) else (
-        h["C_AMBER"] if len(checked_required) >= len(required_items) * 0.6 else h["C_RED"]
+    score_p.paragraph_format.space_after = Pt(6)
+    n_oblig = len(obligatoires)
+    score_color = h["C_GREEN"] if n_oblig and len(ok_oblig) == n_oblig else (
+        h["C_AMBER"] if n_oblig and len(ok_oblig) >= n_oblig * 0.6 else h["C_RED"]
     )
     sc_r = score_p.add_run(
-        f"Complétude : {len(checked_required)}/{len(required_items)} items obligatoires cochés"
-        f"  ·  {sum(1 for it in body.items if it.checked)}/{total_all} items totaux"
+        f"Complétude : {len(ok_oblig)}/{n_oblig} pièces obligatoires fournies"
+        f"  ·  {ok_total}/{len(appendices)} pièces totales"
     )
     sc_r.bold = True; sc_r.font.size = Pt(11); sc_r.font.color.rgb = score_color
 
+    if inferred:
+        warn_p = doc.add_paragraph()
+        warn_p.alignment = WD.CENTER
+        warn_p.paragraph_format.space_after = Pt(14)
+        wr = warn_p.add_run(
+            "⚠ Checklist générique (inférée) — l'AO ne listait pas de pièces explicites. "
+            "À compléter et vérifier manuellement."
+        )
+        wr.font.size = Pt(9); wr.italic = True; wr.font.color.rgb = h["C_AMBER"]
+
     doc.add_page_break()
 
-    # ── Sections par catégorie ────────────────────────────────────────────────────
-    cat_order = ["Technique", "Administratif", "Commercial"]
-    cat_colors = {
-        "Technique": h["C_BLUE"],
-        "Administratif": h["C_NAVY"],
-        "Commercial": h["C_AMBER"],
+    # ── Sections par type de pièce ────────────────────────────────────────────────
+    type_order = ["ADMIN", "TECHNIQUE", "FINANCIER", "RH"]
+    type_label = {
+        "ADMIN": "Pièces administratives",
+        "TECHNIQUE": "Pièces techniques",
+        "FINANCIER": "Pièces financières",
+        "RH": "Pièces RH / équipe",
     }
-    cat_num = {"Technique": "1", "Administratif": "2", "Commercial": "3"}
+    type_color = {
+        "ADMIN": h["C_NAVY"], "TECHNIQUE": h["C_BLUE"],
+        "FINANCIER": h["C_GREEN"], "RH": h["C_AMBER"],
+    }
+    # Symbole + couleur + fond par statut
+    statut_symbol = {"OK": "✓", "NOK": "✗", "EN_COURS": "◐", "PENDING": "☐"}
+    statut_fg = {"OK": h["C_GREEN"], "NOK": h["C_RED"], "EN_COURS": h["C_AMBER"], "PENDING": h["C_RED"]}
+    statut_bg = {"OK": "D1FAE5", "NOK": "FEE2E2", "EN_COURS": "FEF9C3"}
 
-    for cat in cat_order:
-        items_cat = [it for it in body.items if it.category == cat]
-        if not items_cat:
+    from itertools import count as _count
+    _counter = _count(1)
+
+    for ptype in type_order:
+        items_type = [a for a in appendices if a.type == ptype]
+        if not items_type:
             continue
-        h["section_title"](cat, color=cat_colors[cat], num=cat_num[cat])
+        h["section_title"](type_label[ptype], color=type_color[ptype], num=str(next(_counter)))
 
-        tbl = doc.add_table(rows=1, cols=3)
+        tbl = doc.add_table(rows=1, cols=4)
         tbl.style = "Table Grid"
-        for cell, lbl in zip(tbl.rows[0].cells, ["Statut", "Élément du dossier", "Observations"]):
+        for cell, lbl in zip(tbl.rows[0].cells, ["Statut", "Code", "Pièce du dossier", "Observations"]):
             cell.text = lbl
             h["cell_bg"](cell, "0F295A")
             for para in cell.paragraphs:
                 for run in para.runs:
                     run.bold = True; run.font.color.rgb = h["C_WHITE"]; run.font.size = Pt(9)
-        tbl.rows[0].cells[0].width = Cm(1.5)
-        tbl.rows[0].cells[1].width = Cm(11)
-        tbl.rows[0].cells[2].width = Cm(4)
 
-        for i, item in enumerate(items_cat):
+        for i, item in enumerate(items_type):
             row = tbl.add_row().cells
-            symbol = "✓" if item.checked else "☐"
-            row[0].text = symbol
-            row[1].text = item.label
-            row[2].text = item.note or ""
+            row[0].text = statut_symbol.get(item.statut, "☐")
+            row[1].text = item.code or "—"
+            row[2].text = item.label + ("" if item.obligatoire else "  (facultatif)")
+            row[3].text = item.note or (item.source_section or "")
 
-            # Fond : vert si coché, bleu pâle si required non coché, blanc sinon
-            if item.checked:
-                bg = "D1FAE5"
-            elif item.required:
-                bg = "EFF6FF"
-            else:
-                bg = "FFFFFF" if i % 2 == 0 else "F8FAFC"
+            default_bg = "FFFFFF" if i % 2 == 0 else "F8FAFC"
+            bg = statut_bg.get(item.statut, default_bg)
             for cell in row:
                 h["cell_bg"](cell, bg)
 
-            # Style symbole
             for para in row[0].paragraphs:
+                para.paragraph_format.alignment = WD.CENTER
                 for run in para.runs:
-                    run.font.size = Pt(12)
-                    run.bold = True
-                    run.font.color.rgb = h["C_GREEN"] if item.checked else h["C_RED"]
-                    para.paragraph_format.alignment = WD.CENTER
-
-            # Style label : bold si required
+                    run.font.size = Pt(12); run.bold = True
+                    run.font.color.rgb = statut_fg.get(item.statut, h["C_RED"])
             for para in row[1].paragraphs:
                 for run in para.runs:
-                    run.font.size = Pt(9)
-                    if item.required:
-                        run.bold = True
-
+                    run.font.size = Pt(9); run.bold = True
             for para in row[2].paragraphs:
                 for run in para.runs:
                     run.font.size = Pt(9)
-                    run.font.color.rgb = h["C_GRAY"]
+                    if item.obligatoire:
+                        run.bold = True
+            for para in row[3].paragraphs:
+                for run in para.runs:
+                    run.font.size = Pt(9); run.font.color.rgb = h["C_GRAY"]
 
-            row[0].width = Cm(1.5); row[1].width = Cm(11); row[2].width = Cm(4)
+            row[0].width = Cm(1.5); row[1].width = Cm(2); row[2].width = Cm(9); row[3].width = Cm(4)
 
         doc.add_paragraph("")
 
@@ -804,8 +1277,9 @@ def _to_schema(result: ScoringResult) -> ScoringResultSchema:
         ],
         gaps_analysis=result.gaps_analysis,
         strengths=result.strengths,
-        risks=result.risks,
+        risks=[RiskSchema(**r.__dict__) for r in result.risks],
         score=result.score,
+        score_basis=result.score_basis,
         recommendation=BidRecommendationSchema(result.recommendation.value),
         justification=result.justification,
         criteres_selection=result.criteres_selection,
@@ -828,11 +1302,27 @@ def _to_schema(result: ScoringResult) -> ScoringResultSchema:
             )
             for m in result.similar_projects
         ],
+        market_identity=MarketIdentitySchema(**result.market_identity.__dict__),
+        calendar=[CalendarEventSchema(**c.__dict__) for c in result.calendar],
+        evaluation_modalities=EvaluationModalitiesSchema(**result.evaluation_modalities.__dict__),
+        criteria_breakdown=[ScoringCriterionSchema(**c.__dict__) for c in result.criteria_breakdown],
+        preconditions=[PreconditionSchema(**p.__dict__) for p in result.preconditions],
+        preconditions_incomplete=result.preconditions_incomplete,
+        appendices=[AppendixSchema(**a.__dict__) for a in result.appendices],
+        appendices_incomplete=result.appendices_incomplete,
+        profils_demandes=[RequiredProfileSchema(**p.__dict__) for p in result.profils_demandes],
+        seuils_eligibilite=[EligibilityThresholdSchema(**s.__dict__) for s in result.seuils_eligibilite],
+        donnees_financieres=FinancialDataSchema(**result.donnees_financieres.__dict__),
     )
 
 
 def _from_schema(schema: ScoringResultSchema) -> ScoringResult:
-    from core.domain.offer import KeyElement, MatchedDocument, BidRecommendation
+    from core.domain.offer import (
+        KeyElement, MatchedDocument, BidRecommendation,
+        MarketIdentity, CalendarEvent, EvaluationModalities,
+        ScoringCriterion, Risk, Precondition, Appendix,
+        RequiredProfile, EligibilityThreshold, FinancialData,
+    )
     return ScoringResult(
         ao_filename=schema.ao_filename,
         summary=schema.summary,
@@ -846,8 +1336,9 @@ def _from_schema(schema: ScoringResultSchema) -> ScoringResult:
         ],
         gaps_analysis=schema.gaps_analysis,
         strengths=schema.strengths,
-        risks=schema.risks,
+        risks=[Risk(**r.model_dump()) for r in schema.risks],
         score=schema.score,
+        score_basis=schema.score_basis,
         recommendation=BidRecommendation(schema.recommendation.value),
         justification=schema.justification,
         criteres_selection=schema.criteres_selection,
@@ -870,4 +1361,15 @@ def _from_schema(schema: ScoringResultSchema) -> ScoringResult:
             )
             for m in schema.similar_projects
         ],
+        market_identity=MarketIdentity(**schema.market_identity.model_dump()),
+        calendar=[CalendarEvent(**c.model_dump()) for c in schema.calendar],
+        evaluation_modalities=EvaluationModalities(**schema.evaluation_modalities.model_dump()),
+        criteria_breakdown=[ScoringCriterion(**c.model_dump()) for c in schema.criteria_breakdown],
+        preconditions=[Precondition(**p.model_dump()) for p in schema.preconditions],
+        preconditions_incomplete=schema.preconditions_incomplete,
+        appendices=[Appendix(**a.model_dump()) for a in schema.appendices],
+        appendices_incomplete=schema.appendices_incomplete,
+        profils_demandes=[RequiredProfile(**p.model_dump()) for p in schema.profils_demandes],
+        seuils_eligibilite=[EligibilityThreshold(**s.model_dump()) for s in schema.seuils_eligibilite],
+        donnees_financieres=FinancialData(**schema.donnees_financieres.model_dump()),
     )

@@ -40,7 +40,27 @@ class Container:
         self._init_adapters()
         self._init_services()
         await self._start_jobs()
+        self._warm_up_local_embedder()
         logger.info("Container prêt.")
+
+    def _warm_up_local_embedder(self):
+        """Précharge sentence-transformers en tâche de fond pour éviter le cold-start
+        (~6s) au premier scoring quand OpenAI est en quota épuisé. Non bloquant : ne
+        retarde pas 'Application startup complete'."""
+        if not settings.embed_fallback_enabled:
+            return
+        import asyncio
+
+        async def _load():
+            try:
+                from adapters.embeddings.sentence_transformers_adapter import _load_model
+                loop = asyncio.get_event_loop()
+                await loop.run_in_executor(None, _load_model, settings.embed_fallback_model)
+                logger.info("Warm-up : modèle d'embeddings local préchargé.")
+            except Exception as exc:
+                logger.warning("Warm-up embeddings local échoué (non bloquant) : %s", exc)
+
+        asyncio.create_task(_load())
 
     async def shutdown(self):
         if self._scheduler:

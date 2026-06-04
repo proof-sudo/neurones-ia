@@ -53,26 +53,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <main className="flex-1 flex flex-col overflow-hidden min-w-0">
         {/* Barre mobile */}
         <div
-          className="lg:hidden shrink-0 flex items-center gap-3 px-4 py-3"
-          style={{
-            background: "rgba(10,14,26,0.97)",
-            borderBottom: "1px solid rgba(139,92,246,0.15)",
-          }}
+          className="lg:hidden shrink-0 flex items-center gap-3 px-4 py-3 bg-white"
+          style={{ borderBottom: "1px solid #ecedf0" }}
         >
           <button
             onClick={() => setSidebarOpen(true)}
-            className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-400 hover:text-white hover:bg-white/10 transition-colors"
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 transition-colors"
           >
             <Menu className="w-5 h-5" />
           </button>
           <div className="flex items-center gap-2">
-            <div
-              className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
-              style={{ background: "linear-gradient(135deg, #6d28d9 0%, #2563eb 100%)" }}
-            >
-              <Zap className="w-3.5 h-3.5 text-white" strokeWidth={2.5} />
-            </div>
-            <span className="text-sm font-bold text-white tracking-tight">Neurones IA</span>
+            <Zap className="w-4 h-4 shrink-0 text-[#0a2a43]" strokeWidth={2.25} />
+            <span className="text-sm font-semibold text-slate-900 tracking-tight">Neurones IA</span>
           </div>
         </div>
 

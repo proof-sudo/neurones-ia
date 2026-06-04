@@ -48,6 +48,111 @@ export interface Source {
   relevance_score: number;
 }
 
+export interface MarketIdentity {
+  type_marche: string;
+  reference: string;
+  autorite_contractante: string;
+  duree_contrat: string;
+  date_demarrage: string;
+  deadline_soumission: string;
+  validite_offre: string;
+  perimetre_geographique: string;
+  eligibilite_candidat: string;
+  confidence: number;
+}
+
+export interface CalendarEvent {
+  label: string;
+  date: string;
+  criticite: "BLOQUANT" | "CRITIQUE" | "INFO";
+  source_section: string;
+}
+
+export interface EvaluationModalities {
+  ponderation_technique: number;
+  ponderation_financiere: number;
+  seuil_minimum_technique: number;
+  formule_notation_financiere: string;
+  modalites: string[];
+  confidence: number;
+}
+
+export type RiskLevel = "FAIBLE" | "MODÉRÉ" | "ÉLEVÉ" | "CRITIQUE";
+export type RiskCriticite = "MODÉRÉ" | "ÉLEVÉ" | "CRITIQUE" | "BLOQUANT";
+
+export interface ScoringCriterion {
+  id: string;
+  label: string;
+  max_points: number;
+  category: string;
+  is_inferred: boolean;
+  estimated_score: number;
+  risk_level: RiskLevel;
+  rationale: string;
+  sources_ged: string[];
+}
+
+export interface Risk {
+  label: string;
+  criticite: RiskCriticite;
+  pourquoi: string;
+  mitigation: string;
+  items_affected: string[];
+}
+
+export interface Precondition {
+  label: string;
+  type: "FINANCIER" | "ADMIN" | "TECHNIQUE" | "PARTENARIAT";
+  deadline: string;
+  responsable: string;
+  status: string;
+  blocking: boolean;
+  pieces_requises: string[];
+}
+
+export interface Appendix {
+  code: string;
+  label: string;
+  type: "ADMIN" | "TECHNIQUE" | "FINANCIER" | "RH";
+  obligatoire: boolean;
+  langue: string;
+  responsable: string;
+  deadline_interne: string;
+  statut: string;   // PENDING / EN_COURS / OK / NOK
+  source_section: string;
+  note: string;
+}
+
+export interface RequiredProfile {
+  profil: string;
+  domaine: string;
+  quantite: number;
+  niveau: string;
+  experience_min: string;
+  competences: string[];
+  certifications: string[];
+  missions: string[];
+  rattachement: string;
+  source_section: string;
+}
+
+export interface EligibilityThreshold {
+  libelle: string;
+  valeur: string;
+  unite: string;
+  type: "FINANCIER" | "EXPERIENCE" | "REFERENCES" | "ADMIN" | "AUTRE";
+  blocking: boolean;
+  source_section: string;
+}
+
+export interface FinancialData {
+  budget_estime: string;
+  modalites_paiement: string;
+  garantie_soumission: string;
+  penalites: string;
+  source_section: string;
+}
+
 export interface ScoringResult {
   ao_filename: string;
   summary: string;
@@ -55,8 +160,9 @@ export interface ScoringResult {
   matched_documents: { doc_id: string; filename: string; doc_type: string; relevance_score: number; excerpt: string }[];
   gaps_analysis: string;
   strengths: string[];
-  risks: string[];
+  risks: Risk[];
   score: number;
+  score_basis?: "GRILLE" | "ESTIME" | "INDISPONIBLE";
   recommendation: "GO" | "NO_BID" | "CONDITIONAL";
   justification: string;
   criteres_selection?: string[];
@@ -67,12 +173,55 @@ export interface ScoringResult {
   date_remise?: string;
   team_matches?: { doc_id: string; filename: string; doc_type: string; relevance_score: number; excerpt: string }[];
   similar_projects?: { doc_id: string; filename: string; doc_type: string; relevance_score: number; excerpt: string }[];
+  market_identity?: MarketIdentity;
+  calendar?: CalendarEvent[];
+  evaluation_modalities?: EvaluationModalities;
+  criteria_breakdown?: ScoringCriterion[];
+  preconditions?: Precondition[];
+  preconditions_incomplete?: boolean;
+  appendices?: Appendix[];
+  appendices_incomplete?: boolean;
+  profils_demandes?: RequiredProfile[];
+  seuils_eligibilite?: EligibilityThreshold[];
+  donnees_financieres?: FinancialData;
+}
+
+export interface Partner {
+  name: string;
+  role: string;   // chef_de_file / membre_groupement / sous_traitant
+  type: string;   // entreprise / consortium
+}
+
+export interface PhaseAction {
+  day_label: string;
+  action: string;
+  responsable: string;
+  duree_estimee: string;
+  deliverable: string;
+  statut: string;
+}
+
+export interface StrategyPhase {
+  id: string;
+  name: string;
+  description: string;
+  start_day: string;
+  end_day: string;
+  actions: PhaseAction[];
+  prerequisites: string[];
+  is_blocking_next: boolean;
 }
 
 export interface BidStrategy {
-  strategy: string;
-  chronogram: { semaine: string; action: string; responsable: string }[];
+  phases: StrategyPhase[];
+  strategy_text: string;
   response_plan: string;
+  appendices: Appendix[];
+  partner: Partner | null;
+  partner_validation: Precondition[];
+  version: number;
+  parent_version: number | null;
+  generated_at: string;
 }
 
 export interface TeamProfile {
@@ -319,6 +468,7 @@ export async function generateBidStrategy(
   decision: string,
   clientName?: string,
   decisionReason?: string,
+  partner?: Partner | null,
 ): Promise<BidStrategy> {
   const response = await apiFetch(`${API_BASE}/presales/bid-strategy`, {
     method: "POST",
@@ -328,6 +478,7 @@ export async function generateBidStrategy(
       client_name: clientName,
       decision,
       decision_reason: decisionReason,
+      partner: partner ?? null,
     }),
   }, 120_000);
   if (!response.ok) throw new Error(`Strategy error: ${response.status}`);
@@ -356,9 +507,7 @@ export async function exportScoring(scoringResult: ScoringResult, clientName?: s
 
 export async function exportStrategy(
   scoringResult: ScoringResult,
-  strategy: string,
-  chronogram: { semaine: string; action: string; responsable: string }[],
-  responsePlan: string,
+  bidStrategy: BidStrategy,
   clientName?: string,
   decision?: string,
 ): Promise<Blob> {
@@ -367,9 +516,7 @@ export async function exportStrategy(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       scoring_result: scoringResult,
-      strategy,
-      chronogram,
-      response_plan: responsePlan,
+      bid_strategy: bidStrategy,
       client_name: clientName,
       decision: decision ?? "GO",
     }),
@@ -394,7 +541,7 @@ export async function generateOffer(scoringResult: ScoringResult, clientName?: s
 
 export async function exportChecklist(
   aoFilename: string,
-  items: { category: string; label: string; required: boolean; checked: boolean; note: string }[],
+  appendices: Appendix[],
   clientName?: string,
   submissionDate?: string,
 ): Promise<Blob> {
@@ -405,7 +552,7 @@ export async function exportChecklist(
       ao_filename: aoFilename,
       client_name: clientName,
       submission_date: submissionDate ?? "",
-      items,
+      appendices,
     }),
   }, 60_000);
   if (!response.ok) throw new Error(`Export checklist error: ${response.status}`);

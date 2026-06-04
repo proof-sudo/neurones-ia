@@ -18,95 +18,57 @@ function fmt(n: number) {
 // ── Stat card ─────────────────────────────────────────────────────────────────
 
 function StatCard({
-  label, value, sub, icon: Icon, gradient, loading,
+  label, value, sub, icon: Icon, loading,
 }: {
   label: string; value: string; sub?: string;
-  icon: React.ElementType; gradient: string; loading: boolean;
+  icon: React.ElementType; loading: boolean;
 }) {
   return (
-    <div
-      className="rounded-2xl p-5 flex flex-col gap-4 relative overflow-hidden"
-      style={{
-        background: "rgba(255,255,255,0.85)",
-        backdropFilter: "blur(16px)",
-        border: "1px solid rgba(255,255,255,0.9)",
-        boxShadow: "0 4px 24px rgba(0,0,0,0.06), 0 1px 2px rgba(0,0,0,0.04)",
-      }}
-    >
-      {/* Gradient accent top */}
-      <div className="absolute inset-x-0 top-0 h-[3px] rounded-t-2xl" style={{ background: gradient }} />
-
-      <div
-        className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
-        style={{ background: gradient, boxShadow: `0 4px 12px rgba(0,0,0,0.15)` }}
-      >
-        <Icon className="w-5 h-5 text-white" />
+    <div className="rounded-xl p-5 bg-white" style={{ border: "1px solid #ecedf0" }}>
+      <div className="flex items-center justify-between mb-4">
+        <p className="text-xs text-slate-400 font-medium uppercase tracking-wide">{label}</p>
+        <Icon className="w-4 h-4 text-slate-300" strokeWidth={1.75} />
       </div>
-
-      <div>
-        <p className={cn(
-          "text-2xl font-bold tracking-tight leading-none",
-          loading ? "text-slate-200 animate-pulse" : "text-slate-900"
-        )}>
-          {value}
+      <p className={cn(
+        "text-2xl font-semibold tracking-tight leading-none",
+        loading ? "text-slate-200 animate-pulse" : "text-slate-900"
+      )}>
+        {value}
+      </p>
+      {sub && (
+        <p className={cn("text-xs mt-1.5 font-medium", loading ? "text-slate-200" : "text-slate-400")}>
+          {sub}
         </p>
-        {sub && (
-          <p className={cn("text-xs mt-1 font-medium", loading ? "text-slate-200" : "text-slate-400")}>
-            {sub}
-          </p>
-        )}
-        <p className="text-xs text-slate-500 mt-1.5 font-semibold uppercase tracking-wide">{label}</p>
-      </div>
+      )}
     </div>
   );
 }
 
 // ── Module card ───────────────────────────────────────────────────────────────
 
-function ModuleCard({ href, icon: Icon, title, description, tags, gradient, tagStyle }: {
+function ModuleCard({ href, icon: Icon, title, description, tags, tagStyle }: {
   href: string; icon: React.ElementType; title: string; description: string;
-  tags: string[]; gradient: string; tagStyle: string;
+  tags: string[]; tagStyle: string;
 }) {
   return (
     <Link
       href={href}
-      className="group rounded-2xl p-6 flex flex-col gap-4 relative overflow-hidden transition-all duration-200 hover:-translate-y-0.5"
-      style={{
-        background: "rgba(255,255,255,0.85)",
-        backdropFilter: "blur(16px)",
-        border: "1px solid rgba(255,255,255,0.9)",
-        boxShadow: "0 4px 24px rgba(0,0,0,0.06)",
-      }}
+      className="group rounded-xl p-6 flex flex-col gap-4 bg-white transition-colors hover:border-slate-300"
+      style={{ border: "1px solid #ecedf0" }}
     >
-      {/* Gradient corner glow */}
-      <div
-        className="absolute -top-8 -right-8 w-32 h-32 rounded-full opacity-10 group-hover:opacity-20 transition-opacity"
-        style={{ background: gradient }}
-      />
-
-      <div className="flex items-start justify-between relative">
-        <div
-          className="w-11 h-11 rounded-2xl flex items-center justify-center shrink-0"
-          style={{ background: gradient, boxShadow: `0 4px 16px rgba(0,0,0,0.15)` }}
-        >
-          <Icon className="w-5 h-5 text-white" />
-        </div>
-        <div
-          className="w-7 h-7 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all group-hover:translate-x-0.5 group-hover:-translate-y-0.5"
-          style={{ background: "rgba(0,0,0,0.06)" }}
-        >
-          <ArrowUpRight className="w-3.5 h-3.5 text-slate-600" />
-        </div>
+      <div className="flex items-start justify-between">
+        <Icon className="w-5 h-5 text-[#0a2a43] shrink-0" strokeWidth={1.75} />
+        <ArrowUpRight className="w-4 h-4 text-slate-300 transition-colors group-hover:text-slate-500" />
       </div>
 
-      <div className="relative">
-        <h3 className="text-base font-bold text-slate-900 mb-1.5">{title}</h3>
+      <div>
+        <h3 className="text-base font-semibold text-slate-900 mb-1.5">{title}</h3>
         <p className="text-sm text-slate-500 leading-relaxed">{description}</p>
       </div>
 
-      <div className="flex flex-wrap gap-1.5 relative">
+      <div className="flex flex-wrap gap-1.5">
         {tags.map((tag) => (
-          <span key={tag} className={cn("text-[11px] px-2.5 py-1 rounded-full font-semibold", tagStyle)}>
+          <span key={tag} className={cn("text-[11px] px-2 py-0.5 rounded-md font-medium", tagStyle)}>
             {tag}
           </span>
         ))}
@@ -191,43 +153,36 @@ export default function Dashboard() {
       label: "Clients actifs",
       value: stats ? fmt(stats.clients) : "—",
       icon: Users,
-      gradient: "linear-gradient(135deg, #6d28d9 0%, #8b5cf6 100%)",
     },
     {
       label: "Factures émises",
       value: stats ? fmt(stats.invoices_total) : "—",
       sub: stats ? `${fmt(stats.invoices_paid)} payées` : undefined,
       icon: FileText,
-      gradient: "linear-gradient(135deg, #2563eb 0%, #60a5fa 100%)",
     },
     {
       label: "Bons de commande",
       value: stats ? fmt(stats.sale_orders) : "—",
       icon: TrendingUp,
-      gradient: "linear-gradient(135deg, #059669 0%, #34d399 100%)",
     },
     {
       label: "Opportunités CRM",
       value: stats ? fmt(stats.opportunities) : "—",
       icon: Zap,
-      gradient: "linear-gradient(135deg, #d97706 0%, #fbbf24 100%)",
     },
   ];
 
   return (
     <div
       className="flex flex-col h-full overflow-y-auto scrollbar-thin"
-      style={{
-        background: "linear-gradient(160deg, #eef0f8 0%, #e8ecf5 50%, #edf0f8 100%)",
-      }}
+      style={{ background: "#f7f8fa" }}
     >
       {/* ── Top bar ───────────────────────────────────────────── */}
       <div
         className="shrink-0 px-4 md:px-8 py-4 sticky top-0 z-10 flex items-center justify-between"
         style={{
-          background: "rgba(238,240,248,0.85)",
-          backdropFilter: "blur(20px)",
-          borderBottom: "1px solid rgba(0,0,0,0.06)",
+          background: "#f7f8fa",
+          borderBottom: "1px solid #ecedf0",
         }}
       >
         <div>
@@ -251,8 +206,8 @@ export default function Dashboard() {
           <button
             onClick={load}
             disabled={loading}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg text-slate-600 font-medium disabled:opacity-50 transition-colors hover:bg-white/60"
-            style={{ border: "1px solid rgba(0,0,0,0.1)" }}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg text-slate-600 font-medium disabled:opacity-50 transition-colors hover:bg-slate-100"
+            style={{ border: "1px solid #ecedf0" }}
           >
             <RefreshCw className={cn("w-3.5 h-3.5", loading && "animate-spin")} />
             Actualiser
@@ -266,10 +221,10 @@ export default function Dashboard() {
         {/* Error */}
         {error && (
           <div
-            className="flex items-start gap-3 rounded-2xl px-4 py-4"
+            className="flex items-start gap-3 rounded-xl px-4 py-4"
             style={{
-              background: "rgba(239,68,68,0.08)",
-              border: "1px solid rgba(239,68,68,0.2)",
+              background: "#fdeceb",
+              border: "1px solid #f3c7c2",
             }}
           >
             <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
@@ -307,44 +262,40 @@ export default function Dashboard() {
               <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest">
                 Économies réalisées ce mois
               </h2>
-              <Link href="/presales" className="text-[11px] text-blue-600 font-semibold hover:underline flex items-center gap-0.5">
+              <Link href="/presales" className="text-[11px] text-[#0a2a43] font-semibold hover:underline flex items-center gap-0.5">
                 Voir le pipeline <ArrowUpRight className="w-3 h-3" />
               </Link>
             </div>
             <div
-              className="rounded-2xl p-5 relative overflow-hidden"
+              className="rounded-xl p-5 bg-white"
               style={{
-                background: "linear-gradient(135deg, rgba(109,40,217,0.08) 0%, rgba(37,99,235,0.06) 100%)",
-                border: "1px solid rgba(109,40,217,0.15)",
+                border: "1px solid #ecedf0",
+                boxShadow: "none",
               }}
             >
-              <div className="absolute -top-6 -right-6 w-32 h-32 rounded-full opacity-10"
-                style={{ background: "linear-gradient(135deg, #6d28d9, #2563eb)" }} />
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4 relative">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {[
-                  { label: "AOs analysés", value: roi.aosAnalyzed, icon: BarChart3, color: "text-violet-600", bg: "bg-violet-100" },
-                  { label: "Offres générées", value: roi.proposalsGenerated, icon: FileText, color: "text-blue-600", bg: "bg-blue-100" },
-                  { label: "Dossiers soumis", value: roi.submitted, icon: Send, color: "text-cyan-600", bg: "bg-cyan-100" },
-                  { label: "AOs gagnés", value: roi.won, icon: Trophy, color: "text-amber-600", bg: "bg-amber-100" },
-                ].map(({ label, value, icon: Icon, color, bg }) => (
+                  { label: "AOs analysés", value: roi.aosAnalyzed, icon: BarChart3 },
+                  { label: "Offres générées", value: roi.proposalsGenerated, icon: FileText },
+                  { label: "Dossiers soumis", value: roi.submitted, icon: Send },
+                  { label: "AOs gagnés", value: roi.won, icon: Trophy },
+                ].map(({ label, value, icon: Icon }) => (
                   <div key={label} className="flex items-center gap-3">
-                    <div className={cn("w-9 h-9 rounded-xl flex items-center justify-center shrink-0", bg)}>
-                      <Icon className={cn("w-4 h-4", color)} />
-                    </div>
+                    <Icon className="w-4 h-4 text-slate-400 shrink-0" strokeWidth={1.75} />
                     <div>
-                      <p className="text-xl font-bold text-slate-900 leading-none">{value}</p>
+                      <p className="text-xl font-semibold text-slate-900 leading-none">{value}</p>
                       <p className="text-[11px] text-slate-500 mt-0.5 font-medium">{label}</p>
                     </div>
                   </div>
                 ))}
               </div>
-              <div className="mt-4 pt-4 border-t border-violet-100 flex items-center gap-2">
-                <Timer className="w-3.5 h-3.5 text-violet-500 shrink-0" />
+              <div className="mt-4 pt-4 border-t border-slate-200 flex items-center gap-2">
+                <Timer className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                 <p className="text-xs text-slate-600">
                   Temps économisé estimé :{" "}
-                  <span className="font-bold text-violet-700">{roi.hoursSaved}h</span>
+                  <span className="font-semibold text-slate-900">{roi.hoursSaved}h</span>
                   {" "}≈{" "}
-                  <span className="font-bold text-violet-700">
+                  <span className="font-semibold text-slate-900">
                     {(roi.hoursSaved * 75000).toLocaleString("fr-FR")} XOF
                   </span>
                 </p>
@@ -359,10 +310,7 @@ export default function Dashboard() {
             <h2 className="text-xs font-bold text-slate-500 uppercase tracking-widest">
               Modules IA disponibles
             </h2>
-            <span
-              className="text-[11px] font-bold px-2.5 py-1 rounded-full text-slate-500"
-              style={{ background: "rgba(0,0,0,0.06)" }}
-            >
+            <span className="text-[11px] font-bold px-2.5 py-1 rounded-md text-slate-500 bg-slate-100">
               2 actifs
             </span>
           </div>
@@ -373,8 +321,7 @@ export default function Dashboard() {
               title="Connaissance interne"
               description="Posez des questions sur vos documents GED et vos données clients Odoo. Joignez un fichier pour l'analyser."
               tags={["RAG hybride", "Odoo live", "GED"]}
-              gradient="linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)"
-              tagStyle="bg-blue-50 text-blue-600 border border-blue-100"
+              tagStyle="bg-slate-100 text-slate-600 border border-slate-200"
             />
             <ModuleCard
               href="/presales"
@@ -382,8 +329,7 @@ export default function Dashboard() {
               title="Avant-vente IA"
               description="Scorez un appel d'offres, générez votre stratégie de réponse et votre offre technique en Word."
               tags={["Scoring AO", "Matching GED", "Offre Word"]}
-              gradient="linear-gradient(135deg, #059669 0%, #0891b2 100%)"
-              tagStyle="bg-emerald-50 text-emerald-600 border border-emerald-100"
+              tagStyle="bg-slate-100 text-slate-600 border border-slate-200"
             />
           </div>
         </section>
@@ -396,7 +342,7 @@ export default function Dashboard() {
             </h2>
             <Link
               href="/ged"
-              className="text-[11px] text-blue-600 font-semibold hover:underline flex items-center gap-0.5"
+              className="text-[11px] text-[#0a2a43] font-semibold hover:underline flex items-center gap-0.5"
             >
               Gérer <ArrowUpRight className="w-3 h-3" />
             </Link>
@@ -419,12 +365,10 @@ export default function Dashboard() {
           </div>
 
           <div
-            className="rounded-2xl overflow-hidden"
+            className="rounded-xl overflow-hidden bg-white"
             style={{
-              background: "rgba(255,255,255,0.8)",
-              backdropFilter: "blur(16px)",
-              border: "1px solid rgba(255,255,255,0.9)",
-              boxShadow: "0 4px 24px rgba(0,0,0,0.05)",
+              border: "1px solid #ecedf0",
+              boxShadow: "none",
             }}
           >
             {gedFolders.map((f, i) => (

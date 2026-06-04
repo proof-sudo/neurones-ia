@@ -26,10 +26,10 @@ function ScoreBadge({ score }: { score: number }) {
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
-    new: "bg-blue-100 text-blue-700",
+    new: "bg-slate-100 text-slate-700",
     read: "bg-slate-100 text-slate-500",
     archived: "bg-slate-100 text-slate-400",
-    in_presales: "bg-violet-100 text-violet-700",
+    in_presales: "bg-slate-100 text-slate-700",
   };
   const labels: Record<string, string> = {
     new: "Nouveau", read: "Lu", archived: "Archivé", in_presales: "En avant-vente",
@@ -118,17 +118,17 @@ export default function VeillePage() {
   );
 
   return (
-    <div className="flex flex-col h-full overflow-hidden" style={{ background: "linear-gradient(160deg, #eef0f8 0%, #e8ecf5 50%, #edf0f8 100%)" }}>
+    <div className="flex flex-col h-full overflow-hidden" style={{ background: "#f7f8fa" }}>
       {/* Header */}
       <div className="shrink-0 px-6 py-4 sticky top-0 z-10 flex items-center justify-between gap-4"
-        style={{ background: "rgba(238,240,248,0.9)", backdropFilter: "blur(20px)", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
+        style={{ background: "#f7f8fa", borderBottom: "1px solid #ecedf0" }}>
         <div>
           <h1 className="text-base font-bold text-slate-900 leading-none flex items-center gap-2">
-            <Rss className="w-4 h-4 text-orange-500" /> Veille Appels d&apos;Offres
+            <Rss className="w-4 h-4 text-[#0a2a43]" strokeWidth={1.75} /> Veille Appels d&apos;Offres
           </h1>
           <p className="text-xs text-slate-400 mt-0.5">
             {stats.total} AO détectés ·{" "}
-            <span className="font-semibold text-blue-600">{stats.new} nouveaux</span>
+            <span className="font-semibold text-[#0a2a43]">{stats.new} nouveaux</span>
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -136,13 +136,13 @@ export default function VeillePage() {
             className={cn(
               "flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium border transition-colors",
               showSources
-                ? "bg-slate-800 text-white border-slate-800"
+                ? "bg-[#0a2a43] text-white border-[#0a2a43]"
                 : "bg-white text-slate-600 border-slate-200 hover:bg-slate-50"
             )}>
             <Settings size={12} /> Sources ({sources.length})
           </button>
           <button onClick={handleScan} disabled={scanning}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium disabled:opacity-50 transition-colors">
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-[#f26a21] hover:brightness-95 text-white rounded-lg font-medium disabled:opacity-50 transition-all">
             <RefreshCw size={12} className={scanning ? "animate-spin" : ""} />
             {scanning ? "Scan en cours..." : "Scanner maintenant"}
           </button>
@@ -154,7 +154,7 @@ export default function VeillePage() {
 
           {/* Sources panel */}
           {showSources && (
-            <div className="rounded-2xl overflow-hidden" style={{ background: "rgba(255,255,255,0.9)", border: "1px solid rgba(255,255,255,0.9)", boxShadow: "0 4px 24px rgba(0,0,0,0.06)" }}>
+            <div className="rounded-xl overflow-hidden bg-white" style={{ border: "1px solid #ecedf0", boxShadow: "none" }}>
               <div className="px-5 py-4 border-b border-slate-100">
                 <h2 className="text-sm font-bold text-slate-800">Sources configurées</h2>
               </div>
@@ -163,16 +163,14 @@ export default function VeillePage() {
                   <div className="px-5 py-6 text-center">
                     <p className="text-sm text-slate-400 mb-3">Aucune source configurée</p>
                     <button onClick={handleInitDemo}
-                      className="text-xs px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 transition-colors font-medium">
+                      className="text-xs px-4 py-2 bg-[#0a2a43] text-white rounded-lg hover:brightness-110 transition-all font-medium">
                       Ajouter les sources démo (DGMP, BOAD)
                     </button>
                   </div>
                 )}
                 {sources.map(src => (
                   <div key={src.id} className="flex items-center gap-3 px-5 py-3">
-                    <div className="w-7 h-7 rounded-lg bg-orange-100 flex items-center justify-center shrink-0">
-                      <Rss size={13} className="text-orange-500" />
-                    </div>
+                    <Rss size={15} className="text-slate-400 shrink-0" strokeWidth={1.75} />
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-semibold text-slate-700 truncate">{src.name}</p>
                       <p className="text-xs text-slate-400 truncate">{src.url}</p>
@@ -198,7 +196,7 @@ export default function VeillePage() {
                     value={newSource.name}
                     onChange={e => setNewSource(p => ({ ...p, name: e.target.value }))}
                     placeholder="Nom de la source"
-                    className="text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200"
+                    className="text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-[#0a2a43]/20"
                   />
                   <select
                     value={newSource.feed_type}
@@ -213,18 +211,18 @@ export default function VeillePage() {
                   value={newSource.url}
                   onChange={e => setNewSource(p => ({ ...p, url: e.target.value }))}
                   placeholder="URL du flux ou de la page"
-                  className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-[#0a2a43]/20"
                 />
                 <input
                   value={newSource.keywords}
                   onChange={e => setNewSource(p => ({ ...p, keywords: e.target.value }))}
                   placeholder="Mots-clés filtrants (séparés par virgule): informatique,réseau,logiciel"
-                  className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-200"
+                  className="w-full text-xs border border-slate-200 rounded-xl px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-[#0a2a43]/20"
                 />
                 <button
                   onClick={handleAddSource}
                   disabled={addingSource || !newSource.name || !newSource.url}
-                  className="flex items-center gap-1.5 text-xs px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 font-medium transition-colors"
+                  className="flex items-center gap-1.5 text-xs px-4 py-2 bg-[#0a2a43] text-white rounded-lg hover:brightness-110 disabled:opacity-50 font-medium transition-all"
                 >
                   <Plus size={12} /> {addingSource ? "Ajout..." : "Ajouter la source"}
                 </button>
@@ -240,16 +238,16 @@ export default function VeillePage() {
                 value={searchQ}
                 onChange={e => setSearchQ(e.target.value)}
                 placeholder="Rechercher dans les opportunités..."
-                className="w-full text-sm pl-8 pr-3 py-2 rounded-xl border border-white/80 bg-white/80 backdrop-blur focus:outline-none focus:ring-2 focus:ring-blue-200"
+                className="w-full text-sm pl-8 pr-3 py-2 rounded-lg border border-[#ecedf0] bg-white focus:outline-none focus:ring-2 focus:ring-[#0a2a43]/20"
               />
             </div>
             {(["", "new", "read", "in_presales"] as const).map(s => (
               <button key={s} onClick={() => setFilterStatus(s)}
                 className={cn(
-                  "text-xs px-3 py-2 rounded-xl font-medium transition-colors whitespace-nowrap",
+                  "text-xs px-3 py-2 rounded-lg font-medium transition-colors whitespace-nowrap",
                   filterStatus === s
-                    ? "bg-slate-800 text-white shadow-sm"
-                    : "bg-white/80 text-slate-600 hover:bg-white border border-white/80"
+                    ? "bg-[#0a2a43] text-white"
+                    : "bg-white text-slate-600 hover:bg-slate-50 border border-[#ecedf0]"
                 )}>
                 {s === "" ? "Tous" : s === "new" ? "Nouveaux" : s === "read" ? "Lus" : "En avant-vente"}
               </button>
@@ -258,7 +256,7 @@ export default function VeillePage() {
 
           {/* Empty state */}
           {!loading && filtered.length === 0 && (
-            <div className="rounded-2xl p-10 text-center" style={{ background: "rgba(255,255,255,0.85)", border: "1px solid rgba(255,255,255,0.9)" }}>
+            <div className="rounded-xl p-10 text-center bg-white" style={{ border: "1px solid #ecedf0" }}>
               <Rss size={32} className="text-slate-200 mx-auto mb-3" />
               <p className="font-semibold text-slate-600 mb-1">Aucune opportunité détectée</p>
               <p className="text-sm text-slate-400 mb-4">
@@ -267,7 +265,7 @@ export default function VeillePage() {
                   : "Cliquez sur «Scanner maintenant» pour chercher de nouveaux AOs."}
               </p>
               {sources.length === 0 && (
-                <button onClick={handleInitDemo} className="text-xs px-4 py-2 bg-blue-600 text-white rounded-xl hover:bg-blue-700 font-medium">
+                <button onClick={handleInitDemo} className="text-xs px-4 py-2 bg-[#0a2a43] text-white rounded-lg hover:brightness-110 font-medium transition-all">
                   Démarrer avec les sources démo
                 </button>
               )}
@@ -280,11 +278,11 @@ export default function VeillePage() {
               {filtered.map(entry => (
                 <div
                   key={entry.id}
-                  className={cn("rounded-2xl p-4 transition-all", entry.status === "new" ? "ring-1 ring-blue-200" : "")}
-                  style={{ background: "rgba(255,255,255,0.85)", backdropFilter: "blur(16px)", border: "1px solid rgba(255,255,255,0.9)", boxShadow: "0 4px 24px rgba(0,0,0,0.05)" }}
+                  className={cn("rounded-xl p-4 bg-white", entry.status === "new" ? "ring-1 ring-slate-300" : "")}
+                  style={{ border: "1px solid #ecedf0", boxShadow: "none" }}
                 >
                   <div className="flex items-start gap-3">
-                    <div className={cn("w-2 h-2 rounded-full mt-2 shrink-0", entry.status === "new" ? "bg-blue-500" : "bg-slate-300")} />
+                    <div className={cn("w-2 h-2 rounded-full mt-2 shrink-0", entry.status === "new" ? "bg-[#0a2a43]" : "bg-slate-300")} />
                     <div className="flex-1 min-w-0">
                       <div className="flex items-start justify-between gap-2 mb-1">
                         <h3 className="text-sm font-semibold text-slate-800 leading-snug line-clamp-2">{entry.title}</h3>
@@ -317,7 +315,7 @@ export default function VeillePage() {
                   <div className="flex items-center gap-2 mt-3 pt-3 border-t border-slate-100">
                     {entry.url && (
                       <a href={entry.url} target="_blank" rel="noopener noreferrer"
-                        className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium">
+                        className="flex items-center gap-1 text-xs text-[#0a2a43] hover:underline font-medium">
                         Voir l&apos;AO <ArrowUpRight size={11} />
                       </a>
                     )}
@@ -329,7 +327,7 @@ export default function VeillePage() {
                     )}
                     {entry.status !== "in_presales" && entry.status !== "archived" && (
                       <button onClick={() => handlePatch(entry.id, "in_presales")}
-                        className="flex items-center gap-1 text-xs text-violet-600 hover:text-violet-700 font-medium ml-auto">
+                        className="flex items-center gap-1 text-xs text-[#0a2a43] hover:underline font-medium ml-auto">
                         <Zap size={11} /> Avant-vente
                       </button>
                     )}

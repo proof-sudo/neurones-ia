@@ -48,58 +48,30 @@ export default function LoginPage() {
   return (
     <div
       className="min-h-screen flex items-center justify-center"
-      style={{
-        background: "linear-gradient(160deg, #0a0e1a 0%, #0d1526 50%, #0a0e1a 100%)",
-      }}
+      style={{ background: "#f7f8fa" }}
     >
-      {/* Glow orb */}
-      <div
-        className="absolute top-1/3 left-1/2 -translate-x-1/2 -translate-y-1/2 w-96 h-96 rounded-full pointer-events-none"
-        style={{
-          background: "radial-gradient(circle, rgba(109,40,217,0.18) 0%, transparent 70%)",
-          filter: "blur(60px)",
-        }}
-      />
-
       <div className="relative w-full max-w-sm mx-4">
         {/* Logo */}
         <div className="flex flex-col items-center mb-8">
-          <div
-            className="w-14 h-14 rounded-2xl flex items-center justify-center mb-4"
-            style={{
-              background: "linear-gradient(135deg, #6d28d9 0%, #2563eb 100%)",
-              boxShadow: "0 0 32px rgba(109,40,217,0.5)",
-            }}
-          >
-            <Zap className="w-7 h-7 text-white" />
-          </div>
-          <h1
-            className="text-2xl font-bold tracking-tight"
-            style={{
-              background: "linear-gradient(135deg, #a78bfa 0%, #60a5fa 100%)",
-              WebkitBackgroundClip: "text",
-              WebkitTextFillColor: "transparent",
-            }}
-          >
+          <Zap className="w-8 h-8 text-[#0a2a43] mb-4" strokeWidth={2.25} />
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
             Neurones IA
           </h1>
-          <p className="text-sm text-slate-400 mt-1">Connectez-vous à votre espace</p>
+          <p className="text-sm text-slate-500 mt-1">Connectez-vous à votre espace</p>
         </div>
 
         {/* Card */}
         <div
-          className="rounded-2xl p-8"
+          className="rounded-xl p-8 bg-white"
           style={{
-            background: "rgba(255,255,255,0.04)",
-            backdropFilter: "blur(20px)",
-            border: "1px solid rgba(255,255,255,0.08)",
-            boxShadow: "0 24px 64px rgba(0,0,0,0.4)",
+            border: "1px solid #ecedf0",
+            boxShadow: "none",
           }}
         >
           <form onSubmit={handleSubmit} className="flex flex-col gap-5">
             {/* Email */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
                 Adresse email
               </label>
               <input
@@ -110,17 +82,17 @@ export default function LoginPage() {
                 placeholder="vous@neurones-tech.com"
                 required
                 autoComplete="email"
-                className="w-full px-4 py-3 rounded-xl text-sm text-white placeholder-slate-500 outline-none transition-all focus:ring-2 focus:ring-violet-500/40"
+                className="w-full px-4 py-3 rounded-lg text-sm text-slate-900 placeholder-slate-400 outline-none transition-all focus:ring-2 focus:ring-[#f26a21]/30 focus:border-[#f26a21]"
                 style={{
-                  background: "rgba(255,255,255,0.06)",
-                  border: "1px solid rgba(255,255,255,0.1)",
+                  background: "#ffffff",
+                  border: "1px solid #ecedf0",
                 }}
               />
             </div>
 
             {/* Password */}
             <div className="flex flex-col gap-1.5">
-              <label className="text-xs font-semibold text-slate-400 uppercase tracking-wide">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">
                 Mot de passe
               </label>
               <div className="relative">
@@ -131,16 +103,16 @@ export default function LoginPage() {
                   placeholder="••••••••"
                   required
                   autoComplete="current-password"
-                  className="w-full px-4 py-3 pr-11 rounded-xl text-sm text-white placeholder-slate-500 outline-none transition-all focus:ring-2 focus:ring-violet-500/40"
+                  className="w-full px-4 py-3 pr-11 rounded-lg text-sm text-slate-900 placeholder-slate-400 outline-none transition-all focus:ring-2 focus:ring-[#f26a21]/30 focus:border-[#f26a21]"
                   style={{
-                    background: "rgba(255,255,255,0.06)",
-                    border: "1px solid rgba(255,255,255,0.1)",
+                    background: "#ffffff",
+                    border: "1px solid #ecedf0",
                   }}
                 />
                 <button
                   type="button"
                   onClick={() => setShowPwd(v => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200 transition-colors"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
                 >
                   {showPwd ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -150,8 +122,8 @@ export default function LoginPage() {
             {/* Error */}
             {error && (
               <div
-                className="rounded-lg px-4 py-2.5 text-sm text-red-300"
-                style={{ background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}
+                className="rounded-lg px-4 py-2.5 text-sm text-red-700"
+                style={{ background: "#fdeceb", border: "1px solid #f3c7c2" }}
               >
                 {error}
               </div>
@@ -161,11 +133,8 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading || !email || !password}
-              className="flex items-center justify-center gap-2 py-3 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:brightness-110 active:scale-[0.98]"
-              style={{
-                background: "linear-gradient(135deg, #6d28d9 0%, #2563eb 100%)",
-                boxShadow: "0 4px 16px rgba(109,40,217,0.35)",
-              }}
+              className="flex items-center justify-center gap-2 py-3 rounded-lg text-sm font-semibold text-white transition-all disabled:opacity-50 disabled:cursor-not-allowed hover:brightness-95 active:translate-y-px"
+              style={{ background: "#f26a21" }}
             >
               {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
               {loading ? "Connexion…" : "Se connecter"}
@@ -173,7 +142,7 @@ export default function LoginPage() {
           </form>
         </div>
 
-        <p className="text-center text-xs text-slate-600 mt-6">
+        <p className="text-center text-xs text-slate-400 mt-6">
           Neurones Technologies — Plateforme IA interne v0.1.0
         </p>
       </div>

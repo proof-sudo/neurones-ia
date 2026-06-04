@@ -23,9 +23,9 @@ interface Message {
 }
 
 const intentLabel: Record<string, { label: string; color: string }> = {
-  rag:      { label: "Documents GED",  color: "bg-blue-50 text-blue-600 border border-blue-100" },
-  local_db: { label: "Données Odoo",   color: "bg-emerald-50 text-emerald-600 border border-emerald-100" },
-  hybrid:   { label: "GED + Odoo",     color: "bg-violet-50 text-violet-600 border border-violet-100" },
+  rag:      { label: "Documents GED",  color: "bg-slate-100 text-slate-600 border border-slate-200" },
+  local_db: { label: "Données Odoo",   color: "bg-slate-100 text-slate-600 border border-slate-200" },
+  hybrid:   { label: "GED + Odoo",     color: "bg-slate-100 text-slate-600 border border-slate-200" },
 };
 
 const SUGGESTIONS = [
@@ -55,7 +55,7 @@ function ThinkingIndicator({ label }: { label?: string }) {
         {[0, 1, 2].map((i) => (
           <span
             key={i}
-            className="block w-1.5 h-1.5 rounded-full bg-violet-400 animate-bounce"
+            className="block w-1.5 h-1.5 rounded-full bg-slate-300 animate-bounce"
             style={{ animationDelay: `${i * 140}ms` }}
           />
         ))}
@@ -93,13 +93,13 @@ const mdComponents = {
     <ol className="my-2 space-y-1 pl-5 list-decimal">{children}</ol>
   ),
   li: ({ children }: { children?: React.ReactNode }) => (
-    <li className="relative pl-1 leading-relaxed before:absolute before:-left-3 before:top-[0.45em] before:w-1.5 before:h-1.5 before:rounded-full before:bg-violet-400 [ol_&]:before:hidden [ol_&]:list-item">
+    <li className="relative pl-1 leading-relaxed before:absolute before:-left-3 before:top-[0.45em] before:w-1.5 before:h-1.5 before:rounded-full before:bg-slate-300 [ol_&]:before:hidden [ol_&]:list-item">
       {children}
     </li>
   ),
   code: ({ inline, children }: { inline?: boolean; children?: React.ReactNode }) =>
     inline ? (
-      <code className="bg-slate-100 text-violet-700 text-[0.82em] font-mono px-1.5 py-0.5 rounded">
+      <code className="bg-slate-100 text-[#0a2a43] text-[0.82em] font-mono px-1.5 py-0.5 rounded">
         {children}
       </code>
     ) : (
@@ -130,7 +130,7 @@ const mdComponents = {
     <td className="px-3 py-2 text-slate-600">{children}</td>
   ),
   blockquote: ({ children }: { children?: React.ReactNode }) => (
-    <blockquote className="border-l-2 border-violet-300 pl-3 my-2 text-slate-500 italic">
+    <blockquote className="border-l-2 border-slate-300 pl-3 my-2 text-slate-500 italic">
       {children}
     </blockquote>
   ),
@@ -143,7 +143,7 @@ function AssistantContent({ content, streaming }: { content: string; streaming?:
         {content}
       </ReactMarkdown>
       {streaming && (
-        <span className="inline-block w-1.5 h-4 bg-violet-500 ml-0.5 animate-pulse rounded-sm align-middle" />
+        <span className="inline-block w-1.5 h-4 bg-[#0a2a43] ml-0.5 animate-pulse rounded-sm align-middle" />
       )}
     </div>
   );
@@ -417,7 +417,7 @@ export default function ChatPage() {
   };
 
   return (
-    <div className="flex flex-row h-full relative" style={{ background: "linear-gradient(160deg, #eef0f8 0%, #e8ecf5 50%, #edf0f8 100%)" }}>
+    <div className="flex flex-row h-full relative" style={{ background: "#f7f8fa" }}>
 
       {/* Overlay mobile pour l'historique */}
       {showHistory && (
@@ -432,12 +432,11 @@ export default function ChatPage() {
         <div
           className="fixed sm:relative inset-y-0 left-0 z-40 sm:z-10 w-72 sm:w-64 shrink-0 flex flex-col"
           style={{
-            background: "rgba(232,236,245,0.97)",
-            backdropFilter: "blur(20px)",
-            borderRight: "1px solid rgba(0,0,0,0.06)",
+            background: "#eef1f5",
+            borderRight: "1px solid #ecedf0",
           }}
         >
-          <div className="px-4 py-3.5 flex items-center justify-between shrink-0" style={{ borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
+          <div className="px-4 py-3.5 flex items-center justify-between shrink-0" style={{ borderBottom: "1px solid #ecedf0" }}>
             <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Historique</span>
             <button onClick={() => setShowHistory(false)} className="text-slate-400 hover:text-slate-600 transition-colors p-0.5 rounded">
               <X className="w-3.5 h-3.5" />
@@ -446,7 +445,7 @@ export default function ChatPage() {
           <div className="flex-1 overflow-y-auto py-2 px-2 space-y-0.5">
             {loadingSessions ? (
               <div className="flex justify-center py-8">
-                <Loader2 className="w-4 h-4 animate-spin text-violet-400" />
+                <Loader2 className="w-4 h-4 animate-spin text-slate-400" />
               </div>
             ) : sessionsError ? (
               <p className="text-[10px] text-red-400 text-center py-8 px-3 leading-relaxed break-all">
@@ -464,8 +463,8 @@ export default function ChatPage() {
                   className={cn(
                     "w-full text-left px-3 py-2.5 rounded-xl group flex items-start gap-2 transition-all relative",
                     s.session_id === sessionId
-                      ? "bg-violet-100/80 text-violet-700"
-                      : "hover:bg-white/60 text-slate-600"
+                      ? "bg-[#e3eaf1] text-[#0a2a43]"
+                      : "hover:bg-white text-slate-600"
                   )}
                 >
                   <MessageSquare className="w-3.5 h-3.5 shrink-0 mt-0.5 opacity-50" />
@@ -487,12 +486,12 @@ export default function ChatPage() {
               ))
             )}
           </div>
-          <div className="shrink-0 px-3 py-3" style={{ borderTop: "1px solid rgba(0,0,0,0.06)" }}>
+          <div className="shrink-0 px-3 py-3" style={{ borderTop: "1px solid #ecedf0" }}>
             <button
               onClick={newConversation}
               disabled={loading}
-              className="w-full flex items-center justify-center gap-1.5 text-xs px-3 py-2 rounded-xl text-slate-600 font-medium disabled:opacity-50 transition-colors hover:bg-white/60"
-              style={{ border: "1px solid rgba(0,0,0,0.1)" }}
+              className="w-full flex items-center justify-center gap-1.5 text-xs px-3 py-2 rounded-xl text-slate-600 font-medium disabled:opacity-50 transition-colors hover:bg-white"
+              style={{ border: "1px solid #ecedf0" }}
             >
               <Plus className="w-3.5 h-3.5" />
               Nouvelle conversation
@@ -507,20 +506,14 @@ export default function ChatPage() {
       <div
         className="shrink-0 px-4 md:px-6 py-3.5 flex items-center justify-between"
         style={{
-          background: "rgba(238,240,248,0.85)",
-          backdropFilter: "blur(20px)",
-          borderBottom: "1px solid rgba(0,0,0,0.06)",
+          background: "#f7f8fa",
+          borderBottom: "1px solid #ecedf0",
         }}
       >
-        <div className="flex items-center gap-3">
-          <div
-            className="w-8 h-8 rounded-xl flex items-center justify-center"
-            style={{ background: "linear-gradient(135deg, #2563eb 0%, #7c3aed 100%)" }}
-          >
-            <MessageSquare className="w-4 h-4 text-white" />
-          </div>
+        <div className="flex items-center gap-2.5">
+          <MessageSquare className="w-5 h-5 text-[#0a2a43] shrink-0" strokeWidth={1.75} />
           <div>
-            <h1 className="text-sm font-bold text-slate-900 leading-none">Connaissance interne</h1>
+            <h1 className="text-sm font-semibold text-slate-900 leading-none">Connaissance interne</h1>
             <p className="hidden sm:block text-xs text-slate-400 mt-0.5 font-medium">GED · Odoo · Analyse de documents</p>
           </div>
         </div>
@@ -530,10 +523,10 @@ export default function ChatPage() {
             className={cn(
               "flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium transition-colors",
               showHistory
-                ? "bg-violet-100 text-violet-700 border border-violet-200"
-                : "text-slate-600 hover:bg-white/60"
+                ? "bg-[#e3eaf1] text-[#0a2a43] border border-[#cdd9e4]"
+                : "text-slate-600 hover:bg-white"
             )}
-            style={showHistory ? {} : { border: "1px solid rgba(0,0,0,0.1)" }}
+            style={showHistory ? {} : { border: "1px solid #ecedf0" }}
             title="Historique des conversations"
           >
             <History className="w-3.5 h-3.5" />
@@ -542,8 +535,8 @@ export default function ChatPage() {
           <button
             onClick={newConversation}
             disabled={loading}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg text-slate-600 font-medium disabled:opacity-50 transition-colors hover:bg-white/60"
-            style={{ border: "1px solid rgba(0,0,0,0.1)" }}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg text-slate-600 font-medium disabled:opacity-50 transition-colors hover:bg-white"
+            style={{ border: "1px solid #ecedf0" }}
           >
             <Plus className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Nouvelle</span>
@@ -555,20 +548,8 @@ export default function ChatPage() {
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
         {!hasMessages ? (
           <div className="flex flex-col items-center justify-center h-full px-4 sm:px-6 py-8 sm:py-12 text-center">
-            {/* Glowing brand orb */}
-            <div className="relative mb-6">
-              <div
-                className="absolute inset-0 rounded-3xl blur-2xl opacity-40"
-                style={{ background: "linear-gradient(135deg, #6d28d9, #2563eb)", transform: "scale(1.2)" }}
-              />
-              <div
-                className="relative w-16 h-16 rounded-3xl flex items-center justify-center"
-                style={{ background: "linear-gradient(135deg, #6d28d9 0%, #2563eb 100%)" }}
-              >
-                <Sparkles className="w-8 h-8 text-white" />
-              </div>
-            </div>
-            <h2 className="text-2xl font-bold text-slate-900 mb-2">Comment puis-je vous aider ?</h2>
+            <Sparkles className="w-9 h-9 text-[#0a2a43] mb-5" strokeWidth={1.5} />
+            <h2 className="text-2xl font-semibold text-slate-900 mb-2">Comment puis-je vous aider ?</h2>
             <p className="text-sm text-slate-500 max-w-xs leading-relaxed mb-8">
               Posez une question sur vos données, ou joignez un document PDF / Word pour l&apos;analyser.
             </p>
@@ -579,10 +560,9 @@ export default function ChatPage() {
                   onClick={() => send(s.text)}
                   className="flex items-start gap-3 text-left text-sm text-slate-600 rounded-xl px-4 py-3.5 transition-all duration-150 group hover:-translate-y-0.5"
                   style={{
-                    background: "rgba(255,255,255,0.8)",
-                    backdropFilter: "blur(8px)",
-                    border: "1px solid rgba(255,255,255,0.9)",
-                    boxShadow: "0 2px 12px rgba(0,0,0,0.05)",
+                    background: "#ffffff",
+                    border: "1px solid #ecedf0",
+                    boxShadow: "none",
                   }}
                 >
                   <span className="text-lg shrink-0 leading-none">{s.icon}</span>
@@ -601,35 +581,32 @@ export default function ChatPage() {
                 {/* Avatar */}
                 <div
                   className={cn(
-                    "w-8 h-8 rounded-xl flex items-center justify-center shrink-0 mt-0.5",
-                    msg.thinking && "ring-2 ring-violet-300 ring-offset-1 animate-pulse"
+                    "w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5",
+                    msg.role === "user"
+                      ? "bg-[#0a2a43]"
+                      : "bg-white border border-slate-200",
+                    msg.thinking && "ring-2 ring-slate-200 ring-offset-1"
                   )}
-                  style={{
-                    background: msg.role === "user"
-                      ? "linear-gradient(135deg, #1e293b 0%, #334155 100%)"
-                      : "linear-gradient(135deg, #6d28d9 0%, #2563eb 100%)",
-                  }}
                 >
                   {msg.role === "user"
-                    ? <User className="w-4 h-4 text-white" />
-                    : <Bot className="w-4 h-4 text-white" />
+                    ? <User className="w-4 h-4 text-white" strokeWidth={1.75} />
+                    : <Bot className="w-4 h-4 text-[#0a2a43]" strokeWidth={1.75} />
                   }
                 </div>
 
                 <div className={cn("flex flex-col gap-2 max-w-[82%]", msg.role === "user" ? "items-end" : "items-start")}>
                   {/* Bubble */}
                   <div
-                    className={cn("rounded-2xl px-4 py-3", msg.role === "user" ? "rounded-tr-sm" : "rounded-tl-sm")}
+                    className={cn("rounded-xl px-4 py-3", msg.role === "user" ? "rounded-tr-sm" : "rounded-tl-sm")}
                     style={
                       msg.role === "user"
-                        ? { background: "linear-gradient(135deg, #1e293b 0%, #334155 100%)" }
+                        ? { background: "#0a2a43" }
                         : msg.error
-                        ? { background: "rgba(239,68,68,0.08)", border: "1px solid rgba(239,68,68,0.2)" }
+                        ? { background: "#fdeceb", border: "1px solid #f3c7c2" }
                         : {
-                            background: "rgba(255,255,255,0.9)",
-                            backdropFilter: "blur(8px)",
-                            border: "1px solid rgba(255,255,255,0.95)",
-                            boxShadow: "0 2px 12px rgba(0,0,0,0.06)",
+                            background: "#ffffff",
+                            border: "1px solid #ecedf0",
+                            boxShadow: "none",
                           }
                     }
                   >
@@ -675,19 +652,18 @@ export default function ChatPage() {
                       {msg.sources.filter(s => s.relevance_score >= 0.40).map((src, j) => (
                         <div
                           key={j}
-                          className="flex items-start gap-2.5 px-3 py-2.5 rounded-xl"
+                          className="flex items-start gap-2.5 px-3 py-2.5 rounded-lg"
                           style={{
-                            background: "rgba(255,255,255,0.8)",
-                            backdropFilter: "blur(8px)",
-                            border: "1px solid rgba(255,255,255,0.9)",
+                            background: "#ffffff",
+                            border: "1px solid #ecedf0",
                           }}
                         >
-                          <FileText className="w-3.5 h-3.5 text-violet-400 shrink-0 mt-0.5" />
+                          <FileText className="w-3.5 h-3.5 text-slate-400 shrink-0 mt-0.5" />
                           <div className="flex-1 min-w-0">
                             <p className="text-xs font-semibold text-slate-700 truncate">{src.filename}</p>
                             <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">{src.excerpt}</p>
                           </div>
-                          <span className="text-[11px] font-bold text-violet-600 shrink-0 bg-violet-50 px-1.5 py-0.5 rounded-full border border-violet-100">
+                          <span className="text-[11px] font-bold text-[#0a2a43] shrink-0 bg-[#e3eaf1] px-1.5 py-0.5 rounded-full border border-[#cdd9e4]">
                             {Math.round(src.relevance_score * 100)}%
                           </span>
                         </div>
@@ -706,9 +682,8 @@ export default function ChatPage() {
       <div
         className="shrink-0 px-3 sm:px-6 py-3 sm:py-4"
         style={{
-          background: "rgba(238,240,248,0.85)",
-          backdropFilter: "blur(20px)",
-          borderTop: "1px solid rgba(0,0,0,0.06)",
+          background: "#f7f8fa",
+          borderTop: "1px solid #ecedf0",
         }}
       >
         <div className="max-w-3xl mx-auto">
@@ -716,12 +691,12 @@ export default function ChatPage() {
           {attachedFiles.length > 0 && (
             <div className="flex flex-wrap gap-1.5 mb-2">
               {attachedFiles.map((f, i) => (
-                <span key={i} className="flex items-center gap-1.5 bg-violet-50 border border-violet-200 text-violet-700 text-xs px-2.5 py-1 rounded-lg">
+                <span key={i} className="flex items-center gap-1.5 bg-slate-100 border border-slate-200 text-slate-600 text-xs px-2.5 py-1 rounded-lg">
                   <FileText className="w-3 h-3 shrink-0" />
                   <span className="max-w-[160px] truncate font-medium">{f.name}</span>
-                  <span className="text-violet-300">·</span>
-                  <span className="text-violet-400">{(f.size / 1024).toFixed(0)} Ko</span>
-                  <button onClick={() => removeFile(i)} className="ml-0.5 text-violet-400 hover:text-violet-700 transition-colors">
+                  <span className="text-slate-300">·</span>
+                  <span className="text-slate-400">{(f.size / 1024).toFixed(0)} Ko</span>
+                  <button onClick={() => removeFile(i)} className="ml-0.5 text-slate-400 hover:text-slate-700 transition-colors">
                     <X className="w-3 h-3" />
                   </button>
                 </span>
@@ -731,12 +706,11 @@ export default function ChatPage() {
 
           {/* Input box */}
           <div
-            className="flex items-end gap-2 px-3 py-2.5 rounded-2xl focus-within:ring-2 focus-within:ring-violet-300/50 transition-all"
+            className="flex items-end gap-2 px-3 py-2.5 rounded-xl focus-within:ring-2 focus-within:ring-[#0a2a43]/25 transition-all"
             style={{
-              background: "rgba(255,255,255,0.9)",
-              backdropFilter: "blur(16px)",
-              border: "1px solid rgba(255,255,255,0.95)",
-              boxShadow: "0 4px 20px rgba(0,0,0,0.06)",
+              background: "#ffffff",
+              border: "1px solid #ecedf0",
+              boxShadow: "none",
             }}
           >
             <input
@@ -758,7 +732,7 @@ export default function ChatPage() {
               className={cn(
                 "p-1.5 rounded-lg transition-colors shrink-0 mb-0.5",
                 attachedFiles.length > 0
-                  ? "text-violet-600 bg-violet-100"
+                  ? "text-[#0a2a43] bg-slate-100"
                   : "text-slate-400 hover:text-slate-600 hover:bg-slate-100"
               )}
             >
@@ -783,8 +757,8 @@ export default function ChatPage() {
             <button
               onClick={() => loading ? abortRef.current?.abort() : send(input)}
               disabled={!loading && !input.trim() && attachedFiles.length === 0}
-              className="w-8 h-8 rounded-xl flex items-center justify-center shrink-0 disabled:opacity-40 disabled:cursor-not-allowed transition-all mb-0.5 hover:scale-105"
-              style={{ background: "linear-gradient(135deg, #6d28d9 0%, #2563eb 100%)" }}
+              className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 disabled:opacity-40 disabled:cursor-not-allowed transition-all mb-0.5 hover:brightness-95"
+              style={{ background: "#f26a21" }}
               title={loading ? "Arrêter" : "Envoyer"}
             >
               {loading

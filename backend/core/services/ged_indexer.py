@@ -145,7 +145,7 @@ class GEDIndexer:
         step = max(1, self._chunk_size - self._chunk_overlap)
         for i, start in enumerate(range(0, len(words), step)):
             chunk_words = words[start : start + self._chunk_size]
-            if len(chunk_words) < 20:  # Skip chunks vides ou trop courts
+            if not chunk_words:  # Skip uniquement les chunks vides
                 continue
             chunks.append(Chunk(
                 chunk_id=f"{doc_id}_chunk_{i}",

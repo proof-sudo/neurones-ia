@@ -1,0 +1,323 @@
+=== Étape : metadata ===
+=== Exception : JSONDecodeError: Expecting ',' delimiter: line 314 column 6 (char 9644) ===
+=== Longueur réponse : 9764 chars ===
+=== Raw response (complet) ===
+```json
+{
+  "market_identity": {
+    "type_marche": "appel d'offres ouvert",
+    "reference": "04/2025/ABI/CI",
+    "autorite_contractante": "Atlantic Business International (ABI)",
+    "duree_contrat": "non spécifiée",
+    "date_demarrage": "non spécifiée",
+    "deadline_soumission": "non spécifiée",
+    "validite_offre": "180 jours calendaires",
+    "perimetre_geographique": "Côte d'Ivoire, Bénin, Burkina-Faso, Mali, Niger, Sénégal, Togo, Guinée-Bissau (zone UEMOA)",
+    "eligibilite_candidat": "Ancienneté minimale 5 ans sur le marché. Non admises: sociétés en liquidation judiciaire, en redressement judiciaire",
+    "confidence": 0.95
+  },
+  "calendar": [
+    {
+      "label": "Demande de renseignements sur cahier des charges",
+      "date": "5 jours avant la date limite de remise des offres",
+      "criticite": "CRITIQUE",
+      "source_section": "3.11"
+    },
+    {
+      "label": "Remise des propositions (plis fermés et scellés)",
+      "date": "non spécifiée",
+      "criticite": "BLOQUANT",
+      "source_section": "3.7"
+    },
+    {
+      "label": "Durée des engagements des entreprises",
+      "date": "180 jours calendaires à partir de la date limite de remise des offres",
+      "criticite": "CRITIQUE",
+      "source_section": "3.14"
+    },
+    {
+      "label": "Passation du marché (délai supplémentaire)",
+      "date": "60 jours après désignation du titulaire",
+      "criticite": "INFO",
+      "source_section": "3.15"
+    },
+    {
+      "label": "Constitution du cautionnement définitif",
+      "date": "30 jours suivant la notification de l'approbation du marché",
+      "criticite": "BLOQUANT",
+      "source_section": "3.19"
+    },
+    {
+      "label": "Réception définitive",
+      "date": "1 an après la date d'installation des équipements",
+      "criticite": "INFO",
+      "source_section": "3.12"
+    }
+  ],
+  "evaluation_modalities": {
+    "ponderation_technique": 70,
+    "ponderation_financiere": 30,
+    "seuil_minimum_technique": 70,
+    "formule_notation_financiere": "Ni = (70 × Ti + 30 × Fi) / 100 ; Fi = (Po / Pi) × 100",
+    "modalites": [
+      "Analyse préalable de la conformité administrative (Phase 1)",
+      "Évaluation capacité financière (minimum > 6 points pour continuer)",
+      "Évaluation technique sur 100 points (minimum 70 pour ouverture pli financier)",
+      "Évaluation technico-financière",
+      "Analyse comparative intégrant TCO 5 ans, conformité technique, garanties sécurité/résilience/évolutivité, engagements support/maintenance"
+    ],
+    "confidence": 0.9
+  },
+  "criteria": [
+    {
+      "id": "1",
+      "label": "Présentation de l'offre globale (administrative et technique) et compréhension du besoin",
+      "max_points": 5,
+      "category": "Technique",
+      "is_inferred": false
+    },
+    {
+      "id": "2",
+      "label": "Conformité technique détaillée (exigences fonctionnelles, sécurité, matérielle)",
+      "max_points": 30,
+      "category": "Technique",
+      "is_inferred": false
+    },
+    {
+      "id": "2a",
+      "label": "Conformité aux exigences fonctionnelles (sauvegarde, restauration)",
+      "max_points": 10,
+      "category": "Technique",
+      "is_inferred": false
+    },
+    {
+      "id": "2b",
+      "label": "Conformité aux exigences sécurité (immutabilité, ransomware, chiffrement, MFA)",
+      "max_points": 10,
+      "category": "Technique",
+      "is_inferred": false
+    },
+    {
+      "id": "2c",
+      "label": "Conformité matérielle (CPU, RAM, RAID, réseau)",
+      "max_points": 10,
+      "category": "Technique",
+      "is_inferred": false
+    },
+    {
+      "id": "3",
+      "label": "Architecture technique proposée (schéma, dimensionnement, justification, intégration multisites)",
+      "max_points": 15,
+      "category": "Technique",
+      "is_inferred": false
+    },
+    {
+      "id": "4",
+      "label": "Organisation et méthodologie de conduite de projet (gestion risques, méthodologie, planning, matrice RACI)",
+      "max_points": 10,
+      "category": "Méthodologie",
+      "is_inferred": false
+    },
+    {
+      "id": "5",
+      "label": "Equipe projet et certification (Chef de projet, Architecte, Ingénieur sécurité/réseau, certifiés Commvault)",
+      "max_points": 15,
+      "category": "RH",
+      "is_inferred": false
+    },
+    {
+      "id": "6",
+      "label": "Support et maintenance (7j/7, SLA contractuels, escalade éditeur, délai prise en charge, engagement écrit)",
+      "max_points": 15,
+      "category": "Offre",
+      "is_inferred": false
+    },
+    {
+      "id": "7",
+      "label": "Références de prestations similaires (minimum 5 attestations Bonne Exécution sur 3 dernières années)",
+      "max_points": 10,
+      "category": "Expérience",
+      "is_inferred": false
+    }
+  ],
+  "appendices": [
+    {
+      "code": "Annexe 1",
+      "label": "Modèle de déclaration sur l'honneur",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.5.1"
+    },
+    {
+      "code": "Annexe 2",
+      "label": "Modèle d'acte d'engagement",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.5.4"
+    },
+    {
+      "code": "Annexe 3",
+      "label": "Modèle de cautionnement provisoire (garantie bancaire 15 000 000 FCFA)",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.18"
+    },
+    {
+      "code": "Annexe 4",
+      "label": "Modèle de cautionnement définitif (3% du montant total du marché)",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.19"
+    },
+    {
+      "code": "Annexe 5",
+      "label": "Bordereau de prix (avec décomposition par filiale et variante)",
+      "type": "FINANCIER",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "4.11"
+    },
+    {
+      "code": "Annexe 6",
+      "label": "Tableau de décomposition des coûts d'exploitation (5 ans)",
+      "type": "FINANCIER",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "4.11"
+    },
+    {
+      "code": "Annexe 7",
+      "label": "Structuration technique de l'offre (document normalisé)",
+      "type": "TECHNIQUE",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "4.0"
+    },
+    {
+      "code": "Annexe 8",
+      "label": "Recueil de consentement pour traitement des données à caractère personnel",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.5.1, section 21"
+    },
+    {
+      "code": "Dossier administratif",
+      "label": "Copie du Règlement de Consultation paraphé et signé",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.5.1, élément 10"
+    },
+    {
+      "code": "Dossier administratif",
+      "label": "Présentation de l'entreprise (historique, domaines d'activité, vision)",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.5.1, élément 3"
+    },
+    {
+      "code": "Dossier administratif",
+      "label": "Statuts de l'entreprise",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.5.1, élément 5"
+    },
+    {
+      "code": "Dossier administratif",
+      "label": "Registre de commerce",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.5.1, élément 8"
+    },
+    {
+      "code": "Dossier administratif",
+      "label": "Organigramme",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.5.1, élément 6"
+    },
+    {
+      "code": "Dossier administratif",
+      "label": "Pouvoir du signataire de l'offre",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.5.1, élément 7"
+    },
+    {
+      "code": "Dossier administratif",
+      "label": "Adresse géographique (justification localisation physique)",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.5.1, élément 4"
+    },
+    {
+      "code": "Dossier administratif",
+      "label": "Déclaration fiscale d'existence",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.5.1, élément 11"
+    },
+    {
+      "code": "Dossier administratif",
+      "label": "Attestation de régularité fiscale",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.5.1, élément 12"
+    },
+    {
+      "code": "Dossier administratif",
+      "label": "Attestation régularité cotisations sociales",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.5.1, élément 13"
+    },
+    {
+      "code": "Dossier administratif",
+      "label": "Certificat de non-faillite",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.5.1, élément 14"
+    },
+    {
+      "code": "Dossier administratif",
+      "label": "Bilan des trois dernières années",
+      "type": "FINANCIER",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.5.1, élément 15"
+    },
+    {
+      "code": "Dossier administratif",
+      "label": "Attestation de chiffre d'affaires",
+      "type": "FINANCIER",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.5.1, élément 16"
+    },
+    {
+      "code": "Dossier administratif",
+      "label": "Attestation de ligne de crédit (banque ou fournisseurs)",
+      "type": "FINANCIER",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "3.5.1, élément 17"
+    },
+    {
+      "code": "Dossier administratif",
+      "label": "Relevé d'Identité Bancaire",
+      "type": "ADMIN

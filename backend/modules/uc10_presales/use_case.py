@@ -1,14 +1,104 @@
 import json
 import logging
+from pathlib import Path
 
+import yaml
+
+from config.settings import settings
 from core.ports.llm_gateway import LLMGateway
 from core.ports.document_parser import DocumentParser
-from core.domain.offer import ScoringResult, OfferDraft
+from core.domain.offer import (
+    ScoringResult, OfferDraft, StrategyPhase, PhaseAction, BidStrategy, Partner, Precondition,
+)
 from core.services.rag_engine import RAGEngine
 from modules.uc10_presales.scoring_pipeline import ScoringPipeline, _clean_json
 from modules.uc10_presales.offer_generator import OfferGenerator
 
 logger = logging.getLogger(__name__)
+
+# En-deçà de ce nombre de jours avant la deadline, on bascule sur le squelette express
+# (3 phases) au lieu du standard (5 phases) — forcer 5 phases serait absurde.
+_EXPRESS_THRESHOLD_DAYS = 7
+
+
+def _strategy_skeleton_path(express: bool) -> Path:
+    name = "express" if express else "standard"
+    return Path(settings.uploads_path).parent / "strategy_phases" / f"{name}.yaml"
+
+
+def _days_until(date_str: str) -> int | None:
+    """Nombre de jours d'ici à `date_str` (formats numériques JJ/MM/AAAA, JJ-MM-AAAA, ISO).
+
+    Retourne None si non parsable (les mois en toutes lettres ne sont PAS gérés à dessein :
+    mieux vaut retomber sur le squelette standard que déclencher l'express à tort).
+    """
+    import re
+    from datetime import date, datetime
+
+    if not date_str:
+        return None
+    s = date_str.strip()
+    patterns = [
+        (r"\b(\d{4})-(\d{2})-(\d{2})\b", "%Y-%m-%d", ("y", "m", "d")),
+        (r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b", None, ("d", "m", "y")),
+    ]
+    for rx, _fmt, order in patterns:
+        m = re.search(rx, s)
+        if not m:
+            continue
+        try:
+            vals = dict(zip(order, (int(g) for g in m.groups())))
+            target = date(vals["y"], vals["m"], vals["d"])
+        except (ValueError, KeyError):
+            continue
+        return (target - datetime.now().date()).days
+    return None
+
+
+def load_strategy_skeleton(days_remaining: int | None = None) -> tuple[dict, list[StrategyPhase]]:
+    """Charge le squelette de phases (standard ou express) et construit les phases vides.
+
+    Retourne (config_brute, phases) :
+    - config_brute : le YAML parsé (contient typical_actions, utilisé par le prompt LLM)
+    - phases : list[StrategyPhase] sans actions (le LLM les remplira), avec start/end_day
+      calculés en cumulant typical_duration_days (J1, J2-J4, ...).
+    Sélection express si days_remaining < 7. Retourne ({}, []) si le YAML est illisible
+    (jamais d'exception : la génération continue, le LLM produira sans squelette).
+    """
+    express = days_remaining is not None and days_remaining < _EXPRESS_THRESHOLD_DAYS
+    path = _strategy_skeleton_path(express)
+    try:
+        config = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except (OSError, yaml.YAMLError) as exc:
+        logger.warning("Squelette stratégie '%s' illisible (%s) — génération sans squelette",
+                       path.name, exc)
+        return {}, []
+
+    phases: list[StrategyPhase] = []
+    cursor = 1
+    for p in config.get("phases", []):
+        if not isinstance(p, dict) or not str(p.get("id", "")).strip():
+            continue
+        try:
+            dur = max(1, int(p.get("typical_duration_days", 1) or 1))
+        except (TypeError, ValueError):
+            dur = 1
+        start = f"J{cursor}"
+        end = start if dur == 1 else f"J{cursor + dur - 1}"
+        phases.append(StrategyPhase(
+            id=str(p["id"]).strip(),
+            name=str(p.get("name", "") or "").strip(),
+            description=" ".join(str(p.get("description", "") or "").split()),
+            start_day=start,
+            end_day=end,
+            prerequisites=[str(x).strip() for x in (p.get("prerequisites") or []) if str(x).strip()],
+            is_blocking_next=bool(p.get("is_blocking_next", False)),
+        ))
+        cursor += dur
+    variant = config.get("variant", "express" if express else "standard")
+    logger.info("Squelette stratégie '%s' chargé : %d phases (deadline_days=%s)",
+                variant, len(phases), days_remaining)
+    return config, phases
 
 _STRATEGY_SYSTEM = """Tu es un directeur commercial senior chez Neurones Technologies CI, ESN ivoirienne spécialisée en intégration IT, développement logiciel, infrastructure et cybersécurité.
 
@@ -21,15 +111,16 @@ Réponds UNIQUEMENT en JSON valide. Dans toutes les valeurs string, utilise \\n 
 ━━━ FORMAT ATTENDU ━━━
 {{
   "strategy": "§1 texte.\\n\\n§2 texte.\\n\\n§3 texte.\\n\\n§4 texte.\\n\\n§5 texte.",
-  "chronogram": [
-    {{"semaine": "S1 — J1 à J5", "action": "action précise et opérationnelle", "responsable": "Rôle exact"}},
-    ...
+  "phases": [
+    {{"id": "PHASE_0", "actions": [
+      {{"day_label": "J1", "action": "action concrète", "responsable": "Rôle exact", "duree_estimee": "2h", "deliverable": "ce qui sort"}}
+    ]}}
   ],
   "response_plan": "§1 texte.\\n\\n§2 texte.\\n\\n§3 texte.\\n\\n§4 texte."
 }}
 
 ━━━ ACTEURS DE NEURONES TECHNOLOGIES CI ━━━
-Utilise exclusivement ces rôles dans le chronogramme :
+Utilise exclusivement ces rôles comme `responsable` :
 - Directeur Commercial — pilote global, relation client, validation décisions
 - Directeur Technique — architecture solution, cohérence offre technique
 - Chef de Projet désigné — planning, coordination, disponibilité à valider
@@ -39,21 +130,13 @@ Utilise exclusivement ces rôles dans le chronogramme :
 - Équipe de rédaction technique — rédaction corpus offre, fiches techniques, références
 - Direction Générale — validation finale, signature, engagements stratégiques
 
-━━━ CHRONOGRAMME ━━━
-- Base le chronogramme sur la date de remise réelle fournie dans le contexte
-- Si la date de remise est connue, calcule le nombre de semaines restantes et adapte le rythme
-- Formule les semaines en "S1 — J1 à J5" ou "S2 — J6 à J10" pour être lisible
-- Minimum 7 actions, maximum 10 actions couvrant TOUT le cycle :
-  1. Kick-off interne & attribution des rôles (J1-J2)
-  2. Relecture AO complète & questions de clarification au maître d'ouvrage
-  3. Mobilisation des profils et vérification disponibilité (RH)
-  4. Collecte des pièces administratives et caution bancaire
-  5. Rédaction de l'offre technique (méthodologie, planning projet, profils)
-  6. Montage de l'offre financière (BPU, détail des coûts)
-  7. Identification et collecte des références similaires avec attestations
-  8. Revue interne croisée (technique + commercial + administratif)
-  9. Validation Direction Générale et signature
-  10. Dépôt / soumission dans les délais (J avant deadline)
+━━━ PLAN EN PHASES ━━━
+- On te fournit dans le contexte un SQUELETTE DE PHASES (ids fixes, intitulés, actions types).
+- Pour CHAQUE phase fournie, produis 1 à 4 actions concrètes en t'appuyant sur ses actions types.
+- NE crée AUCUNE phase, NE change AUCUN id : remplis seulement le tableau `actions` de chaque id.
+- Date chaque action (`day_label`) en cohérence avec start_day/end_day de la phase et la deadline réelle.
+- `responsable` = un rôle EXACT de la liste ci-dessus. `deliverable` = livrable concret quand pertinent.
+- PHASE_0 : mets les actions de décision/kick-off (la validation du partenaire est gérée à part, ne la duplique pas).
 
 ━━━ STRATEGY (5 paragraphes obligatoires) ━━━
 §1 — Lecture stratégique de l'AO : enjeux pour le commanditaire, opportunité pour Neurones, niveau de compétition estimé, criticité du projet
@@ -114,7 +197,8 @@ class PresalesUseCase:
         client_name: str = "",
         decision: str = "GO",
         decision_reason: str = "",
-    ) -> dict:
+        partner: Partner | None = None,
+    ) -> BidStrategy:
         decision_label = {"GO": "GO — Répondre", "CONDITIONAL": "CONDITIONNEL — Sous conditions", "NO_BID": "NO-BID — Ne pas répondre"}.get(decision, decision)
         system = _STRATEGY_SYSTEM.replace("{decision}", decision_label)
 
@@ -126,6 +210,11 @@ class PresalesUseCase:
         secteur = key_map.get("secteur", "non précisé")
         livrables = key_map.get("livrables", "non précisé")
 
+        # Sélection du squelette (standard 5 phases / express 3 phases) sur les jours restants
+        deadline_src = scoring.market_identity.deadline_soumission or date_remise
+        days_remaining = _days_until(deadline_src)
+        config, skeleton = load_strategy_skeleton(days_remaining)
+
         lines = [
             f"═══ CONTEXTE AO ═══",
             f"Intitulé AO : {scoring.ao_filename}",
@@ -133,14 +222,26 @@ class PresalesUseCase:
             f"Secteur : {secteur}",
             f"Type de marché : {type_marche}",
             f"Budget estimé : {budget}",
-            f"DATE DE REMISE : {date_remise}  ← baser le chronogramme sur cette date",
+            f"DATE DE REMISE : {date_remise}"
+            + (f"  (≈ {days_remaining} jours restants)" if days_remaining is not None else "")
+            + "  ← date les actions par rapport à cette échéance",
             f"Score GED Neurones : {scoring.score}/100",
             f"Décision retenue : {decision_label}",
-            "",
-            f"═══ RÉSUMÉ AO ═══",
-            scoring.summary[:800],
-            "",
         ]
+        if partner is not None:
+            lines.append(f"PARTENAIRE DE GROUPEMENT : {partner.name} ({partner.role}, {partner.type})")
+        lines += ["", f"═══ RÉSUMÉ AO ═══", scoring.summary[:800], ""]
+
+        # Squelette de phases à remplir (ids fixes, intitulés, actions types)
+        if skeleton:
+            phase_lines = ["═══ SQUELETTE DE PHASES À REMPLIR (ne pas changer les ids) ═══"]
+            raw_by_id = {str(p.get("id")): p for p in config.get("phases", [])}
+            for ph in skeleton:
+                typ = raw_by_id.get(ph.id, {}).get("typical_actions", []) or []
+                phase_lines.append(f"  {ph.id} — {ph.name} ({ph.start_day}→{ph.end_day})")
+                for ta in typ:
+                    phase_lines.append(f"      · {ta}")
+            lines += phase_lines + [""]
 
         if scoring.criteres_selection:
             lines += ["═══ CRITÈRES DE SÉLECTION (à surcoter) ═══"] + [f"  • {c}" for c in scoring.criteres_selection[:8]] + [""]
@@ -164,7 +265,11 @@ class PresalesUseCase:
             lines += ["═══ FORCES DE NEURONES SUR CET AO ═══"] + [f"  + {s}" for s in scoring.strengths[:6]] + [""]
 
         if scoring.risks:
-            lines += ["═══ RISQUES & FAIBLESSES ═══"] + [f"  - {r}" for r in scoring.risks[:6]] + [""]
+            risk_lines = [
+                f"  - [{r.criticite}] {r.label}" + (f" → Mitigation : {r.mitigation}" if r.mitigation else "")
+                for r in scoring.risks[:6]
+            ]
+            lines += ["═══ RISQUES & FAIBLESSES ═══"] + risk_lines + [""]
 
         if scoring.gaps_analysis:
             lines += ["═══ ANALYSE DES ÉCARTS (ce qui manque / ce qu'il faut compenser) ═══", scoring.gaps_analysis[:500], ""]
@@ -173,27 +278,84 @@ class PresalesUseCase:
             lines += [f"═══ JUSTIFICATION DE LA DÉCISION ═══", decision_reason, ""]
 
         user = "\n".join(lines)
-        raw = await self._llm_sonnet.generate(system=system, user=user, max_tokens=3500)
+        # Budget large : 5 phases × jusqu'à 4 actions + strategy (5§) + response_plan (4§). Cf. gate token.
+        raw = await self._llm_sonnet.generate(system=system, user=user, max_tokens=4000)
+
+        # PHASE_0 (validation) = préalables du scoring, réutilisés tels quels (pas de duplication)
+        partner_validation = list(scoring.preconditions)
+
         try:
             data = json.loads(_clean_json(raw))
-            return {
-                "strategy": data.get("strategy", ""),
-                "chronogram": data.get("chronogram", []),
-                "response_plan": data.get("response_plan", ""),
-            }
+            strategy_text = str(data.get("strategy", "") or "")
+            response_plan = str(data.get("response_plan", "") or "")
+            phases = self._merge_phase_actions(skeleton, data.get("phases"))
         except Exception as exc:
-            logger.warning("Strategy JSON parse failed (%s) — tentative extraction regex", exc)
+            logger.warning("Strategy JSON parse failed (%s) — fallback regex + squelette vide", exc)
             import re
-            # Tenter d'extraire le champ "strategy" via regex si JSON invalide
             m = re.search(r'"strategy"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
             strategy_text = m.group(1).replace("\\n", "\n") if m else ""
             m2 = re.search(r'"response_plan"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
-            plan_text = m2.group(1).replace("\\n", "\n") if m2 else ""
+            response_plan = m2.group(1).replace("\\n", "\n") if m2 else ""
             if not strategy_text:
-                # Dernier recours : retirer les balises JSON et renvoyer le texte brut
                 strategy_text = re.sub(r'^\s*\{.*?"strategy"\s*:\s*"', "", raw, flags=re.DOTALL)
-                strategy_text = re.sub(r'",?\s*"chronogram".*$', "", strategy_text, flags=re.DOTALL).strip()
-            return {"strategy": strategy_text or "Génération indisponible — veuillez réessayer.", "chronogram": [], "response_plan": plan_text}
+                strategy_text = re.sub(r'",?\s*"phases".*$', "", strategy_text, flags=re.DOTALL).strip()
+            strategy_text = strategy_text or "Génération indisponible — veuillez réessayer."
+            # Dégradation gracieuse : on garde le squelette (phases sans actions) plutôt que rien
+            phases = skeleton
+
+        from datetime import datetime
+        logger.info(
+            "Bid strategy générée : variant=%s, %d phases, %d actions, %d préalables",
+            config.get("variant", "?"), len(phases),
+            sum(len(p.actions) for p in phases), len(partner_validation),
+        )
+        return BidStrategy(
+            phases=phases,
+            strategy_text=strategy_text,
+            response_plan=response_plan,
+            appendices=list(scoring.appendices),
+            partner=partner,
+            partner_validation=partner_validation,
+            generated_at=datetime.now().isoformat(timespec="seconds"),
+        )
+
+    # Rôles autorisés (whitelist du prompt) — sert à normaliser le responsable retourné
+    _STRATEGY_ROLES = {
+        "directeur commercial", "directeur technique", "chef de projet désigné",
+        "responsable rh", "responsable administratif & juridique", "responsable financier",
+        "équipe de rédaction technique", "direction générale",
+    }
+
+    def _merge_phase_actions(
+        self, skeleton: list[StrategyPhase], raw_phases: object
+    ) -> list[StrategyPhase]:
+        """Fusionne les actions produites par le LLM (par id de phase) dans le squelette.
+
+        Le squelette (ids, intitulés, dépendances) fait foi ; le LLM ne fournit que les actions.
+        Une phase sans actions LLM reste dans le plan (vide) — dégradation gracieuse.
+        """
+        actions_by_id: dict[str, list] = {}
+        if isinstance(raw_phases, list):
+            for item in raw_phases:
+                if isinstance(item, dict) and str(item.get("id", "")).strip():
+                    acts = item.get("actions", [])
+                    actions_by_id[str(item["id"]).strip()] = acts if isinstance(acts, list) else []
+        for phase in skeleton:
+            phase.actions = []
+            for a in actions_by_id.get(phase.id, []):
+                if not isinstance(a, dict):
+                    continue
+                action_txt = str(a.get("action", "") or "").strip()
+                if not action_txt:
+                    continue
+                phase.actions.append(PhaseAction(
+                    day_label=str(a.get("day_label", "") or "").strip() or phase.start_day,
+                    action=action_txt,
+                    responsable=str(a.get("responsable", "") or "").strip(),
+                    duree_estimee=str(a.get("duree_estimee", "") or "").strip(),
+                    deliverable=str(a.get("deliverable", "") or "").strip(),
+                ))
+        return skeleton
 
     async def match_team(self, req) -> dict:
         """Cherche dans la GED les CVs correspondant aux profils demandés par l'AO."""

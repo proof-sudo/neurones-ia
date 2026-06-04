@@ -26,14 +26,14 @@ function fmtDate(iso: string | null): string {
 }
 
 const DOC_TYPE_LABELS: Record<string, { label: string; color: string }> = {
-  cv:              { label: "CV",           color: "bg-blue-50 text-blue-600 border-blue-100" },
-  offre_technique: { label: "Offre",        color: "bg-violet-50 text-violet-600 border-violet-100" },
-  abe:             { label: "ABE",          color: "bg-orange-50 text-orange-600 border-orange-100" },
-  pv_recette:      { label: "PV Recette",   color: "bg-teal-50 text-teal-600 border-teal-100" },
-  procedure:       { label: "Procédure",    color: "bg-yellow-50 text-yellow-700 border-yellow-100" },
-  fiche_technique: { label: "Fiche Tech",   color: "bg-pink-50 text-pink-600 border-pink-100" },
-  compte_rendu:    { label: "CR",           color: "bg-emerald-50 text-emerald-600 border-emerald-100" },
-  unknown:         { label: "Inconnu",      color: "bg-slate-50 text-slate-500 border-slate-100" },
+  cv:              { label: "CV",           color: "bg-slate-100 text-slate-600 border-slate-200" },
+  offre_technique: { label: "Offre",        color: "bg-slate-100 text-slate-600 border-slate-200" },
+  abe:             { label: "ABE",          color: "bg-slate-100 text-slate-600 border-slate-200" },
+  pv_recette:      { label: "PV Recette",   color: "bg-slate-100 text-slate-600 border-slate-200" },
+  procedure:       { label: "Procédure",    color: "bg-slate-100 text-slate-600 border-slate-200" },
+  fiche_technique: { label: "Fiche Tech",   color: "bg-slate-100 text-slate-600 border-slate-200" },
+  compte_rendu:    { label: "CR",           color: "bg-slate-100 text-slate-600 border-slate-200" },
+  unknown:         { label: "Inconnu",      color: "bg-slate-100 text-slate-500 border-slate-200" },
 };
 
 const CATEGORY_ICONS: Record<string, React.ElementType> = {
@@ -88,7 +88,7 @@ function FolderNode({ path, name, label, fileCount, subfolders, selected, onSele
           className={cn(
             "w-full flex items-center gap-2 px-2 py-1.5 rounded-lg text-left text-[13px] transition-all",
             isSelected
-              ? "bg-blue-600 text-white"
+              ? "bg-[#0a2a43] text-white"
               : "text-slate-600 hover:bg-slate-100 hover:text-slate-900",
           )}
           style={{ paddingLeft: `${depth * 12 + 8}px` }}
@@ -111,7 +111,7 @@ function FolderNode({ path, name, label, fileCount, subfolders, selected, onSele
           {fileCount > 0 && (
             <span className={cn(
               "text-[10px] font-semibold rounded-full px-1.5 py-0.5 shrink-0",
-              isSelected ? "bg-blue-500 text-white" : "bg-slate-200 text-slate-500"
+              isSelected ? "bg-white/20 text-white" : "bg-slate-200 text-slate-500"
             )}>
               {fileCount}
             </span>
@@ -122,7 +122,7 @@ function FolderNode({ path, name, label, fileCount, subfolders, selected, onSele
             onClick={e => { e.stopPropagation(); onDelete(path, label ?? name); }}
             className={cn(
               "absolute right-1 top-1/2 -translate-y-1/2 p-1 rounded-md opacity-0 group-hover/folder:opacity-100 transition-opacity",
-              isSelected ? "text-blue-200 hover:text-white" : "text-slate-400 hover:text-red-500 hover:bg-red-50"
+              isSelected ? "text-white/60 hover:text-white" : "text-slate-400 hover:text-red-500 hover:bg-red-50"
             )}
             title="Supprimer"
           >
@@ -237,7 +237,7 @@ function DeleteFolderModal({ folderPath, folderName, onClose, onDeleted }: {
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+      <div className="bg-white rounded-xl border border-[#ecedf0] w-full max-w-sm p-6">
         <div className="flex items-start gap-3 mb-4">
           <div className="w-10 h-10 rounded-xl bg-red-50 border border-red-100 flex items-center justify-center shrink-0">
             <AlertTriangle className="w-5 h-5 text-red-500" />
@@ -311,7 +311,7 @@ function CreateFolderModal({ categories, initialParent, onClose, onCreated }: {
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm p-6">
+      <div className="bg-white rounded-xl border border-[#ecedf0] w-full max-w-sm p-6">
         <div className="flex items-center justify-between mb-4">
           <h3 className="font-semibold text-slate-900">Nouveau dossier</h3>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors">
@@ -322,7 +322,7 @@ function CreateFolderModal({ categories, initialParent, onClose, onCreated }: {
         <label className="flex items-center gap-3 mb-4 cursor-pointer p-3 rounded-xl border border-slate-200 hover:bg-slate-50 transition-colors">
           <input
             type="checkbox" checked={isRoot} onChange={e => setIsRoot(e.target.checked)}
-            className="w-4 h-4 rounded border-slate-300 accent-blue-600"
+            className="w-4 h-4 rounded border-slate-300 accent-[#0a2a43]"
           />
           <div>
             <span className="text-sm font-medium text-slate-700">Catégorie racine</span>
@@ -335,7 +335,7 @@ function CreateFolderModal({ categories, initialParent, onClose, onCreated }: {
             <label className="text-xs font-medium text-slate-500 mb-1.5 block">Dossier parent</label>
             <select
               value={parentPath} onChange={e => setParentPath(e.target.value)}
-              className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white"
+              className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0a2a43]/30 bg-white"
             >
               {allPaths.map(p => (
                 <option key={p.path} value={p.path}>
@@ -353,7 +353,7 @@ function CreateFolderModal({ categories, initialParent, onClose, onCreated }: {
             onChange={(e) => { setName(e.target.value); setError(""); }}
             onKeyDown={(e) => e.key === "Enter" && submit()}
             placeholder="ex. 2026, DISTRIMAT, Q1…"
-            className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            className="w-full border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#0a2a43]/30"
           />
         </div>
 
@@ -375,7 +375,7 @@ function CreateFolderModal({ categories, initialParent, onClose, onCreated }: {
           </button>
           <button
             onClick={submit} disabled={loading}
-            className="flex-1 py-2 px-3 rounded-xl bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium transition-colors flex items-center justify-center gap-1.5"
+            className="flex-1 py-2 px-3 rounded-lg bg-[#f26a21] hover:brightness-95 text-white text-sm font-medium transition-all flex items-center justify-center gap-1.5"
           >
             {loading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : null}
             {loading ? "Création…" : "Créer le dossier"}
@@ -388,17 +388,15 @@ function CreateFolderModal({ categories, initialParent, onClose, onCreated }: {
 
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
-const PAGE_BG = "linear-gradient(160deg, #eef0f8 0%, #e8ecf5 50%, #edf0f8 100%)";
+const PAGE_BG = "#f7f8fa";
 const GLASS = {
-  background: "rgba(255,255,255,0.85)",
-  backdropFilter: "blur(16px)",
-  border: "1px solid rgba(255,255,255,0.9)",
-  boxShadow: "0 4px 24px rgba(0,0,0,0.05)",
+  background: "#ffffff",
+  border: "1px solid #ecedf0",
+  boxShadow: "none",
 } as React.CSSProperties;
 const HEADER_BG = {
-  background: "rgba(238,240,248,0.85)",
-  backdropFilter: "blur(20px)",
-  borderBottom: "1px solid rgba(0,0,0,0.06)",
+  background: "#f7f8fa",
+  borderBottom: "1px solid #ecedf0",
 } as React.CSSProperties;
 
 export default function GEDPage() {
@@ -546,8 +544,8 @@ export default function GEDPage() {
           <button
             onClick={() => fileInputRef.current?.click()}
             disabled={uploading}
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg text-white disabled:opacity-50 transition-all font-medium hover:scale-[1.02]"
-            style={{ background: "linear-gradient(135deg, #6d28d9 0%, #2563eb 100%)" }}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg text-white disabled:opacity-50 transition-all font-medium hover:brightness-95"
+            style={{ background: "#f26a21" }}
           >
             <Upload className="w-3.5 h-3.5" />
             {uploading ? "Envoi…" : "Importer"}
@@ -561,7 +559,7 @@ export default function GEDPage() {
 
       <div className="flex flex-1 min-h-0">
         {/* Folder tree */}
-        <aside className="w-56 shrink-0 overflow-y-auto flex flex-col" style={{ background: "rgba(238,240,248,0.6)", borderRight: "1px solid rgba(0,0,0,0.06)" }}>
+        <aside className="w-56 shrink-0 overflow-y-auto flex flex-col" style={{ background: "#f7f8fa", borderRight: "1px solid #ecedf0" }}>
           <div className="p-3 flex flex-col gap-0.5">
             <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest px-2 pb-1.5">
               Catégories
@@ -592,11 +590,11 @@ export default function GEDPage() {
         </aside>
 
         {/* File list */}
-        <main className="flex-1 min-w-0 overflow-y-auto flex flex-col" style={{ background: "rgba(238,240,248,0.4)" }}>
+        <main className="flex-1 min-w-0 overflow-y-auto flex flex-col" style={{ background: "#f7f8fa" }}>
           {/* Toolbar */}
-          <div className="flex items-center gap-3 px-5 py-3 sticky top-0 z-10" style={{ background: "rgba(238,240,248,0.85)", backdropFilter: "blur(16px)", borderBottom: "1px solid rgba(0,0,0,0.05)" }}>
+          <div className="flex items-center gap-3 px-5 py-3 sticky top-0 z-10" style={{ background: "#f7f8fa", borderBottom: "1px solid #ecedf0" }}>
             <div className="flex items-center gap-1.5 text-sm text-slate-700 font-medium">
-              <FolderOpen className="w-4 h-4 text-blue-500 shrink-0" />
+              <FolderOpen className="w-4 h-4 text-[#0a2a43] shrink-0" />
               <span>{selectedLabel}</span>
               {selectedFolder.includes("/") && (
                 <span className="text-slate-400 font-normal">
@@ -609,7 +607,7 @@ export default function GEDPage() {
               <input
                 value={search} onChange={(e) => setSearch(e.target.value)}
                 placeholder="Rechercher…"
-                className="pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs w-44 focus:outline-none focus:ring-2 focus:ring-blue-400 bg-slate-50 focus:bg-white transition-colors"
+                className="pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-xs w-44 focus:outline-none focus:ring-2 focus:ring-[#0a2a43]/30 bg-slate-50 focus:bg-white transition-colors"
               />
               {search && (
                 <button onClick={() => setSearch("")} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600">
@@ -642,22 +640,22 @@ export default function GEDPage() {
               onDrop={handleDrop}
               onClick={() => fileInputRef.current?.click()}
               className={cn(
-                "border-2 border-dashed rounded-2xl px-6 py-7 flex flex-col items-center gap-2 cursor-pointer transition-all select-none",
+                "border-2 border-dashed rounded-xl px-6 py-7 flex flex-col items-center gap-2 cursor-pointer transition-colors select-none",
                 dragging
-                  ? "border-violet-400"
-                  : "border-white/60 hover:border-violet-300"
+                  ? "border-[#0a2a43]"
+                  : "border-[#dbe1e9] hover:border-slate-300"
               )}
               style={dragging
-                ? { background: "rgba(139,92,246,0.06)" }
-                : { background: "rgba(255,255,255,0.5)", backdropFilter: "blur(8px)" }
+                ? { background: "#eef1f5" }
+                : { background: "#ffffff" }
               }
             >
               <div className={cn(
-                "w-10 h-10 rounded-xl flex items-center justify-center",
-                dragging ? "bg-blue-100" : "bg-slate-100"
+                "w-10 h-10 rounded-lg flex items-center justify-center",
+                dragging ? "bg-slate-200" : "bg-slate-100"
               )}>
                 {dragging
-                  ? <FilePlus className="w-5 h-5 text-blue-600" />
+                  ? <FilePlus className="w-5 h-5 text-[#0a2a43]" />
                   : <Upload className="w-5 h-5 text-slate-400" />}
               </div>
               <p className="text-sm font-medium text-slate-700">

@@ -1,0 +1,116 @@
+=== Étape : extract ===
+=== Exception : JSONDecodeError: Expecting ',' delimiter: line 42 column 6 (char 2589) ===
+=== Longueur réponse : 7441 chars ===
+=== Raw response (complet) ===
+```json
+{
+  "key_points": [
+    {
+      "label": "Client et Région",
+      "value": "Atlantic Business International (ABI) - Groupe bancaire UEMOA présent dans 8 pays : Côte d'Ivoire, Bénin, Burkina-Faso, Mali, Niger, Sénégal, Togo, Guinée-Bissau"
+    },
+    {
+      "label": "Objet Principal",
+      "value": "Fourniture et déploiement d'une solution complète de sauvegarde basée exclusivement sur Commvault Complete Backup & Recovery pour postes de travail et serveurs de ABI et 9 filiales"
+    },
+    {
+      "label": "Architecture Requise",
+      "value": "Modèle autonome par filiale sans mutualisation inter-sites : chaque entité dispose de sa propre infrastructure Commvault indépendante"
+    },
+    {
+      "label": "Variantes et Options de Licensing",
+      "value": "Variante 1 (Appliance intégrée) + Variante 2 (Serveur + Baie disques). Pour chaque variante : 2 modèles de licence (User-based, Capacity-based) × 2 modes d'acquisition (Perpétuelle, Souscription). Option supplémentaire : Librairie LTO avec TCO 5 ans"
+    },
+    {
+      "label": "Exigences Cyber-Résilience (Obligatoires)",
+      "value": "Immutabilité WORM, MFA pour administrateurs, journalisation complète, scan d'intégrité des sauvegardes, détection comportementale ransomware"
+    },
+    {
+      "label": "Périmètre Entités",
+      "value": "10 entités : ABI, BACI (150TB), BABN, BABF, BAML, BANE, BASN, BATG, BIAN, BAGB (20TB). Option extension aux assurances : Atlantique Assurance CI et GTA Assurances Togo"
+    },
+    {
+      "label": "Capacités Stockage",
+      "value": "ABI: 50-100TB | BACI: 100-300TB | BAGB: 20-50TB | Autres filiales: 100-200TB. Support réplication chiffrée vers site secondaire, déduplication et compression"
+    },
+    {
+      "label": "Qualifications Requises",
+      "value": "Entreprises avec minimum 5 ans d'ancienneté. Équipe projet pluridisciplinaire de niveau universitaire. Chef projet certifié (PMP). Architecte Commvault certifié obligatoire. Engagement formel éditeur Commvault"
+    },
+    {
+      "label": "Caution et Paiements",
+      "value": "Caution provisoire: 15M FCFA (éliminatoire). Caution définitive: 3% du montant total. Paiement: 40% acompte + caution, 30% livraison, 20% mise en service, 10% réception définitive (1 an après)"
+    },
+    {
+      "label": "Évaluation Technique",
+      "value": "Note minimale 70/100 pour ouverture dossier financier. Critères : compréhension besoin (5 pts), conformité technique (30 pts), architecture (15 pts), méthodologie projet (10 pts), équipe certifiée (15 pts), support 7j/7 (15 pts), références similaires (10 pts)"
+    }
+  ],
+  "criteres_selection": [
+    "Note technique minimale de 70/100",
+    "Conformité obligatoire aux exigences de cyber-résilience (WORM, MFA, journalisation, scan intégrité, détection ransomware)",
+    "Équipe projet avec certifications Commvault et expérience 5+ ans sur projets similaires",
+    "Présentation de minimum 5 attestations de bonne fin sur les 3 dernières années",
+    "Support 7j/7 avec SLA contractuels et escalade éditeur",
+    "Engagement formel de l'éditeur Commvault pour le projet",
+    "Capacité financière : ratio d'endettement <1, liquidité générale >1, autofinancement >5%",
+    "Formule technico-financière : Ni = (70 × Ti + 30 × Fi) / 100 avec Fi = (Po/Pi) × 100",
+    "TCO sur 5 ans incluant maintenance, renouvellement licences, maintenance préventive/curative"
+  ],
+  "besoins": [
+    "Sauvegarde de postes de travail et serveurs multi-sites (10 filiales bancaires dans 8 pays)",
+    "Réduction de la complexité, du coût et du temps de sauvegarde",
+    "Évolutivité et disponibilité élevée avec réplication sécurisée inter-sites",
+    "Protection contre ransomware avec détection comportementale et immutabilité WORM certifiée",
+    "Compatibilité multi-OS (Windows, Linux RHEL/Debian/SUSE, macOS) et multi-hyperviseur (VMware, Hyper-V, Nutanix)",
+    "Agents applicatifs : SQL Server, SharePoint, Exchange",
+    "Restauration rapide locale et distante avec interface Web self-service",
+    "Déduplication globale et compression des données au repos et en transit (AES-256 min)",
+    "Conformité bancaire et réglementaire avec traçabilité/journalisation complètes",
+    "Support et maintenance incluant garantie 3 ans minimum, mises à jour logicielles, SLA formalisé",
+    "Formation administrateurs (2 par entité) et transfert de compétences"
+  ],
+  "prerequis": [
+    "Entreprise avec ancienneté minimale de 5 ans sur le marché",
+    "Aucune liquidation judiciaire ou redressement judiciaire en cours",
+    "Situation fiscale régulière et cotisations sociales à jour",
+    "Prestataire doit être un partenaire de haute compétence de Commvault",
+    "Chef de projet ayant conduit des projets de consistance similaire",
+    "Au minimum un membre de l'équipe certifié Commvault avec 3+ ans d'expérience",
+    "Équipe projet parlant français couramment (sémantique, syntaxe, écrit et oral)",
+    "Caution bancaire provisoire de 15M FCFA (100% éliminatoire si absente)",
+    "Dossier administratif complet avec 21 éléments obligatoires",
+    "Capacité financière minimum : ratio financiers supérieurs aux seuils (4 pts minimum)",
+    "Partenariat éditeur Commvault formalisé avec accès support et escalade",
+    "Affiliation CNPS et immatriculation SARL/SARL avec numéro d'enregistrement",
+    "Assurances : Multirisque et Responsabilité Civile à jour"
+  ],
+  "ressources_demandees": [
+    "Directeur de projet avec CV",
+    "Chef de projet certifié PMP ou équivalent (3 pts)",
+    "Architecte Commvault certifié (5 pts)",
+    "Ingénieur sécurité/réseau (3 pts)",
+    "Nombre minimum de certifiés Commvault (4 pts)",
+    "Consultants spécialisés Commvault 5+ ans expérience",
+    "Ingénieurs certifiés Commvault (HLB, Baie stockage, Serveurs)",
+    "Formateur agréé par Commvault (ou formation éditeur) pour 2 utilisateurs par site",
+    "Responsable qualifié unique interlocuteur du client pour toute la durée du projet",
+    "Représentant sur place durant le projet",
+    "Équipe pluridisciplinaire niveau universitaire pour 10 filiales multi-pays"
+  ],
+  "points_vigilance": [
+    "Architecture autonome par filiale augmente le coût global (pas de mutualisation)",
+    "Déploiement multi-sites (10 filiales dans 8 pays) complexifie la logistique et le support",
+    "Cyber-résilience obligatoire : immutabilité WORM et MFA critiques pour environnement bancaire",
+    "Sauvegardes immuables durables 7-10 ans pour conformité réglementaire long terme",
+    "Risque ransomware très élevé dans secteur bancaire - détection comportementale essentielle",
+    "Variantes multiples (2 variantes × 2 licensing × 2 acquisitions) créent 8 propositions par filiale",
+    "Option Librairie LTO doit être évaluée séparément avec TCO propre (ne pas inclure au montant principal)",
+    "Délai de remise inconnu au moment du scan - clarifier date limite officielle",
+    "Délai d'exécution global non spécifié - prestataire doit proposer planning réaliste",
+    "Garantie de 3 ans minimum mais maintenance post-garantie à proposer en option",
+    "Formation et transfert de compétences obligatoires par entité (effort de 10 sites)",
+    "Absence d'engagement formel Commvault pénalise lors évaluation technique",
+    "Étendue illimitée par filiale sans budget d'extension fourni dans cahier",
+    "Modification cahier des charges possible jusqu'à date limite (adapter les offres si modification)",
+    "Pénalité de retard: 0.5

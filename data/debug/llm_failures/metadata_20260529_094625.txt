@@ -1,0 +1,274 @@
+=== Étape : metadata ===
+=== Exception : JSONDecodeError: Expecting ',' delimiter: line 268 column 6 (char 9977) ===
+=== Longueur réponse : 9992 chars ===
+=== Raw response (complet) ===
+```json
+{
+  "market_identity": {
+    "type_marche": "Appel d'offres ouvert - marché public de prestation (fourniture, déploiement, intégration, maintenance)",
+    "reference": "AO 04/2025/ABI/CI",
+    "autorite_contractante": "Atlantic Business International (ABI)",
+    "duree_contrat": "Non explicitement spécifiée - garantie constructeur minimum 3 ans + options de maintenance post-garantie",
+    "date_demarrage": "À définir après notification de l'approbation du marché",
+    "deadline_soumission": "Non précisée dans le document",
+    "validite_offre": "180 jours calendaires à partir de la date limite de remise des offres",
+    "perimetre_geographique": "Côte d'Ivoire (siège ABI à Abidjan) - déploiement dans 10 entités du groupe ABI dans 8 pays UEMOA (Côte d'Ivoire, Bénin, Burkina-Faso, Mali, Niger, Sénégal, Togo, Guinée-Bissau)",
+    "eligibilite_candidat": "Sociétés aptes à réaliser les travaux selon conditions requises en Côte d'Ivoire; non admises: sociétés en liquidation judiciaire, redressement judiciaire, prestataires avec ancienneté < 5 ans sur le marché; frais de déplacement à charge du prestataire",
+    "confidence": 0.9
+  },
+  "calendar": [
+    {
+      "label": "Demande de renseignements sur cahier des charges",
+      "date": "Jusqu'à 5 jours avant date limite de remise des offres",
+      "criticite": "CRITIQUE",
+      "source_section": "Section 3.11 - Demande de renseignements"
+    },
+    {
+      "label": "Date limite de remise des offres",
+      "date": "Non précisée dans le document",
+      "criticite": "BLOQUANT",
+      "source_section": "Section 3.7 et 3.8"
+    },
+    {
+      "label": "Validité des offres / durée d'engagement des soumissionnaires",
+      "date": "180 jours calendaires à partir de la date limite de remise",
+      "criticite": "BLOQUANT",
+      "source_section": "Section 3.14"
+    },
+    {
+      "label": "Notification de l'approbation du marché avant expiration des 180 jours",
+      "date": "Avant expiration délai 180j",
+      "criticite": "CRITIQUE",
+      "source_section": "Section 3.14"
+    },
+    {
+      "label": "Constitution du cautionnement définitif après notification approbation",
+      "date": "30 jours suivant notification approbation du marché",
+      "criticite": "BLOQUANT",
+      "source_section": "Section 3.19"
+    },
+    {
+      "label": "Délai supplémentaire pour établissement et approbation du marché (après désignation)",
+      "date": "60 jours maximum",
+      "criticite": "INFO",
+      "source_section": "Section 3.15"
+    },
+    {
+      "label": "Réception définitive des prestations",
+      "date": "1 an après date d'installation des équipements/logiciels",
+      "criticite": "CRITIQUE",
+      "source_section": "Section 3.12 et 3.19"
+    }
+  ],
+  "evaluation_modalities": {
+    "ponderation_technique": 70,
+    "ponderation_financiere": 30,
+    "seuil_minimum_technique": 70,
+    "formule_notation_financiere": "Ni = (70 × Ti + 30 × Fi) / 100 ; où Fi = (Po / Pi) × 100 ; Ti = note technique ; Po = prix moins disant ; Pi = prix de l'entreprise",
+    "modalites": [
+      "Evaluation en 4 phases: analyse préliminaire administrative + financière, évaluation technique, évaluation technico-financière, évaluation générale",
+      "Offre technique notée sur 100 points",
+      "Note technique minimum 70 pour accès à pli financier par variante",
+      "Comparaison par variante distincte (Variante 1 vs Variante 2)",
+      "Analyse TCO sur 5 ans",
+      "Examen conformité obligatoire des équipements et logiciels à exigences cahier des charges",
+      "Non-conformité = rejet automatique de l'offre",
+      "Ouverture financière conditionnée à note technique ≥ 70"
+    ],
+    "confidence": 0.95
+  },
+  "criteria": [
+    {
+      "id": "1",
+      "label": "Présentation de l'offre globale (administrative et technique) et compréhensions du besoin",
+      "max_points": 5,
+      "category": "Technique",
+      "is_inferred": false
+    },
+    {
+      "id": "2",
+      "label": "Conformité technique détaillée - Conformité aux exigences fonctionnelles (sauvegarde, restauration)",
+      "max_points": 10,
+      "category": "Technique",
+      "is_inferred": false
+    },
+    {
+      "id": "2a",
+      "label": "Conformité technique détaillée - Conformité aux exigences sécurité (immutabilité, ransomware, chiffrement, MFA)",
+      "max_points": 10,
+      "category": "Sécurité",
+      "is_inferred": false
+    },
+    {
+      "id": "2b",
+      "label": "Conformité technique détaillée - Conformité matérielle (CPU, RAM, RAID, réseau)",
+      "max_points": 10,
+      "category": "Technique",
+      "is_inferred": false
+    },
+    {
+      "id": "3",
+      "label": "Architecture technique proposée - Qualité schéma, dimensionnement RAM/CPU cohérent, justification choix, intégration multisites",
+      "max_points": 15,
+      "category": "Architecture",
+      "is_inferred": false
+    },
+    {
+      "id": "4",
+      "label": "Organisation et méthodologie de conduite de projet - Gestion des risques, méthodologie gestion projets, planning, matrice RACI",
+      "max_points": 10,
+      "category": "Méthodologie",
+      "is_inferred": false
+    },
+    {
+      "id": "5",
+      "label": "Equipe projet et certifications - Chef projet certifié (PMP ou équivalent) 3pts, Architecte Commvault certifié 5pts, Ingénieur sécurité/réseau 3pts, Nombre total certifiés Commvault 4pts",
+      "max_points": 15,
+      "category": "RH",
+      "is_inferred": false
+    },
+    {
+      "id": "6",
+      "label": "Support et maintenance - Support 7j/7, SLA contractuels, escalade éditeur, délai prise en charge, engagement écrit",
+      "max_points": 15,
+      "category": "Support",
+      "is_inferred": false
+    },
+    {
+      "id": "8",
+      "label": "Références de prestations similaires - 5 références: 10pts, 3-4 références: 7pts, 1-2 références: 4pts, 0 référence: 0pts",
+      "max_points": 10,
+      "category": "Expérience",
+      "is_inferred": false
+    }
+  ],
+  "appendices": [
+    {
+      "code": "Annexe 1",
+      "label": "Modèle de déclaration sur l'honneur",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "Section 3.5.1 - Dossier administratif point 1"
+    },
+    {
+      "code": "Annexe 2",
+      "label": "Modèle d'acte d'engagement",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "Section 3.5.4 - Offre financière"
+    },
+    {
+      "code": "Annexe 3",
+      "label": "Modèle de cautionnement provisoire (15 000 000 FCFA)",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "Section 3.18 - Cautionnement provisoire (ELIMINATOIRE)"
+    },
+    {
+      "code": "Annexe 4",
+      "label": "Modèle de cautionnement définitif (3% montant marché)",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "Section 3.19 - Cautionnement définitif"
+    },
+    {
+      "code": "Annexe 5",
+      "label": "Bordereau de prix avec structure détaillée par filiale et variante",
+      "type": "FINANCIER",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "Section 3.5.4 et 4.11 - Offre financière et bordereau des prix"
+    },
+    {
+      "code": "Annexe 6",
+      "label": "Tableau de décomposition des coûts d'exploitation (5 ans: Année 1-5 détaillée par rubrique)",
+      "type": "FINANCIER",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "Section 3.5.4 - Offre financière TCO"
+    },
+    {
+      "code": "Annexe 7",
+      "label": "Structuration technique de l'offre (tableau de conformité obligatoire avec 30+ exigences techniques)",
+      "type": "TECHNIQUE",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "Section 4.10 et 4.8 - Obligation soumissionnaire, tableau récapitulatif offre technique"
+    },
+    {
+      "code": "Annexe 8",
+      "label": "Recueil de consentement - Protection des données à caractère personnel",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "Section 3.5.1 point 21 - Capacités administratives"
+    },
+    {
+      "code": "Admin_1",
+      "label": "Présentation de l'entreprise: historique, domaines d'activité, vision globale",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "Section 3.5.1 point 3"
+    },
+    {
+      "code": "Admin_2",
+      "label": "Adresse géographique: justification localisation physique",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "Section 3.5.1 point 4"
+    },
+    {
+      "code": "Admin_3",
+      "label": "Statuts de l'entreprise: document juridique définissant objet social",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "Section 3.5.1 point 5"
+    },
+    {
+      "code": "Admin_4",
+      "label": "Organigramme: structure hiérarchique et responsables",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "Section 3.5.1 point 6"
+    },
+    {
+      "code": "Admin_5",
+      "label": "Pouvoir du signataire de l'offre: preuve autorité légale",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "Section 3.5.1 point 7"
+    },
+    {
+      "code": "Admin_6",
+      "label": "Registre de commerce: identité légale officielle",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "Section 3.5.1 point 8"
+    },
+    {
+      "code": "Admin_7",
+      "label": "Copie du Règlement de Consultation paraphé et signé",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "Section 3.5.1 point 10"
+    },
+    {
+      "code": "Admin_8",
+      "label": "Déclaration Fiscale d'Existence",
+      "type": "ADMIN",
+      "obligatoire": true,
+      "langue": "FR",
+      "source_section": "Section 3.5.1 point 11"
+    },
+    {

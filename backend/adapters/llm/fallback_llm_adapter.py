@@ -1,7 +1,7 @@
 import logging
 from typing import AsyncIterator
 
-from core.ports.llm_gateway import LLMGateway, AgentStep
+from core.ports.llm_gateway import LLMGateway, AgentStep, OutputTruncatedError
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +57,9 @@ class FallbackLLMAdapter(LLMGateway):
         self._fallback_name = type(fallback).__name__
 
     def _should_fallback(self, exc: Exception) -> bool:
+        # Troncature ≠ panne du provider : changer de LLM ne réglerait rien. On laisse remonter.
+        if isinstance(exc, OutputTruncatedError):
+            return False
         # Si la liste d'erreurs spécifiques est vide, fallback sur toute erreur
         if not _FALLBACK_ERRORS:
             return True
@@ -69,15 +72,18 @@ class FallbackLLMAdapter(LLMGateway):
         """Détecte les erreurs de quota/crédits OpenAI — inutile de réessayer sur le même provider."""
         return "insufficient_quota" in str(exc).lower()
 
-    async def generate(self, system: str, user: str, max_tokens: int = 1024) -> str:
+    async def generate(
+        self, system: str, user: str, max_tokens: int = 1024,
+        raise_on_truncation: bool = False,
+    ) -> str:
         try:
-            return await self._primary.generate(system, user, max_tokens)
+            return await self._primary.generate(system, user, max_tokens, raise_on_truncation)
         except Exception as primary_exc:
             if self._should_fallback(primary_exc):
                 logger.warning("LLM primaire (%s) indisponible → fallback (%s) : %s",
                                self._primary_name, self._fallback_name, primary_exc)
                 try:
-                    return await self._fallback.generate(system, user, max_tokens)
+                    return await self._fallback.generate(system, user, max_tokens, raise_on_truncation)
                 except Exception as fallback_exc:
                     if self._is_quota_error(fallback_exc):
                         logger.error("LLM fallback (%s) quota épuisé : %s", self._fallback_name, fallback_exc)
@@ -98,14 +104,17 @@ class FallbackLLMAdapter(LLMGateway):
             else:
                 raise
 
-    async def extract(self, prompt: str, text: str, max_tokens: int = 512) -> str:
+    async def extract(
+        self, prompt: str, text: str, max_tokens: int = 512,
+        raise_on_truncation: bool = False,
+    ) -> str:
         try:
-            return await self._primary.extract(prompt, text, max_tokens)
+            return await self._primary.extract(prompt, text, max_tokens, raise_on_truncation)
         except Exception as primary_exc:
             if self._should_fallback(primary_exc):
                 logger.warning("LLM extract primaire → fallback : %s", primary_exc)
                 try:
-                    return await self._fallback.extract(prompt, text, max_tokens)
+                    return await self._fallback.extract(prompt, text, max_tokens, raise_on_truncation)
                 except Exception as fallback_exc:
                     if self._is_quota_error(fallback_exc):
                         raise primary_exc

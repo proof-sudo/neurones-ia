@@ -6,12 +6,17 @@ import {
   Download, Loader2, Trash2, Sparkles, ArrowRight, Shield, Target,
   Users, Eye, ClipboardList, BarChart2, Layers, Lock, Plus, Send,
   CalendarDays, Trophy, ThumbsDown, Clock, LayoutGrid, List,
+  Briefcase, Scale, Coins,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   scoreAO, generateBidStrategy, exportAnalysis, exportScoring, exportStrategy,
   generateOffer, exportChecklist,
   type ScoringResult, type BidStrategy,
+  type MarketIdentity, type CalendarEvent, type EvaluationModalities,
+  type ScoringCriterion, type Risk, type Precondition,
+  type StrategyPhase, type Appendix,
+  type RequiredProfile, type EligibilityThreshold, type FinancialData,
 } from "@/lib/api";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -71,6 +76,38 @@ function genId(): string {
     Math.random().toString(36).slice(2) +
     Math.random().toString(36).slice(2) +
     Date.now().toString(36)
+  );
+}
+
+function NumberedAnalysis({ text }: { text: string }) {
+  if (!text) return null;
+  // Si pas de pattern "(N)" → rendu markdown classique
+  if (!/\(\d+\)/.test(text)) {
+    return (
+      <div className="prose prose-sm max-w-none text-slate-600">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{text}</ReactMarkdown>
+      </div>
+    );
+  }
+  // Découpe sur les marqueurs "(1)", "(2)"… en conservant l'intro éventuelle
+  const parts = text.split(/\s*\((\d+)\)\s*/);
+  const intro = parts[0]?.trim();
+  const items: { num: string; body: string }[] = [];
+  for (let i = 1; i < parts.length; i += 2) {
+    items.push({ num: parts[i], body: (parts[i + 1] ?? "").trim() });
+  }
+  return (
+    <div className="text-sm text-slate-600 leading-relaxed">
+      {intro && <p className="mb-3">{intro}</p>}
+      <ol className="space-y-2">
+        {items.map((it) => (
+          <li key={it.num} className="flex gap-2.5">
+            <span className="font-semibold text-slate-700 shrink-0 min-w-[1.5rem]">{it.num}.</span>
+            <span className="flex-1">{it.body}</span>
+          </li>
+        ))}
+      </ol>
+    </div>
   );
 }
 
@@ -212,16 +249,65 @@ const MOCK_RESULT: ScoringResult = {
   ],
   gaps_analysis: "Nous maîtrisons bien la virtualisation avec des références bancaires solides. Le gap principal est le cloud public (Azure/AWS) : certifications limitées à 2 ingénieurs.",
   strengths: ["Excellentes références bancaires (SGBCI, Ecobank)", "Expertise VMware confirmée", "Expérience DR et continuité d'activité", "Présence locale CI"],
-  risks: ["Certifications Azure/AWS à renforcer", "Délai serré pour un scope large", "Sous-estimation possible du volet formation"],
+  risks: [
+    { label: "Certifications Azure/AWS à renforcer", criticite: "ÉLEVÉ", pourquoi: "Seuls 2 ingénieurs certifiés cloud public", mitigation: "Lancer un plan de certification ou sous-traiter le volet cloud", items_affected: ["certifications"] },
+    { label: "Délai serré pour un scope large", criticite: "MODÉRÉ", pourquoi: "6 mois pour 50+ serveurs + DR + formation", mitigation: "Phasage en lots avec jalons hebdomadaires", items_affected: ["planning"] },
+    { label: "Sous-estimation possible du volet formation", criticite: "MODÉRÉ", pourquoi: "Transfert de compétences obligatoire non chiffré", mitigation: "Provisionner un formateur certifié dédié", items_affected: ["methodologie"] },
+  ],
   score: 78,
   recommendation: "GO",
   justification: "Profil bien adapté avec références bancaires comparables. Gap cloud public manageable avec sous-traitance partielle.",
+  criteria_breakdown: [
+    { id: "exp_societe", label: "Expérience et références de la société", max_points: 20, category: "Expérience", is_inferred: false, estimated_score: 18, risk_level: "FAIBLE", rationale: "Références bancaires solides (SGBCI, Ecobank)", sources_ged: ["Offre-SGBCI-Infrastructure-2024.docx"] },
+    { id: "profils_cles", label: "Qualification des profils clés (CV)", max_points: 20, category: "RH", is_inferred: false, estimated_score: 14, risk_level: "MODÉRÉ", rationale: "Expert VMware confirmé, cloud public limité", sources_ged: ["CV-Konan-Expert-Cloud.docx"] },
+    { id: "certifications", label: "Certifications techniques (Azure/AWS)", max_points: 15, category: "Technique", is_inferred: false, estimated_score: 8, risk_level: "ÉLEVÉ", rationale: "Seuls 2 ingénieurs certifiés cloud public", sources_ged: [] },
+    { id: "methodologie", label: "Méthodologie d'intervention", max_points: 15, category: "Méthodologie", is_inferred: true, estimated_score: 12, risk_level: "MODÉRÉ", rationale: "Critère dérivé (pas de grille explicite dans l'AO)", sources_ged: [] },
+    { id: "planning", label: "Planning et capacité de mobilisation", max_points: 15, category: "Méthodologie", is_inferred: true, estimated_score: 10, risk_level: "MODÉRÉ", rationale: "Délai serré pour le périmètre", sources_ged: [] },
+    { id: "qualite_offre", label: "Qualité et conformité de l'offre", max_points: 15, category: "Offre", is_inferred: true, estimated_score: 13, risk_level: "FAIBLE", rationale: "Critère standard", sources_ged: [] },
+  ],
+  preconditions: [],
+  preconditions_incomplete: false,
   criteres_selection: ["Expérience cloud hybride > 5 ans", "Certifications VMware + Azure/AWS requises", "Références bancaires CI obligatoires"],
   besoins: ["Virtualisation infrastructure (50+ serveurs)", "Solution Disaster Recovery multi-site", "Formation équipes IT BSIC"],
   prerequis: ["Présence locale CI obligatoire", "Capacité financière justifiée (bilan 3 ans)", "Assurance décennale active"],
   ressources_demandees: ["Chef de projet PMP/Prince2", "Expert VMware VCP", "Architecte cloud Azure/AWS certifié", "Formateur certifié"],
   points_vigilance: ["Clause pénalité 0.5%/semaine de retard", "Délai très court pour périmètre large", "Transfert de compétences obligatoire"],
   date_remise: "15 juin 2026",
+  profils_demandes: [
+    {
+      profil: "Architecte Cloud", domaine: "Infrastructure / Cloud", quantite: 2,
+      niveau: "BAC+5 / Ingénieur", experience_min: "5 ans",
+      competences: ["VMware vSphere", "Azure", "AWS", "Réseau & sécurité"],
+      certifications: ["VMware VCP", "Azure Solutions Architect"],
+      missions: ["Conception de l'architecture cible", "Pilotage de la migration"],
+      rattachement: "Direction des Systèmes d'Information", source_section: "TDR §4.1",
+    },
+    {
+      profil: "Ingénieur Virtualisation", domaine: "Infrastructure", quantite: 3,
+      niveau: "BAC+4", experience_min: "3 ans",
+      competences: ["VMware", "Sauvegarde & restauration", "Scripting PowerShell"],
+      certifications: ["VMware VCP"], missions: ["Migration des serveurs", "Mise en place du DR"],
+      rattachement: "", source_section: "TDR §4.2",
+    },
+    {
+      profil: "Formateur certifié", domaine: "Formation", quantite: 1,
+      niveau: "Senior", experience_min: "", competences: ["Pédagogie", "VMware", "Cloud"],
+      certifications: ["VMware Certified Instructor"], missions: ["Transfert de compétences aux équipes BSIC"],
+      rattachement: "", source_section: "TDR §4.3",
+    },
+  ],
+  seuils_eligibilite: [
+    { libelle: "Chiffre d'affaires annuel moyen (3 ans)", valeur: "300 000 000", unite: "XOF/an", type: "FINANCIER", blocking: true, source_section: "Règlement §5" },
+    { libelle: "Références bancaires similaires", valeur: "3", unite: "projets", type: "REFERENCES", blocking: true, source_section: "Règlement §5" },
+    { libelle: "Expérience en cloud hybride", valeur: "5", unite: "ans", type: "EXPERIENCE", blocking: false, source_section: "TDR §3" },
+  ],
+  donnees_financieres: {
+    budget_estime: "85 000 000 XOF (indicatif)",
+    modalites_paiement: "30% à la commande, 70% à la réception définitive",
+    garantie_soumission: "Caution bancaire de 2% du montant de l'offre",
+    penalites: "0,5% du montant par semaine de retard, plafond 10%",
+    source_section: "Règlement §7",
+  },
 };
 
 // ── Shared mini-components ────────────────────────────────────────────────────
@@ -230,7 +316,7 @@ function SectionCard({ title, icon, children, className }: {
   title: string; icon?: React.ReactNode; children: React.ReactNode; className?: string;
 }) {
   return (
-    <div className={cn("bg-white rounded-xl border border-slate-200 p-4 shadow-sm", className)}>
+    <div className={cn("bg-white rounded-xl p-4", className)}>
       <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
         {icon && <span className="text-slate-400 shrink-0">{icon}</span>}
         {title}
@@ -240,7 +326,7 @@ function SectionCard({ title, icon, children, className }: {
   );
 }
 
-function BulletList({ items, bulletColor = "text-blue-500" }: {
+function BulletList({ items, bulletColor = "text-[#0a2a43]" }: {
   items?: string[]; bulletColor?: string;
 }) {
   if (!items?.length) return <p className="text-sm text-gray-400 italic">Non précisé</p>;
@@ -270,6 +356,271 @@ function WarningList({ items }: { items?: string[] }) {
   );
 }
 
+function ConfidenceBadge({ value }: { value: number }) {
+  const pct = Math.round(value * 100);
+  const cls =
+    pct >= 70 ? "bg-green-50 text-green-700 border-green-200"
+    : pct >= 40 ? "bg-amber-50 text-amber-700 border-amber-200"
+    : "bg-red-50 text-red-700 border-red-200";
+  return (
+    <span className={cn("text-[10px] font-medium px-2 py-0.5 rounded-full border", cls)}>
+      Fiabilité {pct}%
+    </span>
+  );
+}
+
+function MarketIdentityCard({ identity }: { identity?: MarketIdentity }) {
+  if (!identity) return null;
+  const rows: { label: string; value: string }[] = [
+    { label: "Type de marché", value: identity.type_marche },
+    { label: "Référence", value: identity.reference },
+    { label: "Autorité contractante", value: identity.autorite_contractante },
+    { label: "Durée du contrat", value: identity.duree_contrat },
+    { label: "Date de démarrage", value: identity.date_demarrage },
+    { label: "Deadline de soumission", value: identity.deadline_soumission },
+    { label: "Validité de l'offre", value: identity.validite_offre },
+    { label: "Périmètre géographique", value: identity.perimetre_geographique },
+    { label: "Éligibilité candidat", value: identity.eligibilite_candidat },
+  ].filter(r => r.value && r.value.trim() !== "");
+  if (rows.length === 0) return null;
+  return (
+    <div className="bg-white rounded-xl p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+          <span className="text-slate-400 shrink-0"><Briefcase size={15} /></span>
+          Fiche d&apos;identité du marché
+        </h3>
+        <ConfidenceBadge value={identity.confidence} />
+      </div>
+      <table className="w-full text-xs">
+        <tbody className="divide-y divide-slate-100">
+          {rows.map((r, i) => (
+            <tr key={i} className="align-top">
+              <td className="text-slate-400 font-medium py-2 pr-4 w-[180px] leading-relaxed">{r.label}</td>
+              <td className="text-slate-800 py-2 leading-relaxed">{r.value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function CalendarCard({ events }: { events?: CalendarEvent[] }) {
+  if (!events?.length) return null;
+  const critCls: Record<CalendarEvent["criticite"], string> = {
+    BLOQUANT: "bg-red-100 text-red-700 border-red-200",
+    CRITIQUE: "bg-amber-100 text-amber-700 border-amber-200",
+    INFO: "bg-slate-100 text-slate-600 border-slate-200",
+  };
+  return (
+    <SectionCard title="Calendrier de l'AO" icon={<CalendarDays size={15} />}>
+      <ul className="space-y-2">
+        {events.map((ev, i) => (
+          <li key={i} className="flex items-start gap-3 text-sm bg-slate-50 rounded-lg px-3 py-2">
+            <span className={cn("text-[10px] font-semibold px-2 py-0.5 rounded-full border shrink-0 mt-0.5", critCls[ev.criticite])}>
+              {ev.criticite}
+            </span>
+            <div className="flex-1 min-w-0">
+              <div className="text-slate-800 font-medium text-xs leading-relaxed">{ev.label}</div>
+              <div className="text-slate-500 text-xs mt-0.5">{ev.date}</div>
+              {ev.source_section && (
+                <div className="text-slate-400 text-[10px] mt-0.5 italic">{ev.source_section}</div>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
+    </SectionCard>
+  );
+}
+
+function EvaluationModalitiesCard({ evaluation }: { evaluation?: EvaluationModalities }) {
+  if (!evaluation) return null;
+  const { ponderation_technique, ponderation_financiere, seuil_minimum_technique, formule_notation_financiere, modalites, confidence } = evaluation;
+  const hasContent =
+    ponderation_technique > 0 || ponderation_financiere > 0 || seuil_minimum_technique > 0 ||
+    !!formule_notation_financiere || (modalites?.length ?? 0) > 0;
+  if (!hasContent) return null;
+  return (
+    <div className="bg-white rounded-xl p-4">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+          <span className="text-slate-400 shrink-0"><Scale size={15} /></span>
+          Modalités d&apos;évaluation
+        </h3>
+        <ConfidenceBadge value={confidence} />
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
+        <div className="bg-[#eef2f7] rounded-lg p-3">
+          <div className="text-[10px] font-medium text-[#0a2a43] uppercase tracking-wide">Pondération technique</div>
+          <div className="text-2xl font-bold text-[#0a2a43] mt-1">{ponderation_technique}<span className="text-sm font-medium">%</span></div>
+        </div>
+        <div className="bg-teal-50 rounded-lg p-3">
+          <div className="text-[10px] font-medium text-teal-700 uppercase tracking-wide">Pondération financière</div>
+          <div className="text-2xl font-bold text-teal-700 mt-1">{ponderation_financiere}<span className="text-sm font-medium">%</span></div>
+        </div>
+        <div className="bg-slate-50 rounded-lg p-3">
+          <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Seuil minimum technique</div>
+          <div className="text-2xl font-bold text-slate-700 mt-1">{seuil_minimum_technique}<span className="text-sm font-medium">/100</span></div>
+        </div>
+      </div>
+      {formule_notation_financiere && (
+        <div className="text-sm bg-slate-50 rounded-lg p-2.5 mb-2">
+          <span className="text-slate-400 font-medium text-xs">Formule notation financière&nbsp;: </span>
+          <span className="text-slate-800 font-mono text-xs">{formule_notation_financiere}</span>
+        </div>
+      )}
+      {modalites?.length > 0 && (
+        <div>
+          <div className="text-xs font-medium text-slate-500 mb-1.5">Modalités complémentaires</div>
+          <BulletList items={modalites} bulletColor="text-slate-500" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function RequiredProfilesCard({ profils }: { profils?: RequiredProfile[] }) {
+  if (!profils?.length) return null;
+  const totalPostes = profils.reduce((s, p) => s + (p.quantite || 0), 0);
+  return (
+    <div className="bg-white rounded-xl p-4">
+      <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+        <span className="text-slate-400 shrink-0"><Briefcase size={15} /></span>
+        Profils demandés ({profils.length})
+        {totalPostes > 0 && (
+          <span className="ml-auto text-[11px] font-bold text-slate-700 bg-slate-50 border border-slate-200 rounded-full px-2.5 py-0.5">
+            {totalPostes} poste{totalPostes > 1 ? "s" : ""} au total
+          </span>
+        )}
+      </h3>
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[760px] table-fixed text-xs border border-slate-200 border-collapse">
+          <colgroup>
+            <col className="w-[17%]" />
+            <col className="w-[5%]" />
+            <col className="w-[15%]" />
+            <col className="w-[15%]" />
+            <col className="w-[14%]" />
+            <col className="w-[34%]" />
+          </colgroup>
+          <thead>
+            <tr className="bg-slate-50 text-left text-[10px] uppercase tracking-wide text-slate-400">
+              <th className="border border-slate-200 font-medium px-3 py-2">Profil</th>
+              <th className="border border-slate-200 font-medium px-3 py-2 text-center">Nb</th>
+              <th className="border border-slate-200 font-medium px-3 py-2">Niveau / Exp.</th>
+              <th className="border border-slate-200 font-medium px-3 py-2">Compétences</th>
+              <th className="border border-slate-200 font-medium px-3 py-2">Certifications</th>
+              <th className="border border-slate-200 font-medium px-3 py-2">Missions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {profils.map((p, i) => (
+              <tr key={i} className="align-top">
+                <td className="border border-slate-200 px-3 py-2 break-words">
+                  <div className="font-semibold text-slate-800 leading-snug">{p.profil}</div>
+                  {p.domaine && <div className="text-slate-400 mt-0.5">{p.domaine}</div>}
+                  {p.rattachement && <div className="text-slate-400 italic mt-0.5">{p.rattachement}</div>}
+                </td>
+                <td className="border border-slate-200 px-2 py-2 text-center font-semibold text-slate-700 whitespace-nowrap">
+                  {p.quantite > 0 ? `${p.quantite}×` : "—"}
+                </td>
+                <td className="border border-slate-200 px-3 py-2 text-slate-600 leading-relaxed break-words">
+                  {[p.niveau, p.experience_min].filter(Boolean).join(" · ") || "—"}
+                </td>
+                <td className="border border-slate-200 px-3 py-2">
+                  {p.competences?.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {p.competences.map((c, j) => (
+                        <span key={j} className="inline-block px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 text-[10px] break-words">{c}</span>
+                      ))}
+                    </div>
+                  ) : <span className="text-slate-300">—</span>}
+                </td>
+                <td className="border border-slate-200 px-3 py-2">
+                  {p.certifications?.length > 0 ? (
+                    <div className="flex flex-wrap gap-1">
+                      {p.certifications.map((c, j) => (
+                        <span key={j} className="inline-block px-1.5 py-0.5 rounded bg-emerald-50 text-emerald-700 text-[10px] break-words">{c}</span>
+                      ))}
+                    </div>
+                  ) : <span className="text-slate-300">—</span>}
+                </td>
+                <td className="border border-slate-200 px-3 py-2 text-slate-600 leading-relaxed">
+                  {p.missions?.length > 0 ? (
+                    <ul className="space-y-0.5">
+                      {p.missions.map((m, j) => (
+                        <li key={j} className="flex items-start gap-1.5">
+                          <span className="mt-0.5 text-slate-300 shrink-0">›</span><span>{m}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : <span className="text-slate-300">—</span>}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function EligibilityThresholdsCard({ seuils }: { seuils?: EligibilityThreshold[] }) {
+  if (!seuils?.length) return null;
+  return (
+    <div className="bg-white rounded-xl p-4">
+      <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+        <span className="text-slate-400 shrink-0"><Scale size={15} /></span>
+        Seuils d&apos;éligibilité ({seuils.length})
+      </h3>
+      <div className="space-y-2">
+        {seuils.map((s, i) => (
+          <div key={i} className="flex items-center gap-3 rounded-lg bg-slate-50 p-2.5">
+            {s.blocking && (
+              <span className="text-[10px] font-bold text-red-700 bg-red-50 border border-red-200 rounded px-1.5 py-0.5 shrink-0">
+                ÉLIMINATOIRE
+              </span>
+            )}
+            <span className="text-sm text-slate-700 flex-1">{s.libelle}</span>
+            <span className="text-sm font-bold text-slate-900 whitespace-nowrap">
+              {s.valeur}{s.unite && <span className="text-xs font-medium text-slate-500"> {s.unite}</span>}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function FinancialDataCard({ data }: { data?: FinancialData }) {
+  if (!data) return null;
+  const rows: [string, string][] = [
+    ["Budget estimé", data.budget_estime],
+    ["Modalités de paiement", data.modalites_paiement],
+    ["Garantie de soumission", data.garantie_soumission],
+    ["Pénalités", data.penalites],
+  ].filter(([, v]) => !!v) as [string, string][];
+  if (!rows.length) return null;
+  return (
+    <div className="bg-white rounded-xl p-4">
+      <h3 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+        <span className="text-slate-400 shrink-0"><Coins size={15} /></span>
+        Données financières
+      </h3>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {rows.map(([label, value], i) => (
+          <div key={i} className="bg-slate-50 rounded-lg p-2.5">
+            <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">{label}</div>
+            <div className="text-sm text-slate-800 font-medium mt-0.5">{value}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function RecoBadge({ rec }: { rec: string }) {
   const map: Record<string, { cls: string; label: string }> = {
     GO: { cls: "bg-green-100 text-green-700 border-green-300", label: "GO ✓" },
@@ -293,9 +644,9 @@ function DecisionBtn({ label, colorKey, selected, onClick }: {
     red: "border-red-200 text-red-700 hover:bg-red-50 hover:border-red-400",
   };
   const sel = {
-    green: "bg-green-100 border-green-500 text-green-800 font-bold shadow-sm",
-    amber: "bg-amber-100 border-amber-500 text-amber-800 font-bold shadow-sm",
-    red: "bg-red-100 border-red-500 text-red-800 font-bold shadow-sm",
+    green: "bg-green-100 border-green-500 text-green-800 font-bold",
+    amber: "bg-amber-100 border-amber-500 text-amber-800 font-bold",
+    red: "bg-red-100 border-red-500 text-red-800 font-bold",
   };
   return (
     <button
@@ -333,6 +684,304 @@ function ScoreRing({ score }: { score: number }) {
         <span className={cn("text-3xl font-bold leading-none", textColor)}>{score}</span>
         <span className="text-xs text-slate-400 block mt-0.5">/100</span>
       </div>
+    </div>
+  );
+}
+
+// ── Décomposition du score : grille d'évaluation détaillée ──────────────────────
+
+const RISK_LEVEL_STYLE: Record<string, string> = {
+  FAIBLE: "bg-green-100 text-green-700",
+  "MODÉRÉ": "bg-yellow-100 text-yellow-700",
+  "ÉLEVÉ": "bg-orange-100 text-orange-700",
+  CRITIQUE: "bg-red-100 text-red-700",
+};
+const RISK_LEVEL_BAR: Record<string, string> = {
+  FAIBLE: "bg-green-500",
+  "MODÉRÉ": "bg-yellow-500",
+  "ÉLEVÉ": "bg-orange-500",
+  CRITIQUE: "bg-red-500",
+};
+
+function ScoreBreakdown({ criteria }: { criteria: ScoringCriterion[] }) {
+  if (!criteria.length) {
+    return <p className="text-sm text-slate-400 italic">Pas de grille d'évaluation décomposée disponible.</p>;
+  }
+  const totalMax = criteria.reduce((s, c) => s + c.max_points, 0);
+  const totalEst = criteria.reduce((s, c) => s + c.estimated_score, 0);
+  return (
+    <div className="space-y-3">
+      {criteria.map((c) => {
+        const pct = c.max_points > 0 ? (c.estimated_score / c.max_points) * 100 : 0;
+        return (
+          <div key={c.id}>
+            <div className="flex items-baseline justify-between gap-2 mb-1">
+              <span className={cn("text-sm text-slate-700", c.is_inferred && "italic text-slate-500")}>
+                {c.label}
+                {c.is_inferred && (
+                  <span className="ml-1.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-slate-100 text-slate-500 not-italic align-middle">
+                    estimé
+                  </span>
+                )}
+              </span>
+              <span className="text-xs font-semibold text-slate-600 shrink-0">
+                {c.estimated_score}/{c.max_points}
+              </span>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="flex-1 h-2 rounded-full bg-slate-100 overflow-hidden">
+                <div
+                  className={cn("h-full rounded-full transition-all", RISK_LEVEL_BAR[c.risk_level] ?? "bg-slate-400")}
+                  style={{ width: `${pct}%` }}
+                />
+              </div>
+              <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0", RISK_LEVEL_STYLE[c.risk_level] ?? "bg-slate-100 text-slate-500")}>
+                {c.risk_level}
+              </span>
+            </div>
+            {c.rationale && <p className="text-[11px] text-slate-400 mt-0.5">{c.rationale}</p>}
+          </div>
+        );
+      })}
+      <div className="flex items-center justify-between pt-2 mt-1 border-t border-slate-100">
+        <span className="text-sm font-semibold text-slate-700">Total estimé</span>
+        <span className="text-sm font-bold text-slate-800">{totalEst} / {totalMax} pts</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Liste des risques structurés (triés par criticité) ──────────────────────────
+
+const CRITICITE_ORDER: Record<string, number> = { BLOQUANT: 0, CRITIQUE: 1, "ÉLEVÉ": 2, "MODÉRÉ": 3 };
+const CRITICITE_STYLE: Record<string, string> = {
+  BLOQUANT: "bg-red-200 text-red-800",
+  CRITIQUE: "bg-red-100 text-red-700",
+  "ÉLEVÉ": "bg-orange-100 text-orange-700",
+  "MODÉRÉ": "bg-yellow-100 text-yellow-700",
+};
+const CRITICITE_BORDER: Record<string, string> = {
+  BLOQUANT: "border-red-300",
+  CRITIQUE: "border-red-200",
+  "ÉLEVÉ": "border-orange-200",
+  "MODÉRÉ": "border-yellow-200",
+};
+
+function RiskList({ risks }: { risks: Risk[] }) {
+  if (!risks?.length) return <p className="text-sm text-slate-400 italic">Aucun risque identifié.</p>;
+  const sorted = [...risks].sort(
+    (a, b) => (CRITICITE_ORDER[a.criticite] ?? 9) - (CRITICITE_ORDER[b.criticite] ?? 9)
+  );
+  return (
+    <ul className="space-y-2.5">
+      {sorted.map((r, i) => (
+        <li key={i} className={cn("rounded-lg border p-2.5 bg-white", CRITICITE_BORDER[r.criticite] ?? "border-slate-200")}>
+          <div className="flex items-start justify-between gap-2">
+            <span className="text-sm font-medium text-slate-700">{r.label}</span>
+            <span className={cn("text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0", CRITICITE_STYLE[r.criticite] ?? "bg-slate-100 text-slate-500")}>
+              {r.criticite}
+            </span>
+          </div>
+          {r.pourquoi && <p className="text-[11px] text-slate-500 mt-1">{r.pourquoi}</p>}
+          {r.mitigation ? (
+            <p className="text-[11px] text-green-700 mt-1 flex items-start gap-1">
+              <Shield size={12} className="mt-0.5 shrink-0" />
+              <span>{r.mitigation}</span>
+            </p>
+          ) : (
+            <p className="text-[11px] text-amber-600 italic mt-1">Mitigation à définir</p>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// ── Checklist des préalables conditionnels (interactive) ─────────────────────────
+
+const PRECOND_TYPE_STYLE: Record<string, string> = {
+  FINANCIER: "bg-emerald-100 text-emerald-700",
+  ADMIN: "bg-[#e3eaf1] text-[#0a2a43]",
+  TECHNIQUE: "bg-slate-100 text-slate-600",
+  PARTENARIAT: "bg-amber-100 text-amber-700",
+};
+
+function PreconditionChecklist({ preconditions, incomplete }: {
+  preconditions: Precondition[]; incomplete?: boolean;
+}) {
+  const [checked, setChecked] = useState<Record<number, boolean>>({});
+  if (!preconditions?.length) {
+    return (
+      <p className="text-sm text-amber-600 italic">
+        {incomplete
+          ? "Recommandation conditionnelle sans préalables explicites — à compléter manuellement."
+          : "Aucun préalable listé."}
+      </p>
+    );
+  }
+  return (
+    <ul className="space-y-2">
+      {preconditions.map((p, i) => (
+        <li key={i} className="flex items-start gap-2.5">
+          <button
+            onClick={() => setChecked((s) => ({ ...s, [i]: !s[i] }))}
+            className={cn(
+              "mt-0.5 w-4 h-4 rounded border flex items-center justify-center shrink-0 transition-colors",
+              checked[i] ? "bg-green-500 border-green-500" : "bg-white border-slate-300 hover:border-slate-400"
+            )}
+            aria-label={checked[i] ? "Décocher" : "Cocher"}
+          >
+            {checked[i] && <CheckCircle size={12} className="text-white" />}
+          </button>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className={cn("text-sm text-slate-700", checked[i] && "line-through text-slate-400")}>
+                {p.label}
+              </span>
+              {p.blocking && (
+                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">bloquant</span>
+              )}
+              <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded-full", PRECOND_TYPE_STYLE[p.type] ?? "bg-slate-100 text-slate-500")}>
+                {p.type}
+              </span>
+            </div>
+            {(p.deadline || p.responsable) && (
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                {[p.deadline, p.responsable].filter(Boolean).join(" · ")}
+              </p>
+            )}
+            {(p.pieces_requises?.length ?? 0) > 0 && (
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Pièces : {p.pieces_requises!.join(", ")}
+              </p>
+            )}
+          </div>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// ── Vue des phases du plan de réponse ────────────────────────────────────────────
+
+function PhasesView({ phases }: { phases: StrategyPhase[] }) {
+  if (!phases?.length) return <p className="text-sm text-slate-400 italic">Aucune phase définie.</p>;
+  return (
+    <div className="space-y-4">
+      {phases.map((ph) => (
+        <div key={ph.id} className="border-l-2 border-[#c5d2de] pl-3">
+          <div className="flex items-center gap-2 flex-wrap mb-1.5">
+            <span className="text-sm font-semibold text-slate-700">{ph.name}</span>
+            {ph.start_day && (
+              <span className="text-[11px] text-slate-400">
+                {ph.start_day}{ph.end_day && ph.end_day !== ph.start_day ? `→${ph.end_day}` : ""}
+              </span>
+            )}
+            {ph.is_blocking_next && (
+              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-red-100 text-red-700">bloquante</span>
+            )}
+          </div>
+          {ph.actions.length === 0 ? (
+            <p className="text-[11px] text-slate-400 italic">Actions à préciser.</p>
+          ) : (
+            <ul className="space-y-1.5">
+              {ph.actions.map((a, i) => (
+                <li key={i} className="flex items-start gap-2 text-sm">
+                  <span className="text-[11px] font-semibold text-[#0a2a43] shrink-0 mt-0.5 w-9">{a.day_label}</span>
+                  <div className="min-w-0 flex-1">
+                    <span className="text-slate-700">{a.action}</span>
+                    <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                      {a.responsable && <span className="text-[11px] text-slate-500">{a.responsable}</span>}
+                      {a.deliverable && <span className="text-[11px] text-green-700">→ {a.deliverable}</span>}
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ── Checklist des pièces & annexes (statut cyclable) ─────────────────────────────
+
+const APPENDIX_STATUT_CYCLE = ["PENDING", "EN_COURS", "OK", "NOK"] as const;
+const APPENDIX_STATUT_STYLE: Record<string, string> = {
+  PENDING: "bg-slate-100 text-slate-500",
+  EN_COURS: "bg-amber-100 text-amber-700",
+  OK: "bg-green-100 text-green-700",
+  NOK: "bg-red-100 text-red-700",
+};
+const APPENDIX_TYPE_STYLE: Record<string, string> = {
+  ADMIN: "bg-[#e3eaf1] text-[#0a2a43]",
+  TECHNIQUE: "bg-slate-100 text-slate-600",
+  FINANCIER: "bg-emerald-100 text-emerald-700",
+  RH: "bg-amber-100 text-amber-700",
+};
+
+function AppendixChecklist({ appendices }: { appendices: Appendix[] }) {
+  // Statut local cyclable (suivi visuel ; futur : persistance + export du statut édité)
+  const [statuts, setStatuts] = useState<Record<number, string>>({});
+  const [filterResp, setFilterResp] = useState<string>("");
+  if (!appendices?.length) return <p className="text-sm text-slate-400 italic">Aucune pièce listée dans l'AO.</p>;
+
+  const responsables = Array.from(new Set(appendices.map(a => a.responsable).filter(Boolean)));
+  const statutOf = (i: number) => statuts[i] ?? appendices[i].statut ?? "PENDING";
+  const cycle = (i: number) =>
+    setStatuts(s => {
+      const cur = statutOf(i);
+      const next = APPENDIX_STATUT_CYCLE[(APPENDIX_STATUT_CYCLE.indexOf(cur as never) + 1) % APPENDIX_STATUT_CYCLE.length];
+      return { ...s, [i]: next };
+    });
+
+  return (
+    <div className="space-y-2">
+      {responsables.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap text-[11px] mb-1">
+          <span className="text-slate-400">Filtrer par responsable :</span>
+          <button onClick={() => setFilterResp("")}
+            className={cn("px-1.5 py-0.5 rounded-full", filterResp === "" ? "bg-slate-700 text-white" : "bg-slate-100 text-slate-500")}>
+            tous
+          </button>
+          {responsables.map(r => (
+            <button key={r} onClick={() => setFilterResp(r)}
+              className={cn("px-1.5 py-0.5 rounded-full", filterResp === r ? "bg-slate-700 text-white" : "bg-slate-100 text-slate-500")}>
+              {r}
+            </button>
+          ))}
+        </div>
+      )}
+      <ul className="space-y-1.5">
+        {appendices.map((a, i) => (filterResp && a.responsable !== filterResp) ? null : (
+          <li key={i} className="flex items-start gap-2.5">
+            <button
+              onClick={() => cycle(i)}
+              className={cn("mt-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0 w-20 text-center",
+                APPENDIX_STATUT_STYLE[statutOf(i)] ?? "bg-slate-100 text-slate-500")}
+              title="Cliquer pour changer le statut"
+            >
+              {statutOf(i)}
+            </button>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {a.code && a.code !== "—" && <span className="text-[11px] font-semibold text-slate-400">{a.code}</span>}
+                <span className="text-sm text-slate-700">{a.label}</span>
+                {!a.obligatoire && <span className="text-[10px] text-slate-400 italic">(facultatif)</span>}
+                <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded-full", APPENDIX_TYPE_STYLE[a.type] ?? "bg-slate-100 text-slate-500")}>
+                  {a.type}
+                </span>
+              </div>
+              {(a.responsable || a.source_section) && (
+                <p className="text-[11px] text-slate-400 mt-0.5">
+                  {[a.responsable, a.source_section].filter(Boolean).join(" · ")}
+                </p>
+              )}
+            </div>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -376,7 +1025,7 @@ function StepperBar({ ao, viewStep, onStepClick, steps }: {
               <span className={cn(
                 "w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 transition-colors",
                 done && !current ? "bg-green-500 text-white" :
-                current ? "bg-blue-600 text-white shadow-sm" :
+                current ? "bg-[#0a2a43] text-white" :
                 accessible ? "border-2 border-slate-300 text-slate-500" :
                 "bg-gray-100 text-gray-400"
               )}>
@@ -384,7 +1033,7 @@ function StepperBar({ ao, viewStep, onStepClick, steps }: {
               </span>
               <span className={cn(
                 "text-xs font-medium transition-colors",
-                current ? "text-blue-600" :
+                current ? "text-[#0a2a43]" :
                 done ? "text-green-600" :
                 accessible ? "text-slate-600" :
                 "text-gray-400"
@@ -413,34 +1062,42 @@ function Step1({ ao, onExport, exporting, onNext }: {
   const r = ao.scoringResult!;
   return (
     <div className="space-y-4">
+      <MarketIdentityCard identity={r.market_identity} />
+
       <SectionCard title="Résumé exécutif" icon={<FileText size={15} />}>
         <div className="prose prose-sm max-w-none text-slate-600 leading-relaxed">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{r.summary}</ReactMarkdown>
         </div>
       </SectionCard>
 
+      <CalendarCard events={r.calendar} />
+
       {(r.key_elements?.length ?? 0) > 0 && (
         <SectionCard title="Points clés identifiés par l'IA" icon={<BarChart2 size={15} />}>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {r.key_elements.map((el, i) => (
-              <div key={i} className="flex gap-3 bg-slate-50 rounded-lg p-2.5 text-sm border border-slate-100">
-                <span className="text-slate-400 font-medium min-w-[110px] shrink-0 text-xs leading-relaxed pt-0.5">{el.category}</span>
-                <span className="text-slate-800 font-medium text-xs leading-relaxed">{el.value}</span>
-              </div>
-            ))}
-          </div>
+          <table className="w-full text-xs">
+            <tbody className="divide-y divide-slate-100">
+              {r.key_elements.map((el, i) => (
+                <tr key={i} className="align-top">
+                  <td className="text-slate-400 font-medium py-2 pr-4 w-[180px] leading-relaxed">{el.category}</td>
+                  <td className="text-slate-800 py-2 leading-relaxed">{el.value}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </SectionCard>
       )}
 
+      <EvaluationModalitiesCard evaluation={r.evaluation_modalities} />
+
       {(r.criteres_selection?.length ?? 0) > 0 && (
         <SectionCard title="Critères de sélection" icon={<ClipboardList size={15} />}>
-          <BulletList items={r.criteres_selection} bulletColor="text-blue-500" />
+          <BulletList items={r.criteres_selection} bulletColor="text-[#0a2a43]" />
         </SectionCard>
       )}
 
       {(r.besoins?.length ?? 0) > 0 && (
         <SectionCard title="Besoins identifiés" icon={<Target size={15} />}>
-          <BulletList items={r.besoins} bulletColor="text-indigo-500" />
+          <BulletList items={r.besoins} bulletColor="text-teal-600" />
         </SectionCard>
       )}
 
@@ -450,11 +1107,17 @@ function Step1({ ao, onExport, exporting, onNext }: {
         </SectionCard>
       )}
 
-      {(r.ressources_demandees?.length ?? 0) > 0 && (
+      <RequiredProfilesCard profils={r.profils_demandes} />
+
+      {(r.profils_demandes?.length ?? 0) === 0 && (r.ressources_demandees?.length ?? 0) > 0 && (
         <SectionCard title="Ressources demandées" icon={<Users size={15} />}>
-          <BulletList items={r.ressources_demandees} bulletColor="text-purple-500" />
+          <BulletList items={r.ressources_demandees} bulletColor="text-slate-400" />
         </SectionCard>
       )}
+
+      <EligibilityThresholdsCard seuils={r.seuils_eligibilite} />
+
+      <FinancialDataCard data={r.donnees_financieres} />
 
       {(r.points_vigilance?.length ?? 0) > 0 && (
         <SectionCard title="Points de vigilance" icon={<Eye size={15} />}>
@@ -466,14 +1129,14 @@ function Step1({ ao, onExport, exporting, onNext }: {
         <button
           onClick={onExport}
           disabled={exporting}
-          className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 rounded-lg text-sm font-medium border border-slate-200 hover:border-slate-300 disabled:opacity-50 transition-colors shadow-sm"
+          className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 rounded-lg text-sm font-medium border border-slate-200 hover:border-slate-300 disabled:opacity-50 transition-colors"
         >
           {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
           Exporter en Word
         </button>
         <button
           onClick={onNext}
-          className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm"
+          className="flex items-center gap-2 px-5 py-2 bg-[#f26a21] hover:brightness-95 text-white rounded-lg text-sm font-medium transition-colors"
         >
           Score & Décision
           <ArrowRight size={14} />
@@ -497,8 +1160,8 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
     cv: "CV", offre_technique: "Offre", abe: "ABE", pv_recette: "PV recette",
   };
   const docTypeColor: Record<string, string> = {
-    cv: "bg-violet-100 text-violet-600",
-    offre_technique: "bg-blue-100 text-blue-600",
+    cv: "bg-slate-100 text-slate-600",
+    offre_technique: "bg-[#e3eaf1] text-[#0a2a43]",
     abe: "bg-amber-100 text-amber-700",
     pv_recette: "bg-green-100 text-green-700",
   };
@@ -511,7 +1174,19 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
       {/* Score principal */}
       <SectionCard title="Score de matching GED" icon={<Layers size={15} />}>
         <div className="flex items-center gap-8 flex-wrap">
-          <ScoreRing score={r.score} />
+          <div className="flex flex-col items-center gap-1">
+            <ScoreRing score={r.score} />
+            {r.score_basis === "ESTIME" && (
+              <span className="text-[11px] text-amber-600 font-medium text-center max-w-[120px]">
+                Estimé — AO sans barème chiffré
+              </span>
+            )}
+            {r.score_basis === "INDISPONIBLE" && (
+              <span className="text-[11px] text-red-500 font-medium text-center max-w-[120px]">
+                Score indisponible — analyse à relancer
+              </span>
+            )}
+          </div>
           <div className="space-y-3 flex-1 min-w-[200px]">
             <RecoBadge rec={r.recommendation} />
             {r.justification && !r.justification.startsWith("{") && !r.justification.startsWith("```") && (
@@ -524,7 +1199,7 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
       {/* Matching équipe — CVs depuis la GED */}
       <SectionCard
         title={`Équipe proposable (${teamMatches.length} CV${teamMatches.length !== 1 ? "s" : ""} matchés)`}
-        icon={<Users size={15} className="text-violet-500" />}
+        icon={<Users size={15} className="text-slate-400" />}
       >
         {teamMatches.length === 0 ? (
           <p className="text-xs text-slate-400 italic py-1">
@@ -548,8 +1223,8 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
                 .replace(/\b\w/g, c => c.toUpperCase());
               const initials = name.split(" ").slice(0, 2).map(w => w[0] ?? "").join("").toUpperCase();
               return (
-                <div key={i} className="flex items-start gap-3 p-2.5 bg-violet-50 rounded-lg border border-violet-100">
-                  <div className="w-8 h-8 rounded-lg bg-violet-200 flex items-center justify-center shrink-0 text-[10px] font-bold text-violet-700">
+                <div key={i} className="flex items-start gap-3 p-2.5 bg-slate-50 rounded-lg">
+                  <div className="w-8 h-8 rounded-lg bg-slate-200 flex items-center justify-center shrink-0 text-[10px] font-bold text-slate-700">
                     {initials || "CV"}
                   </div>
                   <div className="min-w-0 flex-1">
@@ -575,16 +1250,16 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
       {/* Projets similaires — offres / ABE / PV recette */}
       <SectionCard
         title={`Projets similaires dans la GED (${similarProjects.length})`}
-        icon={<FileText size={15} className="text-blue-500" />}
+        icon={<FileText size={15} className="text-[#0a2a43]" />}
       >
         {similarProjects.length === 0 ? (
           <p className="text-xs text-slate-400 italic py-1">Aucun projet similaire trouvé dans la GED.</p>
         ) : (
           <div className="space-y-2">
             {similarProjects.map((doc, i) => (
-              <div key={i} className="flex items-start gap-3 p-2.5 bg-blue-50 rounded-lg border border-blue-100">
-                <div className="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
-                  <FileText size={13} className="text-blue-500" />
+              <div key={i} className="flex items-start gap-3 p-2.5 bg-[#eef2f7] rounded-lg">
+                <div className="w-7 h-7 rounded-lg bg-[#e3eaf1] flex items-center justify-center shrink-0">
+                  <FileText size={13} className="text-[#0a2a43]" />
                 </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -607,20 +1282,32 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
         )}
       </SectionCard>
 
+      {/* Grille d'évaluation décomposée */}
+      {(r.criteria_breakdown?.length ?? 0) > 0 && (
+        <SectionCard title="Grille d'évaluation détaillée" icon={<BarChart2 size={15} className="text-[#0a2a43]" />}>
+          <ScoreBreakdown criteria={r.criteria_breakdown!} />
+        </SectionCard>
+      )}
+
+      {/* Préalables conditionnels — uniquement si CONDITIONAL */}
+      {r.recommendation === "CONDITIONAL" && (
+        <SectionCard title="Préalables conditionnels" icon={<ClipboardList size={15} className="text-amber-500" />} className="border-amber-100">
+          <PreconditionChecklist preconditions={r.preconditions ?? []} incomplete={r.preconditions_incomplete} />
+        </SectionCard>
+      )}
+
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <SectionCard title="Nos forces" icon={<CheckCircle size={15} />} className="border-green-100">
           <BulletList items={r.strengths} bulletColor="text-green-500" />
         </SectionCard>
-        <SectionCard title="Risques identifiés" icon={<AlertTriangle size={15} />} className="border-red-100">
-          <BulletList items={r.risks} bulletColor="text-red-500" />
+        <SectionCard title="Risques & mitigation" icon={<AlertTriangle size={15} />} className="border-red-100">
+          <RiskList risks={r.risks} />
         </SectionCard>
       </div>
 
       {r.gaps_analysis && !r.gaps_analysis.startsWith("{") && !r.gaps_analysis.startsWith("```") && (
         <SectionCard title="Analyse des écarts">
-          <div className="prose prose-sm max-w-none text-slate-600">
-            <ReactMarkdown remarkPlugins={[remarkGfm]}>{r.gaps_analysis}</ReactMarkdown>
-          </div>
+          <NumberedAnalysis text={r.gaps_analysis} />
         </SectionCard>
       )}
 
@@ -628,7 +1315,7 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
         <button
           onClick={onExport}
           disabled={exporting}
-          className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 rounded-lg text-sm font-medium border border-slate-200 hover:border-slate-300 disabled:opacity-50 transition-colors shadow-sm"
+          className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 rounded-lg text-sm font-medium border border-slate-200 hover:border-slate-300 disabled:opacity-50 transition-colors"
         >
           {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
           Exporter le scoring
@@ -636,7 +1323,7 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
       </div>
 
       {!ao.decisionValidated ? (
-        <SectionCard title="Ma décision commerciale" className="border-blue-100 bg-blue-50/30">
+        <SectionCard title="Ma décision commerciale" className="border-[#d8e1ea] bg-[#eef2f7]/30">
           <p className="text-xs text-slate-500 mb-3">Sur la base de l'analyse, quelle est votre décision ?</p>
           <div className="flex gap-3 mb-4">
             <DecisionBtn label="GO ✓" colorKey="green" selected={ao.decision === "go"} onClick={() => onUpdate({ decision: "go" })} />
@@ -647,14 +1334,14 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
             value={ao.decisionReason}
             onChange={e => onUpdate({ decisionReason: e.target.value })}
             placeholder="Justification de la décision (optionnel)..."
-            className="w-full text-sm border border-slate-200 rounded-xl p-3 resize-none focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white"
+            className="w-full text-sm border border-slate-200 rounded-xl p-3 resize-none focus:outline-none focus:ring-2 focus:ring-[#0a2a43]/25 bg-white"
             rows={2}
           />
           <div className="flex justify-end mt-3">
             <button
               onClick={onValidate}
               disabled={!ao.decision || validating}
-              className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium disabled:opacity-50 transition-colors shadow-sm"
+              className="flex items-center gap-2 px-5 py-2 bg-[#f26a21] hover:brightness-95 text-white rounded-xl text-sm font-medium disabled:opacity-50 transition-colors"
             >
               {validating && <Loader2 size={14} className="animate-spin" />}
               {validating ? "Génération en cours..." : "Valider ma décision"}
@@ -694,8 +1381,8 @@ function Step3({ ao, generatingStrategy, onStrategyTextChange, onValidate, onExp
   if (generatingStrategy) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-5">
-        <div className="w-16 h-16 rounded-2xl bg-blue-50 flex items-center justify-center">
-          <Sparkles size={32} className="text-blue-500 animate-pulse" />
+        <div className="w-16 h-16 rounded-xl bg-[#eef2f7] flex items-center justify-center">
+          <Sparkles size={32} className="text-[#0a2a43] animate-pulse" />
         </div>
         <div className="text-center">
           <p className="font-semibold text-slate-700">Génération de la stratégie de réponse...</p>
@@ -703,7 +1390,7 @@ function Step3({ ao, generatingStrategy, onStrategyTextChange, onValidate, onExp
         </div>
         <div className="flex gap-1.5">
           {[0, 1, 2].map(i => (
-            <div key={i} className="w-2 h-2 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: `${i * 150}ms` }} />
+            <div key={i} className="w-2 h-2 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: `${i * 150}ms` }} />
           ))}
         </div>
       </div>
@@ -723,40 +1410,39 @@ function Step3({ ao, generatingStrategy, onStrategyTextChange, onValidate, onExp
     <div className="space-y-4">
       <SectionCard title="Stratégie de réponse" icon={<Sparkles size={15} />}>
         <p className="text-xs text-slate-400 mb-2.5 flex items-center gap-1.5">
-          <span className="w-1.5 h-1.5 rounded-full bg-blue-400 inline-block" />
+          <span className="w-1.5 h-1.5 rounded-full bg-slate-300 inline-block" />
           Générée par IA — modifiable avant validation.
         </p>
         <textarea
           value={ao.strategyText}
           onChange={e => !ao.strategyValidated && onStrategyTextChange(e.target.value)}
-          className="w-full text-sm border border-slate-200 rounded-xl p-3 resize-none bg-slate-50 focus:outline-none focus:ring-2 focus:ring-blue-200 leading-relaxed"
+          className="w-full text-sm border border-slate-200 rounded-xl p-3 resize-none bg-slate-50 focus:outline-none focus:ring-2 focus:ring-[#0a2a43]/25 leading-relaxed"
           rows={10}
           readOnly={ao.strategyValidated}
         />
       </SectionCard>
 
-      {(ao.bidStrategy.chronogram?.length ?? 0) > 0 && (
-        <SectionCard title="Chronogramme de traitement" icon={<ClipboardList size={15} />}>
-          <div className="overflow-x-auto rounded-lg border border-slate-100">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-100">
-                  <th className="text-left py-2.5 px-3 text-slate-500 font-medium text-xs whitespace-nowrap">Période</th>
-                  <th className="text-left py-2.5 px-3 text-slate-500 font-medium text-xs">Action</th>
-                  <th className="text-left py-2.5 px-3 text-slate-500 font-medium text-xs whitespace-nowrap">Responsable</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ao.bidStrategy.chronogram.map((item, i) => (
-                  <tr key={i} className="border-b border-slate-50 last:border-0 hover:bg-slate-50/50">
-                    <td className="py-2.5 px-3 text-blue-600 font-semibold text-xs whitespace-nowrap">{item.semaine}</td>
-                    <td className="py-2.5 px-3 text-slate-700 text-sm">{item.action}</td>
-                    <td className="py-2.5 px-3 text-slate-500 text-xs whitespace-nowrap">{item.responsable}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+      {(ao.bidStrategy.partner_validation?.length ?? 0) > 0 && (
+        <SectionCard
+          title={ao.bidStrategy.partner
+            ? `Validation partenaire — ${ao.bidStrategy.partner.name} (étape 0)`
+            : "Préalables à lever (étape 0)"}
+          icon={<Scale size={15} className="text-amber-500" />}
+          className="border-amber-100"
+        >
+          <PreconditionChecklist preconditions={ao.bidStrategy.partner_validation} />
+        </SectionCard>
+      )}
+
+      {(ao.bidStrategy.phases?.length ?? 0) > 0 && (
+        <SectionCard title="Plan de réponse en phases" icon={<ClipboardList size={15} />}>
+          <PhasesView phases={ao.bidStrategy.phases} />
+        </SectionCard>
+      )}
+
+      {(ao.bidStrategy.appendices?.length ?? 0) > 0 && (
+        <SectionCard title="Pièces & annexes à fournir" icon={<FileText size={15} className="text-[#0a2a43]" />}>
+          <AppendixChecklist appendices={ao.bidStrategy.appendices} />
         </SectionCard>
       )}
 
@@ -764,7 +1450,7 @@ function Step3({ ao, generatingStrategy, onStrategyTextChange, onValidate, onExp
         <button
           onClick={onExport}
           disabled={exporting}
-          className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-sm font-medium border border-slate-200 hover:border-slate-300 disabled:opacity-50 transition-colors shadow-sm"
+          className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-sm font-medium border border-slate-200 hover:border-slate-300 disabled:opacity-50 transition-colors"
         >
           {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
           Exporter en Word
@@ -773,7 +1459,7 @@ function Step3({ ao, generatingStrategy, onStrategyTextChange, onValidate, onExp
         {!ao.strategyValidated ? (
           <button
             onClick={onValidate}
-            className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition-colors shadow-sm"
+            className="flex items-center gap-2 px-5 py-2 bg-[#f26a21] hover:brightness-95 text-white rounded-xl text-sm font-medium transition-colors"
           >
             <CheckCircle size={14} />
             Valider la stratégie
@@ -798,7 +1484,7 @@ function Step4({ ao, onPlanChange, onValidate, onStartPhase2 }: {
   if (ao.responsePlanValidated) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-5 text-center">
-        <div className="w-20 h-20 rounded-2xl bg-green-50 flex items-center justify-center shadow-inner">
+        <div className="w-20 h-20 rounded-xl bg-green-50 flex items-center justify-center">
           <CheckCircle size={40} className="text-green-500" />
         </div>
         <div>
@@ -809,7 +1495,7 @@ function Step4({ ao, onPlanChange, onValidate, onStartPhase2 }: {
         </div>
         <button
           onClick={onStartPhase2}
-          className="flex items-center gap-2 px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition-colors shadow-sm mt-2"
+          className="flex items-center gap-2 px-6 py-2.5 bg-[#f26a21] hover:brightness-95 text-white rounded-xl text-sm font-medium transition-colors mt-2"
         >
           <Sparkles size={15} />
           Démarrer Phase 2 — Offre & Soumission
@@ -838,7 +1524,7 @@ function Step4({ ao, onPlanChange, onValidate, onStartPhase2 }: {
         <button
           onClick={onValidate}
           disabled={!ao.responsePlan.trim()}
-          className="flex items-center gap-2 px-5 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-medium disabled:opacity-50 transition-colors shadow-sm"
+          className="flex items-center gap-2 px-5 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-medium disabled:opacity-50 transition-colors"
         >
           <CheckCircle size={14} />
           Valider → Phase 2
@@ -860,8 +1546,8 @@ function Step5({ ao, onGenerate, onDownload, onValidate, generating }: {
   if (generating) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-5">
-        <div className="w-16 h-16 rounded-2xl bg-blue-50 flex items-center justify-center">
-          <Sparkles size={32} className="text-blue-500 animate-pulse" />
+        <div className="w-16 h-16 rounded-xl bg-[#eef2f7] flex items-center justify-center">
+          <Sparkles size={32} className="text-[#0a2a43] animate-pulse" />
         </div>
         <div className="text-center">
           <p className="font-semibold text-slate-700">Génération de l'offre technique...</p>
@@ -869,7 +1555,7 @@ function Step5({ ao, onGenerate, onDownload, onValidate, generating }: {
         </div>
         <div className="flex gap-1.5">
           {[0, 1, 2].map(i => (
-            <div key={i} className="w-2 h-2 rounded-full bg-blue-400 animate-bounce" style={{ animationDelay: `${i * 150}ms` }} />
+            <div key={i} className="w-2 h-2 rounded-full bg-slate-300 animate-bounce" style={{ animationDelay: `${i * 150}ms` }} />
           ))}
         </div>
       </div>
@@ -899,7 +1585,7 @@ function Step5({ ao, onGenerate, onDownload, onValidate, generating }: {
             </div>
             <button
               onClick={onGenerate}
-              className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium transition-colors shadow-sm"
+              className="flex items-center gap-2 px-5 py-2.5 bg-[#f26a21] hover:brightness-95 text-white rounded-xl text-sm font-medium transition-colors"
             >
               <Sparkles size={15} />
               Générer l'offre technique
@@ -928,7 +1614,7 @@ function Step5({ ao, onGenerate, onDownload, onValidate, generating }: {
         {ao.offerGenerated && !ao.offerValidated ? (
           <button
             onClick={onValidate}
-            className="ml-auto flex items-center gap-2 px-5 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-medium transition-colors shadow-sm"
+            className="ml-auto flex items-center gap-2 px-5 py-2 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-medium transition-colors"
           >
             <CheckCircle size={14} />
             Valider l'offre → Étape 6
@@ -965,7 +1651,7 @@ function Step6({ ao, onToggle, onNoteChange, onAddItem, onDeleteItem, onExport, 
   });
 
   const catConfig: { key: "Technique" | "Administratif" | "Commercial"; color: string; border: string; icon: React.ReactNode }[] = [
-    { key: "Technique", color: "text-blue-600", border: "border-blue-100", icon: <FileText size={14} className="text-blue-400" /> },
+    { key: "Technique", color: "text-[#0a2a43]", border: "border-[#d8e1ea]", icon: <FileText size={14} className="text-slate-400" /> },
     { key: "Administratif", color: "text-slate-600", border: "border-slate-200", icon: <Shield size={14} className="text-slate-400" /> },
     { key: "Commercial", color: "text-amber-600", border: "border-amber-100", icon: <Target size={14} className="text-amber-400" /> },
   ];
@@ -977,7 +1663,7 @@ function Step6({ ao, onToggle, onNoteChange, onAddItem, onDeleteItem, onExport, 
   return (
     <div className="space-y-4">
       {/* Progress */}
-      <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
+      <div className="bg-white border border-slate-200 rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
           <span className="text-sm font-semibold text-slate-700">Complétude du dossier</span>
           <span className={cn("text-sm font-bold", allRequiredDone ? "text-green-600" : "text-slate-500")}>
@@ -986,7 +1672,7 @@ function Step6({ ao, onToggle, onNoteChange, onAddItem, onDeleteItem, onExport, 
         </div>
         <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
           <div
-            className={cn("h-2 rounded-full transition-all", allRequiredDone ? "bg-green-500" : "bg-blue-500")}
+            className={cn("h-2 rounded-full transition-all", allRequiredDone ? "bg-green-500" : "bg-[#0a2a43]")}
             style={{ width: `${requiredItems.length > 0 ? (checkedRequired.length / requiredItems.length) * 100 : 0}%` }}
           />
         </div>
@@ -995,19 +1681,19 @@ function Step6({ ao, onToggle, onNoteChange, onAddItem, onDeleteItem, onExport, 
         </p>
       </div>
 
-      {catConfig.map(({ key, color, border, icon }) => {
+      {catConfig.map(({ key, color, icon }) => {
         const items = ao.checklist.filter(it => it.category === key);
         return (
-          <SectionCard key={key} title={key} icon={icon} className={cn("border", border)}>
+          <SectionCard key={key} title={key} icon={icon}>
             <div className="space-y-1.5">
               {items.map(item => (
-                <div key={item.id} className="rounded-lg border border-slate-100 overflow-hidden">
+                <div key={item.id} className="rounded-lg overflow-hidden">
                   <div className="flex items-center gap-2.5 p-2.5">
                     <input
                       type="checkbox"
                       checked={item.checked}
                       onChange={() => onToggle(item.id)}
-                      className="w-4 h-4 rounded border-slate-300 text-blue-600 cursor-pointer shrink-0 accent-blue-600"
+                      className="w-4 h-4 rounded border-slate-300 text-[#0a2a43] cursor-pointer shrink-0 accent-[#0a2a43]"
                     />
                     <span className={cn(
                       "flex-1 text-xs leading-relaxed",
@@ -1021,7 +1707,7 @@ function Step6({ ao, onToggle, onNoteChange, onAddItem, onDeleteItem, onExport, 
                     )}
                     <button
                       onClick={() => toggleNote(item.id)}
-                      className="shrink-0 p-0.5 text-slate-300 hover:text-blue-500 transition-colors"
+                      className="shrink-0 p-0.5 text-slate-300 hover:text-[#0a2a43] transition-colors"
                       title="Ajouter une note"
                     >
                       <Eye size={12} />
@@ -1042,7 +1728,7 @@ function Step6({ ao, onToggle, onNoteChange, onAddItem, onDeleteItem, onExport, 
                         value={item.note}
                         onChange={e => onNoteChange(item.id, e.target.value)}
                         placeholder="Observation, référence, commentaire..."
-                        className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-blue-200 placeholder:text-slate-300"
+                        className="w-full text-xs border border-slate-200 rounded-lg px-2.5 py-1.5 bg-slate-50 focus:outline-none focus:ring-1 focus:ring-[#0a2a43]/25 placeholder:text-slate-300"
                       />
                     </div>
                   )}
@@ -1063,7 +1749,7 @@ function Step6({ ao, onToggle, onNoteChange, onAddItem, onDeleteItem, onExport, 
         <button
           onClick={onExport}
           disabled={exporting}
-          className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-sm font-medium border border-slate-200 hover:border-slate-300 disabled:opacity-50 transition-colors shadow-sm"
+          className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 rounded-xl text-sm font-medium border border-slate-200 hover:border-slate-300 disabled:opacity-50 transition-colors"
         >
           {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
           Exporter la checklist
@@ -1072,7 +1758,7 @@ function Step6({ ao, onToggle, onNoteChange, onAddItem, onDeleteItem, onExport, 
           <button
             onClick={onValidate}
             disabled={!allRequiredDone}
-            className="flex items-center gap-2 px-5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-sm font-medium disabled:opacity-40 transition-colors shadow-sm"
+            className="flex items-center gap-2 px-5 py-2 bg-[#f26a21] hover:brightness-95 text-white rounded-xl text-sm font-medium disabled:opacity-40 transition-colors"
           >
             <CheckCircle size={14} />
             Valider le dossier → Étape 7
@@ -1126,7 +1812,7 @@ function Step7({ ao, onUpdate, onValidate }: {
         </SectionCard>
 
         {/* Résultat de l'AO */}
-        <SectionCard title="Résultat de l'AO" icon={<Trophy size={15} />} className="border-violet-100 bg-violet-50/20">
+        <SectionCard title="Résultat de l'AO" icon={<Trophy size={15} />} className="border-slate-200 bg-slate-50/20">
           {ao.result && ao.result !== "pending" ? (
             <div className={cn(
               "flex items-start gap-4 p-3 rounded-xl",
@@ -1172,13 +1858,13 @@ function Step7({ ao, onUpdate, onValidate }: {
               <div className="flex gap-2">
                 <button
                   onClick={() => onUpdate({ result: "won", resultDate: new Date().toISOString().split("T")[0] })}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-green-600 hover:bg-green-700 text-white transition-colors shadow-sm"
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-green-600 hover:bg-green-700 text-white transition-colors"
                 >
                   <Trophy size={14} /> Gagné 🏆
                 </button>
                 <button
                   onClick={() => onUpdate({ result: "lost", resultDate: new Date().toISOString().split("T")[0] })}
-                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-red-500 hover:bg-red-600 text-white transition-colors shadow-sm"
+                  className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold bg-red-500 hover:bg-red-600 text-white transition-colors"
                 >
                   <ThumbsDown size={14} /> Perdu
                 </button>
@@ -1215,12 +1901,12 @@ function Step7({ ao, onUpdate, onValidate }: {
 
   return (
     <div className="space-y-4">
-      <SectionCard title="Informations de soumission" icon={<CalendarDays size={15} />} className="border-blue-100 bg-blue-50/20">
+      <SectionCard title="Informations de soumission" icon={<CalendarDays size={15} />} className="border-[#d8e1ea] bg-[#eef2f7]/20">
         <div className="space-y-4">
           {dateRemise && (
             <div className="flex items-center gap-2">
               <span className="text-xs text-slate-500">Date limite AO :</span>
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-cyan-100 text-cyan-700 rounded-full text-xs font-semibold border border-cyan-200">
+              <span className="inline-flex items-center gap-1 px-2.5 py-1 bg-teal-100 text-teal-700 rounded-full text-xs font-semibold border border-teal-200">
                 <CalendarDays size={11} />
                 {dateRemise}
               </span>
@@ -1235,7 +1921,7 @@ function Step7({ ao, onUpdate, onValidate }: {
               type="date"
               value={ao.submissionDate}
               onChange={e => onUpdate({ submissionDate: e.target.value })}
-              className="w-full sm:w-60 text-sm border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white"
+              className="w-full sm:w-60 text-sm border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#0a2a43]/25 bg-white"
             />
             {lateWarning && (
               <p className="flex items-center gap-1.5 text-xs text-amber-600 mt-1.5">
@@ -1251,7 +1937,7 @@ function Step7({ ao, onUpdate, onValidate }: {
             <select
               value={ao.submissionChannel}
               onChange={e => onUpdate({ submissionChannel: e.target.value })}
-              className="w-full sm:w-72 text-sm border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white"
+              className="w-full sm:w-72 text-sm border border-slate-200 rounded-xl px-3 py-2 focus:outline-none focus:ring-2 focus:ring-[#0a2a43]/25 bg-white"
             >
               <option value="">Sélectionner un canal...</option>
               <option value="Email">Email</option>
@@ -1269,7 +1955,7 @@ function Step7({ ao, onUpdate, onValidate }: {
               onChange={e => onUpdate({ submissionNote: e.target.value })}
               placeholder="Interlocuteur, accusé de réception, numéro de dépôt..."
               rows={3}
-              className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-blue-200 bg-white placeholder:text-slate-300"
+              className="w-full text-sm border border-slate-200 rounded-xl px-3 py-2 resize-none focus:outline-none focus:ring-2 focus:ring-[#0a2a43]/25 bg-white placeholder:text-slate-300"
             />
           </div>
         </div>
@@ -1279,7 +1965,7 @@ function Step7({ ao, onUpdate, onValidate }: {
         <button
           onClick={onValidate}
           disabled={!canSubmit}
-          className="flex items-center gap-2 px-6 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-medium disabled:opacity-40 transition-colors shadow-sm"
+          className="flex items-center gap-2 px-6 py-2.5 bg-green-600 hover:bg-green-700 text-white rounded-xl text-sm font-medium disabled:opacity-40 transition-colors"
         >
           <Send size={14} />
           Confirmer la soumission
@@ -1300,9 +1986,9 @@ function getKanbanColumn(ao: AOEntry): "analyse" | "redaction" | "soumis" | "gag
 }
 
 const KANBAN_COLS = [
-  { key: "analyse",   label: "En analyse",   color: "bg-blue-500",   light: "bg-blue-50 border-blue-200",   text: "text-blue-700" },
-  { key: "redaction", label: "En rédaction",  color: "bg-violet-500", light: "bg-violet-50 border-violet-200", text: "text-violet-700" },
-  { key: "soumis",    label: "Soumis",        color: "bg-cyan-500",   light: "bg-cyan-50 border-cyan-200",   text: "text-cyan-700" },
+  { key: "analyse",   label: "En analyse",   color: "bg-[#0a2a43]",   light: "bg-[#eef2f7] border-[#c5d2de]",   text: "text-[#0a2a43]" },
+  { key: "redaction", label: "En rédaction",  color: "bg-slate-400", light: "bg-slate-50 border-slate-200", text: "text-slate-700" },
+  { key: "soumis",    label: "Soumis",        color: "bg-teal-500",   light: "bg-teal-50 border-teal-200",   text: "text-teal-700" },
   { key: "gagne",     label: "Gagnés 🏆",    color: "bg-green-500",  light: "bg-green-50 border-green-200", text: "text-green-700" },
   { key: "perdu",     label: "Perdus",        color: "bg-red-400",    light: "bg-red-50 border-red-200",     text: "text-red-700" },
 ] as const;
@@ -1427,7 +2113,7 @@ export default function PresalesPage() {
       );
       updateAO(aoId, {
         bidStrategy: strategy,
-        strategyText: strategy.strategy,
+        strategyText: strategy.strategy_text,
         responsePlan: strategy.response_plan,
       });
     } catch (e) {
@@ -1512,9 +2198,7 @@ export default function PresalesPage() {
       console.log("Export stratégie → requête backend...");
       const blob = await exportStrategy(
         ao.scoringResult,
-        ao.strategyText,
-        ao.bidStrategy.chronogram,
-        ao.responsePlan,
+        ao.bidStrategy,
         ao.clientName || undefined,
         ao.decision === "go" ? "GO" : ao.decision === "conditional" ? "CONDITIONAL" : "NO_BID",
       );
@@ -1567,9 +2251,12 @@ export default function PresalesPage() {
     setExportError(null);
     setExportingChecklist(true);
     try {
+      // Pièces réelles de l'AO (statut éventuellement édité côté stratégie) ;
+      // si vide, le backend retombe sur une checklist générique inférée.
+      const appendices = ao.bidStrategy?.appendices ?? ao.scoringResult.appendices ?? [];
       const blob = await exportChecklist(
         ao.scoringResult.ao_filename,
-        ao.checklist,
+        appendices,
         ao.clientName || undefined,
         ao.submissionDate || undefined,
       );
@@ -1618,7 +2305,7 @@ export default function PresalesPage() {
           <div className="flex items-center gap-2">
             <button
               onClick={() => fileInputRef.current?.click()}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 bg-[#f26a21] hover:brightness-95 text-white rounded-lg font-medium transition-colors"
             >
               <Upload size={12} /> Nouvel AO
             </button>
@@ -1661,7 +2348,7 @@ export default function PresalesPage() {
                       <div
                         key={ao.id}
                         onClick={() => { selectAO(ao.id); setPageView("workflow"); }}
-                        className="rounded-xl border border-slate-200 bg-white p-3 cursor-pointer hover:shadow-md hover:-translate-y-0.5 transition-all group"
+                        className="rounded-xl border border-slate-200 bg-white p-3 cursor-pointer hover: hover:-translate-y-0.5 transition-all group"
                       >
                         <p className="text-xs font-semibold text-slate-700 truncate mb-1">{ao.filename}</p>
                         {ao.clientName && <p className="text-xs text-slate-400 truncate mb-1.5">{ao.clientName}</p>}
@@ -1725,7 +2412,7 @@ export default function PresalesPage() {
             <div className="flex items-center gap-2 text-[10px] text-slate-400">
               <span className="text-green-600 font-bold">{statsAos.won} gagné{statsAos.won > 1 ? "s" : ""}</span>
               <span>·</span>
-              <span className="text-blue-500 font-bold">{statsAos.submitted} soumis</span>
+              <span className="text-[#0a2a43] font-bold">{statsAos.submitted} soumis</span>
               <span>·</span>
               <span>{statsAos.inProgress} en cours</span>
             </div>
@@ -1737,8 +2424,8 @@ export default function PresalesPage() {
           className={cn(
             "m-3 border-2 border-dashed rounded-xl p-4 text-center cursor-pointer transition-all shrink-0",
             dragOver
-              ? "border-blue-400 bg-blue-50 scale-[0.98]"
-              : "border-slate-200 hover:border-blue-300 hover:bg-slate-50"
+              ? "border-[#0a2a43] bg-[#eef2f7] scale-[0.98]"
+              : "border-slate-200 hover:border-[#b3c3d2] hover:bg-slate-50"
           )}
           onClick={() => fileInputRef.current?.click()}
           onDragOver={e => { e.preventDefault(); setDragOver(true); }}
@@ -1761,7 +2448,7 @@ export default function PresalesPage() {
         {aos.length === 0 && (
           <button
             onClick={loadDemo}
-            className="mx-3 mb-2 text-xs text-blue-600 hover:text-blue-700 text-center py-2 border border-blue-200 rounded-xl hover:bg-blue-50 transition-colors shrink-0 font-medium"
+            className="mx-3 mb-2 text-xs text-[#0a2a43] hover:text-[#0a2a43] text-center py-2 border border-[#c5d2de] rounded-xl hover:bg-[#eef2f7] transition-colors shrink-0 font-medium"
           >
             ✨ Charger un AO démo
           </button>
@@ -1776,7 +2463,7 @@ export default function PresalesPage() {
               className={cn(
                 "p-2.5 rounded-xl cursor-pointer transition-colors group",
                 selectedId === ao.id
-                  ? "bg-blue-50 border border-blue-200"
+                  ? "bg-[#eef2f7] border border-[#c5d2de]"
                   : "hover:bg-slate-50 border border-transparent"
               )}
             >
@@ -1797,7 +2484,7 @@ export default function PresalesPage() {
               </div>
               <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
                 {ao.status === "scoring" && (
-                  <span className="flex items-center gap-1 text-xs text-blue-500">
+                  <span className="flex items-center gap-1 text-xs text-[#0a2a43]">
                     <Loader2 size={10} className="animate-spin" /> Analyse...
                   </span>
                 )}
@@ -1823,9 +2510,9 @@ export default function PresalesPage() {
                   ) : ao.result === "pending" ? (
                     <span className="ml-auto text-xs px-1.5 py-0.5 rounded-full font-medium bg-amber-100 text-amber-700">En attente</span>
                   ) : ao.submissionValidated ? (
-                    <span className="ml-auto text-xs px-1.5 py-0.5 rounded-full font-medium bg-blue-100 text-blue-700">Soumis</span>
+                    <span className="ml-auto text-xs px-1.5 py-0.5 rounded-full font-medium bg-[#e3eaf1] text-[#0a2a43]">Soumis</span>
                   ) : getActiveStep(ao) >= 5 ? (
-                    <span className="ml-auto text-xs px-1.5 py-0.5 rounded-full font-medium bg-violet-100 text-violet-700">P2</span>
+                    <span className="ml-auto text-xs px-1.5 py-0.5 rounded-full font-medium bg-slate-100 text-slate-600">P2</span>
                   ) : (
                     <span className="text-xs text-slate-400 ml-auto">Ét. {getActiveStep(ao)}/4</span>
                   )}
@@ -1841,7 +2528,7 @@ export default function PresalesPage() {
       <div className="flex-1 flex flex-col overflow-hidden bg-slate-50">
         {!selectedAO ? (
           <div className="flex-1 flex flex-col items-center justify-center gap-5 text-center p-8">
-            <div className="w-16 h-16 rounded-2xl bg-slate-100 flex items-center justify-center shadow-inner">
+            <div className="w-16 h-16 rounded-xl bg-slate-100 flex items-center justify-center">
               <FileText size={30} className="text-slate-300" />
             </div>
             <div>
@@ -1851,7 +2538,7 @@ export default function PresalesPage() {
             {aos.length === 0 && (
               <button
                 onClick={loadDemo}
-                className="text-sm text-blue-600 hover:text-blue-700 py-2 px-4 border border-blue-200 rounded-xl hover:bg-blue-50 transition-colors font-medium"
+                className="text-sm text-[#0a2a43] hover:text-[#0a2a43] py-2 px-4 border border-[#c5d2de] rounded-xl hover:bg-[#eef2f7] transition-colors font-medium"
               >
                 ✨ Essayer avec l'AO démo BSIC
               </button>
@@ -1869,7 +2556,7 @@ export default function PresalesPage() {
                     value={selectedAO.clientName}
                     onChange={e => updateAO(selectedAO.id, { clientName: e.target.value })}
                     placeholder="Saisir le nom du client..."
-                    className="text-xs text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-blue-400 focus:outline-none px-1 min-w-0 w-40 placeholder:text-slate-300"
+                    className="text-xs text-slate-600 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-[#0a2a43] focus:outline-none px-1 min-w-0 w-40 placeholder:text-slate-300"
                   />
                 </div>
               </div>
@@ -1892,8 +2579,8 @@ export default function PresalesPage() {
             {/* Loading */}
             {selectedAO.status === "scoring" && (
               <div className="flex-1 flex flex-col items-center justify-center gap-5">
-                <div className="w-16 h-16 rounded-2xl bg-blue-50 flex items-center justify-center">
-                  <Loader2 size={32} className="animate-spin text-blue-500" />
+                <div className="w-16 h-16 rounded-xl bg-[#eef2f7] flex items-center justify-center">
+                  <Loader2 size={32} className="animate-spin text-[#0a2a43]" />
                 </div>
                 <div className="text-center">
                   <p className="font-semibold text-slate-700">Analyse de l'appel d'offres en cours...</p>
@@ -1905,7 +2592,7 @@ export default function PresalesPage() {
             {/* Error */}
             {selectedAO.status === "error" && (
               <div className="flex-1 flex flex-col items-center justify-center gap-5 p-8 text-center">
-                <div className="w-14 h-14 rounded-2xl bg-red-50 flex items-center justify-center">
+                <div className="w-14 h-14 rounded-xl bg-red-50 flex items-center justify-center">
                   <XCircle size={28} className="text-red-400" />
                 </div>
                 <div className="space-y-2 max-w-md">
@@ -1933,7 +2620,7 @@ export default function PresalesPage() {
                       }}
                       className={cn(
                         "px-3 py-1 rounded-full text-xs font-medium transition-colors",
-                        viewStep <= 4 ? "bg-blue-600 text-white shadow-sm" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                        viewStep <= 4 ? "bg-[#0a2a43] text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
                       )}
                     >
                       Phase 1 — Analyse & Décision
@@ -1945,7 +2632,7 @@ export default function PresalesPage() {
                       }}
                       className={cn(
                         "px-3 py-1 rounded-full text-xs font-medium transition-colors",
-                        viewStep >= 5 ? "bg-blue-600 text-white shadow-sm" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                        viewStep >= 5 ? "bg-[#0a2a43] text-white" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
                       )}
                     >
                       Phase 2 — Offre & Soumission

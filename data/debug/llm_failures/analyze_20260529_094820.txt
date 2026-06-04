@@ -1,0 +1,138 @@
+=== Étape : analyze ===
+=== Exception : JSONDecodeError: Expecting ',' delimiter: line 128 column 6 (char 13502) ===
+=== Longueur réponse : 14577 chars ===
+=== Raw response (complet) ===
+```json
+{
+  "criteria": [
+    {
+      "id": "exp_societe",
+      "estimated_score": 2,
+      "risk_level": "CRITIQUE",
+      "rationale": "Nos références RAG montrent uniquement des prestations en gestion financière/comptable (MCI CARE) et attestations de bonne fin pour deux sociétés (Neurones Tech, Africa Projet Management) sans lien explicite avec déploiements Commvault, sauvegarde de données, cyber-résilience ou infrastructure IT. Aucune preuve d'expérience sur solutions de backup/recovery bancaires ou multi-sites UEMOA. Le profil ne démontre pas 5 ans minimum sur le marché IT/sauvegarde requis par l'AO.",
+      "sources_ged": [
+        "Offre_Technique_MCI_CARE.docx",
+        "ND - PROSUMA - ABE - PROSUMA.docx",
+        "ND - OCI - 07 ABE APM.pdf"
+      ]
+    },
+    {
+      "id": "ref_similaires",
+      "estimated_score": 0,
+      "risk_level": "CRITIQUE",
+      "rationale": "L'AO demande minimum 5 références attestations de bonne fin sur projets similaires (Commvault, sauvegarde poste/serveurs, cyber-résilience, WORM, ransomware) réalisées dans les 3 dernières années. Nos RAG contiennent 2 ABE génériques sans détail technique, sans mentionner Commvault, appliances backup, déduplication, DR, immutabilité ou déploiements bancaires multi-filiales. Zéro conformité.",
+      "sources_ged": [
+        "ND - PROSUMA - ABE - PROSUMA.docx",
+        "ND - OCI - 07 ABE APM.pdf"
+      ]
+    },
+    {
+      "id": "profils_cles",
+      "estimated_score": 0,
+      "risk_level": "CRITIQUE",
+      "rationale": "L'AO exige CVs détaillés de directeur projet, chef projet, consultants Commvault certifiés, architectes, ingénieurs sécurité/réseau avec expérience confirmée 3+ ans en projets similaires. Aucun CV, profil, certification ou compétence Commvault/backup/DR documentés dans nos RAG. La caution provisoire (15M FCFA) ne peut être validée sans équipe identifiée.",
+      "sources_ged": []
+    },
+    {
+      "id": "methodologie",
+      "estimated_score": 0,
+      "risk_level": "CRITIQUE",
+      "rationale": "L'AO demande méthodologie projet détaillée : gestion des risques, planification, matrice RACI, gouvernance multi-filiales autonomes, phasage (cadrage, analyse, déploiement, formation). Nos RAG contiennent uniquement fragments de processus comptable sans cadrage IT, gestion de projet Commvault, ou coordination inter-sites bancaires UEMOA.",
+      "sources_ged": []
+    },
+    {
+      "id": "planning",
+      "estimated_score": 0,
+      "risk_level": "CRITIQUE",
+      "rationale": "L'AO exige planning détaillé par site (ABI + 9 filiales), délais mobilisation, phasage réaliste avec jalons formation/recette/production, et capacité à gérer 10 sites autonomes simultanément. Aucun planning, chronogramme ou calendrier de déploiement Commvault fourni dans nos RAG.",
+      "sources_ged": []
+    },
+    {
+      "id": "certifications",
+      "estimated_score": 0,
+      "risk_level": "CRITIQUE",
+      "rationale": "L'AO exige certifications techniques validées : Chef projet PMP/équivalent (3 pts), Architecte Commvault certifié (5 pts), Ingénieur sécurité/réseau (3 pts), nombre total de certifiés Commvault (4 pts). Nos RAG ne mentionnent aucune certification IT, Commvault, PMP, architecte backup ou sécurité informatique.",
+      "sources_ged": []
+    },
+    {
+      "id": "qualite_offre",
+      "estimated_score": 1,
+      "risk_level": "CRITIQUE",
+      "rationale": "L'AO demande offre technique conforme avec : schémas architectures Variantes 1 & 2, dimensionnement RAM/CPU, WORM/immutabilité, ransomware, MFA, compliance réglementaire bancaire, tableau conformité Annexe 7 complété, datasheet appliances Commvault, pricing TCO 5 ans détaillé, engagement éditeur. Nos RAG montrent fragmentairement une offre comptable sans trace technique Commvault, sécurité crypto, ou architecture backup.",
+      "sources_ged": [
+        "Offre_Technique_MCI_CARE.docx"
+      ]
+    }
+  ],
+  "gaps_analysis": "Écarts critiques et bloquants identifiés : (1) Aucune expertise documentée sur Commvault, sauvegarde de données, déduplication, ou cyber-résilience bancaire. Nos références (gestion comptable, finance) n'ont aucun lien avec infrastrucure IT, backup/recovery ou virtualisation. (2) Absence totale de 5 références clients Commvault/backup/ransomware du secteur bancaire UEMOA ; les 2 ABE fournies sont génériques et non-pertinentes. (3) Pas de ressources nommées : CVs manquants pour directeur, chef projet, architecte Commvault certifié, ingénieur sécurité ; aucune certification PMP, Commvault Architecture, ou Security+ documentée. (4) Méthodologie projet absente : pas de gouvernance multi-filiales autonomes, pas de matrice RACI IT, pas de phasage cadrage/déploiement/formation détaillé, pas de gestion des risques IT spécifique. (5) Planning vide : aucun chronogramme pour 10 sites bancaires, aucun jalons recette/formation/production, aucun soutien éditeur Commvault formalisé. (6) Offre technique non-conforme : pas de schémas Variantes 1 (Appliance) & 2 (Modulaire), pas de dimensionnement RAID/NVMe/CPU détaillé, pas de tableau WORM/MFA/scan immuabilité, pas de pricing TCO 5 ans par filiale avec renouvellements licences annuels. (7) Capacité financière non validée : aucun bilan 3 ans, CA, solvabilité bancaire, ou assurance RC pour déploiements 10 sites. (8) Absence engagement constructeur Commvault et design review pré-production obligatoire pour environnements >100TB.",
+  "strengths": [
+    "Présence documentée de deux attestations de bonne fin (PROSUMA, OCI) prouvant exécution contrats antérieurs",
+    "Expérience avérée en gestion financière et comptable (MCI CARE) montrant rigueur administrative",
+    "Contacts clients identifiés (N'Goran PROSUMA, Kablan OCI) accessibles pour vérification références"
+  ],
+  "risks": [
+    {
+      "label": "Absence totale de certifications techniques Commvault / Backup / Security",
+      "criticite": "BLOQUANT",
+      "pourquoi": "L'AO note 15 pts sur 100 (offre tech) sur base certifications obligatoires : Chef projet PMP (3 pts), Architecte Commvault (5 pts), Ingénieur sécurité (3 pts), certifiés globaux Commvault (4 pts). Sans ces certifications, score technique < 70 seuil éliminatoire Phase 2. Éditeur Commvault validera ou refusera escalade support.",
+      "mitigation": "Récrutement immédiat (semaine 1) ou sous-traitance certifiée d'un Commvault Certified Architect (CCA) agréé éditeur avec CV + certificat officiel Commvault, minimum 3 ans déploiements Commvault Complete Backup & Recovery en environnement bancaire UEMOA. Formaliser engagement éditeur Commvault (obligation AO 4.3) incluant support Design Review pré-production et escalade incident P1.",
+      "items_affected": [
+        "profils_cles",
+        "certifications",
+        "qualite_offre"
+      ]
+    },
+    {
+      "label": "Zéro références Commvault / backup / ransomware bancaires 3 derniers ans",
+      "criticite": "BLOQUANT",
+      "pourquey": "L'AO scorage références : 5 ABE = 10 pts, 3-5 = 7 pts, 1-3 = 4 pts, 0 = éliminatoire (Phase 1). Nos 2 ABE (MCI CARE gestion compta, PROSUMA/OCI ATT génériques) ne couvrent pas sauvegarde, WORM, immutabilité, ransomware ou infra Commvault. Risque rejet Phase 1 avant évaluation technique si commission juge ABE non-pertinentes.",
+      "mitigation": "Constituer portefeuille partenaire technologique : Identifier 3-5 clients bancaires ou assurances UEMOA (ou proches : Guinée, Sénégal) ayant déployé Commvault disque ou tape 2022-2025, obtenir attestations signées détaillant (1) environnement (TB capacité, VM, postes), (2) modules déployés (WORM, ransomware, DR), (3) délai réalisation, (4) satisfaction. Délai : avant J-10 soumission. Alternativement : partenariat réseau avec intégrateur Commvault UEMOA (p.ex. Axces, Wavenet, CGI) et co-signature offre avec leur références.",
+      "items_affected": [
+        "exp_societe",
+        "ref_similaires"
+      ]
+    },
+    {
+      "label": "Méthodologie projet et gouvernance multi-filiales autonomes non documentées",
+      "criticite": "BLOQUANT",
+      "pourquoi": "L'AO note 10 pts méthodologie sur gestion risques, planning réaliste, matrice RACI. 10 sites bancaires autonomes (pas mutualisation inter-sites) = complexité gouvernance élevée. Absence document risques IT, phasage site-par-site, ou RACI dédié entrainera perte 10 pts et note technique < 70 éliminatoire.",
+      "mitigation": "Produire avant offre (J-5) document méthodologie 5-10 pages : (1) Gouvernance : CoDir projet (prestataire + ABI), comité steering filiales, SOP escalade incidents; (2) Gestion risques : Registre 15+ risques IT identifiés (retard livraison appliance, incompatibilité réseau filiales, absence IT local, formation insuffisante) avec score impact/probabilité et mitigation concrète; (3) RACI : matrice responsabilités prestataire/ABI/Commvault par phase (cadrage, déploiement, support); (4) Phasage : Phase 0 (Kick-off ABI), Phase 1 (ABI + BACI), Phase 2 (7 autres filiales en parallèle vagues 2 mois), Phase 3 (Tape library optionnel + maintenance Y1). Inclure templates rapports avancement hebdomadaires.",
+      "items_affected": [
+        "methodologie",
+        "planning"
+      ]
+    },
+    {
+      "label": "Incapacité à fournir pricing TCO 5 ans conforme (8 variantes × 10 filiales = 80 lignes)",
+      "criticite": "CRITIQUE",
+      "pourquey": "Bordereau des prix exige : 8 variantes (V1-A-UP/US/CP/CS, V2-LSB-UP/US/CP/CS) × 10 filiales × tarification par année 1-5 (maintenance renouvellements licences) = >100 entrées. Absence de tarif Commvault, appliance, stockage, services pro, ou TCO détaillé élimine Phase 3 (evaluation technico-financière). Budget AO non estimé publiquement; oubli pricing = disqualification.",
+      "mitigation": "Obtenir cotations partenaires commerciaux Commvault et fournisseurs appliance/stockage homologués (p.ex. Dell EMC, Lenovo, HPE) avant J-10 : (1) Licensing Commvault par utilisateur et par capacité, modes perpétuel et souscription 3 ans; (2) Appliance intégrée ou serveur dédié + baie NAS (BACI = 150TB, autres = 100TB); (3) Services pro hourly rate × nombre jours par site (cadrage 3j, déploiement 5j, formation 2j); (4) Maintenance annuelle + renouvellements Y2-Y5; (5) Tape library LTO-9 (2 lecteurs) + cartouches option. Complter Annexe 6 (décomposition coûts) et Annexe 5 (bordereau prix) avec TCO 5 ans consolidated par filiale. Intégrer contrats fournisseurs comme pièces jointes offre.",
+      "items_affected": [
+        "qualite_offre"
+      ]
+    },
+    {
+      "label": "Absence plans détaillés de déploiement (14 phases, 10 sites, timing resserré AO)",
+      "criticite": "CRITIQUE",
+      "pourquoi": "L'AO exige planning détaillé par site (point 3.6, 4.3). AO émise 18 février 2026 pour livraison/mise en production dans délai compétitif (probablement 6-12 mois). 10 sites, 2 variantes chacun (Appliance optionnel, Modulaire obligatoire) → coordination critique. Aucun Gantt, calendrier ou jalons proposés = perte confiance et risque dépassement délai > 0.5% pénalité jour.",
+      "mitigation": "Construire planning MS Project détaillé : (1) Phase -1 (1 mois) : Commande appliances/serveurs/baies, formation équipes Commvault, préparation environnement LACP/VLAN; (2) Phase 0 (2 sem) : Kick-off ABI + cadrage filiales, collecte documentations existantes, validation architecture cible; (3) Phase 1 (6 sem) : Déploiement ABI + BACI en parallèle (appliance provisioning 2 sem, config Commvault 2 sem, tests recette 1 sem, formation admin 1 sem); (4) Phase 2 (8 sem) : 7 autres filiales vagues de 2 sites/2 sem chacune; (5) Phase 3 (4 sem) : Tape library LTO (option), support post-prod Year 1. Inclure jalons recette formels, sign-off client, cuttover. Marger délais réseau UEMOA (déplacements, logistique internationale).",
+      "items_affected": [
+        "planning",
+        "methodologie"
+      ]
+    },
+    {
+      "label": "Non-conformité technique probable : absence tableaux Variantes 1 & 2, schémas architecture, dimensionnement",
+      "criticite": "BLOQUANT",
+      "pourquey": "L'AO section 4.8 : tableau conformité obligatoire (Annexe 7), schémas architecture logique/physique, dimensionnement CPU/RAM/RAID justifié, appliance proposée avec specs mémoire cache ≥256GB (128 BAGB), NVMe 1.92TB, 10GbE LACP. Nos RAG ne contiennent aucun schéma réseau, pas de propositions appliances spécifiques, pas de justifications dimensionnement. Phase 2 rejet quasi-certain pour non-conformité.",
+      "mitigation": "Rédiger documentation technique conforme Annexe 7 (Structuration technique) : (1) Présentation générale (historique partenariat Commvault, certifications éditeur); (2) Schéma architecture logique : CommServe centralisé, MediaAgents par site, stockage disque + réplica distante WORM, tape LTO pour archiv 7-10 ans, flux chiffrage TLS 1.2; (3) Schéma physique Variante 1 (appliance intégrée par filiale, 4U rack) vs Variante 2 (serveur dédié 2U + baie NAS modulaire 3U); (4) Dimensionnement détaillé : BACI 150TB front-end → RAM MediaAgent ≥256GB, CPU 2×Xeon 16c, NVMe cache 2×1.92TB, stockage SAS 150TB RAID6 ou RAID10 selon RTO; (5) Justifications : compression 3-4:1 + dédup 5-10:1 estimées, croissance 20% Y1-Y5, pré-production Design Review Commvault obligatoire > 100TB; (6) Tableau conformité Annexe 7 complété ligne-par-ligne (WORM natif OUI, MFA LDAP OUI, ransomware detection OUI, etc). Joindre datasheets constructeur appliance/baie, certif Commvault compatibility.",
+      "items_affected": [
+        "qualite_offre",
+        "profils_cles"
+      ]
+    },
+    {
+      "label": "Risque non-qualification Phase 1 (dossier administratif incomplet ou financier <6/10)",
+      "criticite": "CRITIQUE",
+      "pourquoi": "Phase 1 analyse préalable : dossier administratif (21 pièces obligatoires : statuts, organigramme, bilan 3 ans, attestations fiscales, assurances RC/Multirisque, caution 15M FCFA) + capacité financière (scoring ratios, solvabilité, gestion dettes >6/10 obligatoire pour passer Phase 2). Absence d'une pièce = élimination directe. Nos RAG ne montrent pas documents administratifs, financiers ou assurantiels d'une entité IT compétente.",
+      "mitigation": "Constituer dossier administratif complet avant J-5 soumission : (1) Statuts SARL/EIRL IT, organigramme avec directeur, responsable IT, CFO; (2) Bilans 3 ans (2023-2025 projeté) montrant CA stable > 500 M FCFA et croissance IT (+20% Y2); (3) Attestations fiscales/sociales à jour (CIF, CNSS, TVA validés); (4) Assurance RC Civile ≥500 M FCFA et Multirisque couvrant équipements IT; (5) Caution bancaire irrévocable 15M FCFA (modèle Annexe 3), valid

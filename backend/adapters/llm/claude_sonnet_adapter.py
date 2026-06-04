@@ -5,7 +5,7 @@ from typing import AsyncIterator
 import anthropic
 import tiktoken
 
-from core.ports.llm_gateway import LLMGateway
+from core.ports.llm_gateway import LLMGateway, OutputTruncatedError
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -24,14 +24,26 @@ class ClaudeSonnetAdapter(LLMGateway):
         self._model = settings.sonnet_model
         self._encoder = tiktoken.get_encoding("cl100k_base")
 
-    async def generate(self, system: str, user: str, max_tokens: int = 4096) -> str:
+    async def generate(
+        self, system: str, user: str, max_tokens: int = 4096,
+        raise_on_truncation: bool = False,
+    ) -> str:
         response = await self._client.messages.create(
             model=self._model,
             max_tokens=max_tokens,
             system=[{"type": "text", "text": system, "cache_control": _SYSTEM_CACHE_CONTROL}],
             messages=[{"role": "user", "content": user}],
         )
-        return response.content[0].text
+        text = response.content[0].text
+        if response.stop_reason == "max_tokens":
+            logger.warning(
+                "Réponse Claude Sonnet TRONQUÉE (stop_reason=max_tokens, budget=%d tokens). "
+                "Le contenu est incomplet — augmenter max_tokens pour cette génération.",
+                max_tokens,
+            )
+            if raise_on_truncation:
+                raise OutputTruncatedError(partial_text=text, max_tokens=max_tokens)
+        return text
 
     async def stream(self, system: str, user: str, max_tokens: int = 4096) -> AsyncIterator[str]:
         async with self._client.messages.stream(
@@ -43,8 +55,14 @@ class ClaudeSonnetAdapter(LLMGateway):
             async for text in stream.text_stream:
                 yield text
 
-    async def extract(self, prompt: str, text: str, max_tokens: int = 1024) -> str:
-        return await self.generate(system=prompt, user=text, max_tokens=max_tokens)
+    async def extract(
+        self, prompt: str, text: str, max_tokens: int = 1024,
+        raise_on_truncation: bool = False,
+    ) -> str:
+        return await self.generate(
+            system=prompt, user=text, max_tokens=max_tokens,
+            raise_on_truncation=raise_on_truncation,
+        )
 
     async def classify(self, text: str, categories: list[str], default: str | None = None) -> str:
         system = f"Réponds UNIQUEMENT avec l'une de ces catégories : {', '.join(categories)}."

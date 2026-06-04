@@ -12,20 +12,49 @@ class AgentStep:
     assistant_message: dict   # message assistant en format Anthropic (prêt à append aux messages)
 
 
+class OutputTruncatedError(RuntimeError):
+    """Sortie coupée net au plafond `max_tokens` (stop_reason=max_tokens).
+
+    Tout JSON aval est alors invalide. Levée UNIQUEMENT quand l'appelant passe
+    `raise_on_truncation=True` (les appels qui tolèrent une réponse partielle —
+    chat, classification — ne la déclenchent pas). `partial_text` porte la sortie
+    incomplète pour un éventuel parse de récupération.
+    """
+
+    def __init__(self, partial_text: str, max_tokens: int):
+        super().__init__(f"Sortie LLM tronquée au plafond de {max_tokens} tokens")
+        self.partial_text = partial_text
+        self.max_tokens = max_tokens
+
+
 class LLMGateway(ABC):
     """Interface abstraite pour tout LLM — logique métier indépendante du fournisseur."""
 
     @abstractmethod
-    async def generate(self, system: str, user: str, max_tokens: int = 1024) -> str:
-        """Génère une réponse complète."""
+    async def generate(
+        self, system: str, user: str, max_tokens: int = 1024,
+        raise_on_truncation: bool = False,
+    ) -> str:
+        """Génère une réponse complète.
+
+        Si `raise_on_truncation=True` et que la sortie est coupée au plafond
+        `max_tokens`, lève `OutputTruncatedError` au lieu de renvoyer un texte
+        incomplet silencieusement.
+        """
 
     @abstractmethod
     async def stream(self, system: str, user: str, max_tokens: int = 1024) -> AsyncIterator[str]:
         """Génère une réponse en streaming (token par token)."""
 
     @abstractmethod
-    async def extract(self, prompt: str, text: str, max_tokens: int = 512) -> str:
-        """Extrait des informations structurées d'un texte."""
+    async def extract(
+        self, prompt: str, text: str, max_tokens: int = 512,
+        raise_on_truncation: bool = False,
+    ) -> str:
+        """Extrait des informations structurées d'un texte.
+
+        `raise_on_truncation` : cf. `generate` (lève `OutputTruncatedError` si coupé).
+        """
 
     @abstractmethod
     async def classify(self, text: str, categories: list[str], default: str | None = None) -> str:
