@@ -274,12 +274,9 @@ export default function Dashboard() {
           >
             <AlertTriangle className="w-4 h-4 text-red-500 shrink-0 mt-0.5" />
             <div>
-              <p className="text-sm font-semibold text-red-800">Backend indisponible</p>
+              <p className="text-sm font-semibold text-red-800">Service temporairement indisponible</p>
               <p className="text-xs text-red-600 mt-0.5">
-                Lancez{" "}
-                <code className="bg-red-100 px-1 py-0.5 rounded font-mono">uvicorn main:app --reload</code>{" "}
-                dans{" "}
-                <code className="bg-red-100 px-1 py-0.5 rounded font-mono">backend/</code>
+                Le serveur ne répond pas. Réessayez dans quelques instants ou contactez l&apos;administrateur.
               </p>
             </div>
           </div>
