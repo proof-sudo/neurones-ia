@@ -6,7 +6,7 @@ python-multipart==0.0.12
 # LLM
 anthropic==0.40.0
 openai==1.57.0
-tiktoken==0.8.0
+tiktoken==0.13.0
 
 # RAG
 langchain==0.3.9

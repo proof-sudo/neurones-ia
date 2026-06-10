@@ -71,25 +71,42 @@ _ANALYZE_OUTPUT_BUDGET_TOKENS = 20_000
 _FRAME_OUTPUT_BUDGET_TOKENS = 6_000
 _REQUIREMENTS_OUTPUT_BUDGET_TOKENS = 16_000
 
-_EXTRACT_SYSTEM = """Tu es un expert en analyse d'appels d'offres IT.
+_EXTRACT_SYSTEM = """Tu es un extracteur d'appels d'offres IT. Ton rôle est d'EXTRAIRE, pas de RÉSUMER.
 
-Analyse ce document et extrais les informations importantes. Retourne UN JSON valide :
+OBJECTIF : restituer chaque exigence avec son niveau de détail D'ORIGINE. La valeur métier est
+dans les SPÉCIFICITÉS (domaine exact, chiffres, durées, certifications, technologies nommées),
+pas dans une formulation générale.
+
+RÈGLE ABSOLUE — fidélité au texte (quasi-verbatim) :
+- Garde les TERMES EXACTS de l'AO. Ne remplace jamais un terme précis par un terme générique.
+  ✗ "ingénieurs expérimentés"   ✓ "1 ingénieur étude (5+ ans d'exp.)", "1 spécialiste GLPI certifié"
+  ✗ "personnel qualifié"        ✓ "chef de projet BAC+5 (5+ ans)"
+  ✗ "bonne expérience"          ✓ "minimum 3 références prouvées par attestations de bonne exécution"
+- Conserve TOUT chiffre, durée, seuil, niveau et certification cités : "BAC+5", "5+ ans",
+  "3 références", "RTO 8h", "RPO 4h", "12 mois", noms de normes/lois (Sapin II, Convention ONU)...
+- Ne FUSIONNE jamais deux exigences distinctes en une seule phrase fourre-tout : un item = une exigence.
+- N'INVENTE rien : aucune compétence, certification, technologie, domaine ou chiffre absent du texte.
+  Si l'AO reste vague sur un point, reste vague AUSSI (ne comble pas avec ta culture générale).
+
+Retourne UN JSON valide :
 {
   "key_points": [
     {"label": "Nom court du point", "value": "valeur ou description concise"}
   ],
-  "criteres_selection": ["critère de sélection explicite"],
-  "besoins": ["besoin fonctionnel ou technique exprimé"],
-  "prerequis": ["prérequis ou qualification obligatoire"],
-  "ressources_demandees": ["profil ou ressource humaine demandée"],
-  "points_vigilance": ["risque, contrainte ou point d'attention"],
+  "criteres_selection": ["critère d'évaluation/sélection, avec ses spécificités et chiffres"],
+  "besoins": ["besoin fonctionnel ou technique exprimé, détaillé"],
+  "prerequis": ["prérequis ou qualification obligatoire, avec niveau/durée/nombre exacts"],
+  "ressources_demandees": ["profil RH demandé avec intitulé exact, spécialité, niveau, expérience"],
+  "points_vigilance": ["risque, contrainte ou point d'attention concret"],
   "date_remise": "date limite de remise ou chaîne vide"
 }
 
 Pour key_points : identifie 5 à 10 points CRITIQUES propres à CE document.
 Choisis librement les labels selon ce que tu trouves — budget, délai, client, secteur, technologie principale,
 périmètre géographique, volume, certification requise, type de marché, clause particulière, etc.
-Adapte-toi strictement au contenu : n'invente rien qui n'est pas dans le texte.
+
+Pour ressources_demandees : un item PAR profil distinct, avec son intitulé exact (ex: "Ingénieur étude",
+"Spécialiste GLPI"), jamais un terme collectif comme "les ingénieurs" ou "l'équipe technique".
 
 Réponds UNIQUEMENT avec le JSON valide, sans balises markdown."""
 
@@ -228,9 +245,21 @@ annexes numérotées). Code/référence EXACT. N'invente aucune pièce génériq
 
 Réponds UNIQUEMENT avec le JSON valide, sans balises markdown."""
 
-_SUMMARY_SYSTEM = """Tu es un expert en avant-vente IT.
-Rédige un résumé structuré de cet appel d'offres en 3 à 5 phrases courtes et professionnelles.
-Couvre : contexte et objectif, périmètre technique, enjeux principaux.
+_SUMMARY_SYSTEM = """Tu es un expert en avant-vente IT. Rédige un résumé exécutif CONCRET de cet appel d'offres.
+
+OBJECTIF : un résumé qui DONNE LES FAITS, pas des généralités. Un lecteur doit savoir, dès la
+lecture, DE QUOI parle précisément ce marché — sans avoir à ouvrir le document.
+
+RÈGLE — concret avant tout :
+- NOMME les éléments précis du texte : solution/technologie (ex: GLPI, Commvault), client et
+  autorité contractante, périmètre chiffré (ex: 7 filiales, 6 pays), contraintes techniques
+  chiffrées (ex: RTO 8h, RPO 4h, haute disponibilité), durée, modèle d'évaluation (ex: 70/30).
+- Préfère TOUJOURS le terme exact au terme générique : "solution GLPI multi-filiales" plutôt que
+  "un outil de gestion" ; "authentification Azure AD/O365" plutôt que "une authentification".
+- N'INVENTE rien : ne cite que ce qui est dans le texte. Si une info n'y est pas, ne la mentionne pas.
+
+Rédige 4 à 6 phrases courtes et professionnelles couvrant : contexte et objectif, périmètre
+technique chiffré, enjeux/contraintes principaux, modalités d'évaluation si présentes.
 IMPORTANT : réponds en texte brut uniquement, sans markdown, sans titres, sans puces, sans caractères gras."""
 
 _ANALYSIS_SYSTEM = """Tu es un directeur commercial senior en IT.
@@ -1027,7 +1056,7 @@ class ScoringPipeline:
         return await self._llm.generate(
             system=_SUMMARY_SYSTEM,
             user=snippet,
-            max_tokens=400,
+            max_tokens=500,
         )
 
     _VALID_RISK_LEVELS = {"FAIBLE", "MODÉRÉ", "ÉLEVÉ", "CRITIQUE"}
