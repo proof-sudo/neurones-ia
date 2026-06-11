@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     retrieval_top_k: int = 10
     rerank_top_k: int = 5
     max_context_tokens: int = 3000
+    # Taille d'extrait conservée par chunk (chars). Un chunk fait ~600 mots (~4000 chars) :
+    # un excerpt trop court (ex. 300) ne laisse au LLM que ~8% du CV/offre → notation sur des bribes.
+    excerpt_chars: int = 2500
+
+    # OCR PDF
+    ocr_max_pages: int = 40           # cap pages OCR (perf) — au-delà, WARNING explicite
+    ocr_min_chars_per_page: int = 80  # en-dessous, la couche texte est jugée trop maigre → OCR
 
     # Chat
     max_history_turns: int = 6

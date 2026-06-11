@@ -24,6 +24,7 @@ class Container:
         self._docx_parser = None
         self._ged_storage = None
         self._doc_registry = None
+        self._warmup_task = None  # référence forte : sinon la tâche warm-up peut être GC avant exécution
         self._crm_repo = None
         self._odoo_adapter = None
         self._cache = None
@@ -60,7 +61,10 @@ class Container:
             except Exception as exc:
                 logger.warning("Warm-up embeddings local échoué (non bloquant) : %s", exc)
 
-        asyncio.create_task(_load())
+        # Garder une référence forte : asyncio ne tient qu'une réf faible aux tâches, une
+        # tâche sans réf peut être garbage-collectée avant de tourner (d'où le warm-up qui
+        # ne se déclenchait qu'à la 1ʳᵉ requête au lieu du démarrage).
+        self._warmup_task = asyncio.create_task(_load())
 
     async def shutdown(self):
         if self._scheduler:

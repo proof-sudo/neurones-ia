@@ -2,6 +2,7 @@ import logging
 from typing import Optional
 
 import chromadb
+from chromadb.config import Settings
 
 from core.ports.vector_store import VectorStore
 from core.domain.document import Chunk, Source, DocumentType
@@ -16,7 +17,12 @@ class ChromaDBAdapter(VectorStore):
     """ChromaDB local pour le MVP — remplaçable par pgvector sans toucher les use cases."""
 
     def __init__(self):
-        self._client = chromadb.PersistentClient(path=str(settings.chromadb_path))
+        # anonymized_telemetry=False : coupe le posthog interne de Chroma (incompatible avec
+        # cette version → spam d'ERROR 'capture() takes 1 positional argument' à chaque requête).
+        self._client = chromadb.PersistentClient(
+            path=str(settings.chromadb_path),
+            settings=Settings(anonymized_telemetry=False),
+        )
         self._collection = self._get_or_create_collection()
         # Cache le count pour éviter un full-scan metadata à chaque recherche
         self._approx_count: int = self._collection.count()
@@ -99,7 +105,7 @@ class ChromaDBAdapter(VectorStore):
                     doc_id=meta["doc_id"],
                     filename=meta["filename"],
                     doc_type=DocumentType(meta.get("doc_type", "unknown")),
-                    excerpt=doc[:300],
+                    excerpt=doc[: settings.excerpt_chars],
                     relevance_score=1.0 - dist,
                 )
             )
@@ -115,3 +121,22 @@ class ChromaDBAdapter(VectorStore):
     async def get_doc_ids(self) -> list[str]:
         results = self._collection.get(include=["metadatas"])
         return list({m["doc_id"] for m in results["metadatas"]})
+
+    async def get_by_chunk_ids(self, chunk_ids: list[str]) -> list[Source]:
+        """Récupère des chunks par leur id exact. Sert à résoudre en Source les documents
+        trouvés UNIQUEMENT par BM25 (absents du top-k dense) pour un vrai hybride."""
+        if not chunk_ids:
+            return []
+        results = self._collection.get(ids=chunk_ids, include=["documents", "metadatas"])
+        sources = []
+        for doc, meta in zip(results["documents"], results["metadatas"]):
+            sources.append(
+                Source(
+                    doc_id=meta["doc_id"],
+                    filename=meta["filename"],
+                    doc_type=DocumentType(meta.get("doc_type", "unknown")),
+                    excerpt=(doc or "")[: settings.excerpt_chars],
+                    relevance_score=0.0,  # le score RRF est attribué par la fusion
+                )
+            )
+        return sources

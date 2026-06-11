@@ -64,6 +64,17 @@ _ANALYZE_INPUT_BUDGET_TOKENS = 120_000
 # JSON le plus volumineux (grille scorée + risques + écarts + préalables) : 20K met le pire
 # cas dense très au large, là où 7000 le tronquait en silence → faux score=50.
 _ANALYZE_OUTPUT_BUDGET_TOKENS = 20_000
+
+# Température 0 sur TOUTES les étapes d'extraction et de notation : ce sont des tâches
+# factuelles/structurées où l'on veut la REPRODUCTIBILITÉ (même AO → même grille → même
+# score). Le défaut fournisseur (1.0) faisait osciller le score du même AO (ex. 9 vs 25).
+_TEMP_DETERMINISTIC = 0.0
+
+# Cohérence score ↔ recommandation : le score plafonne l'optimisme de la reco (un GO à
+# 25/100 est incohérent). Le score ≥ _GO_MIN → GO autorisé ; ≥ _CONDITIONAL_MIN → CONDITIONAL ;
+# en-dessous → NO_BID. On garde toujours la reco LLM si elle est PLUS prudente que le plafond.
+_GO_MIN_SCORE = 60
+_CONDITIONAL_MIN_SCORE = 35
 # Étape 1b scindée en deux extractions parallèles (sinon un seul JSON — identité+calendrier+
 # grille+annexes+profils détaillés+seuils+financier — tronquerait sur AO dense type BAD) :
 #  - cadre : identité + calendrier + modalités + grille (volume modéré)
@@ -506,9 +517,12 @@ class ScoringPipeline:
         # Étape 4 & 5 : Analyse + Score. Contexte RAG = CV de l'équipe + projets similaires,
         # pour que les CV pèsent dans la notation des critères RH/profils (sinon le LLM note
         # ces critères sans aucune preuve CV → sources_ged vides).
+        # Budgets larges : l'étape analyse a 120K tokens d'entrée et l'AO n'en pèse que ~38K,
+        # on peut donc envoyer le contenu réel des CV/offres (et pas des bribes) pour que les
+        # critères RH/certifications soient notés sur du concret (cf. faille D).
         cv_context, project_context = await asyncio.gather(
-            self._rag_engine.build_context(cv_sources, max_tokens=1500),
-            self._rag_engine.build_context(project_sources, max_tokens=2500),
+            self._rag_engine.build_context(cv_sources, max_tokens=5000),
+            self._rag_engine.build_context(project_sources, max_tokens=5000),
         )
         rag_parts = []
         if cv_context:
@@ -607,7 +621,10 @@ class ScoringPipeline:
         snippet = _truncate_by_tokens(ao_text, self._llm, _EXTRACT_INPUT_BUDGET_TOKENS, step="extract")
         # 5500 tokens : 10 key_points (valeurs longues) + 5 listes thématiques (jusqu'à ~15 items
         # chacune sur AO dense type ABI) + date_remise. Gate : test_extract_output_budget.py.
-        raw = await self._llm.extract(prompt=_EXTRACT_SYSTEM, text=snippet, max_tokens=5500)
+        raw = await self._llm.extract(
+            prompt=_EXTRACT_SYSTEM, text=snippet, max_tokens=5500,
+            temperature=_TEMP_DETERMINISTIC,
+        )
         empty_extra: dict = {
             "criteres_selection": [], "besoins": [], "prerequis": [],
             "ressources_demandees": [], "points_vigilance": [], "date_remise": "",
@@ -665,6 +682,7 @@ class ScoringPipeline:
             raw = await self._llm.extract(
                 prompt=_FRAME_SYSTEM, text=snippet,
                 max_tokens=_FRAME_OUTPUT_BUDGET_TOKENS, raise_on_truncation=True,
+                temperature=_TEMP_DETERMINISTIC,
             )
             data = json.loads(_clean_json(raw))
         except OutputTruncatedError as exc:
@@ -719,6 +737,7 @@ class ScoringPipeline:
             raw = await self._llm.extract(
                 prompt=_REQUIREMENTS_SYSTEM, text=snippet,
                 max_tokens=_REQUIREMENTS_OUTPUT_BUDGET_TOKENS, raise_on_truncation=True,
+                temperature=_TEMP_DETERMINISTIC,
             )
             data = json.loads(_clean_json(raw))
         except OutputTruncatedError as exc:
@@ -1053,10 +1072,13 @@ class ScoringPipeline:
 
     async def _step2_summarize(self, ao_text: str) -> str:
         snippet = _truncate_by_tokens(ao_text, self._llm, _SUMMARY_INPUT_BUDGET_TOKENS, step="summarize")
+        # 900 (était 500) : le résumé exécutif de 4-6 phrases concrètes sur un AO dense
+        # (type ABI) dépassait 500 tokens → tronqué en plein milieu.
         return await self._llm.generate(
             system=_SUMMARY_SYSTEM,
             user=snippet,
-            max_tokens=500,
+            max_tokens=900,
+            temperature=_TEMP_DETERMINISTIC,
         )
 
     _VALID_RISK_LEVELS = {"FAIBLE", "MODÉRÉ", "ÉLEVÉ", "CRITIQUE"}
@@ -1093,6 +1115,7 @@ class ScoringPipeline:
                 user=user_prompt,
                 max_tokens=_ANALYZE_OUTPUT_BUDGET_TOKENS,
                 raise_on_truncation=True,
+                temperature=_TEMP_DETERMINISTIC,
             )
         except OutputTruncatedError as exc:
             truncated = True
@@ -1142,8 +1165,18 @@ class ScoringPipeline:
         preconditions = self._parse_preconditions(data.get("preconditions"))
 
         # Score global = somme des scores estimés, normalisée sur 100 (cohérence intrinsèque).
-        total_max = sum(c.max_points for c in scored_criteria)
-        total_est = sum(c.estimated_score for c in scored_criteria)
+        # On ne somme QUE les critères feuilles : si la grille a des critères hiérarchiques
+        # (ex. '2' parent de '2.1','2.2'), le parent ET ses enfants sont tous deux extraits,
+        # ce qui doublerait les points (ex. total=145 au lieu de 100). On exclut donc les
+        # parents qui ont au moins un sous-critère chiffré. Repli sur l'ensemble si ce filtre
+        # vide le barème (grille non hiérarchique ou enfants à 0 point).
+        scoring_criteria = self._leaf_criteria(scored_criteria)
+        total_max = sum(c.max_points for c in scoring_criteria)
+        total_est = sum(c.estimated_score for c in scoring_criteria)
+        if total_max == 0:
+            scoring_criteria = scored_criteria
+            total_max = sum(c.max_points for c in scoring_criteria)
+            total_est = sum(c.estimated_score for c in scoring_criteria)
         if total_max > 0:
             score = max(0, min(100, round(100 * total_est / total_max)))
             score_basis = "GRILLE"
@@ -1169,6 +1202,26 @@ class ScoringPipeline:
                     "Aucune grille chiffrée NI score d'adéquation — score neutre 50 (INDISPONIBLE)",
                 )
 
+        # Cohérence score ↔ recommandation : un GO à 25/100 est contradictoire (le score et la
+        # reco sont produits séparément). On ramène la reco au plafond autorisé par le score.
+        coherent = self._coherent_recommendation(score, recommendation)
+        if coherent != recommendation:
+            logger.info(
+                "Recommandation LLM '%s' incohérente avec score=%d → ramenée à '%s'.",
+                recommendation.value, score, coherent.value,
+            )
+            recommendation = coherent
+
+        # Cohérence : les préalables conditionnent le passage CONDITIONAL → GO. Ils n'ont pas de
+        # sens pour un GO (on répond tel quel) ni un NO_BID (on ne répond pas). Si le LLM en
+        # renvoie quand même, on les écarte pour ne pas afficher de préalables sur un NO_BID/GO.
+        if recommendation != BidRecommendation.CONDITIONAL and preconditions:
+            logger.info(
+                "Recommandation %s avec %d préalable(s) — écartés (pertinents seulement en CONDITIONAL).",
+                recommendation.value, len(preconditions),
+            )
+            preconditions = []
+
         # Garde-fou : CONDITIONAL sans préalables → on flague, PAS de reprompt (dégradation gracieuse).
         preconditions_incomplete = recommendation == BidRecommendation.CONDITIONAL and not preconditions
         if preconditions_incomplete:
@@ -1191,6 +1244,40 @@ class ScoringPipeline:
             preconditions_incomplete=preconditions_incomplete,
             score_basis=score_basis,
         )
+
+    @staticmethod
+    def _coherent_recommendation(score: int, llm_reco: BidRecommendation) -> BidRecommendation:
+        """Plafonne la recommandation selon le score, sans jamais la rendre plus optimiste.
+
+        Le score borne l'optimisme (pas de GO sur un dossier faible), mais on respecte une
+        reco LLM PLUS prudente que le plafond (le LLM peut connaître un motif bloquant non
+        chiffré, ex. inéligibilité). Tue les incohérences type « 25/100 + GO ».
+        """
+        if score >= _GO_MIN_SCORE:
+            ceiling = BidRecommendation.GO
+        elif score >= _CONDITIONAL_MIN_SCORE:
+            ceiling = BidRecommendation.CONDITIONAL
+        else:
+            ceiling = BidRecommendation.NO_BID
+        order = {BidRecommendation.NO_BID: 0, BidRecommendation.CONDITIONAL: 1, BidRecommendation.GO: 2}
+        # min(reco, plafond) : on garde la plus prudente.
+        return ceiling if order[llm_reco] > order[ceiling] else llm_reco
+
+    @staticmethod
+    def _leaf_criteria(criteria: list[ScoringCriterion]) -> list[ScoringCriterion]:
+        """Retourne les critères feuilles : exclut tout critère parent d'un autre via son id.
+
+        Un critère d'id 'X' est parent si un autre critère a un id commençant par 'X.'
+        (ex. '2' parent de '2.1'). Évite le double comptage des points dans une grille
+        hiérarchique (section + sous-critères tous deux extraits depuis le tableau de notation).
+        """
+        ids = [c.id for c in criteria]
+
+        def _has_child(cid: str) -> bool:
+            prefix = cid + "."
+            return any(other != cid and other.startswith(prefix) for other in ids)
+
+        return [c for c in criteria if not _has_child(c.id)]
 
     def _merge_criteria_scores(
         self, criteria: list[ScoringCriterion], raw: object

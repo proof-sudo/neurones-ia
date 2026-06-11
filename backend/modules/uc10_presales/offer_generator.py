@@ -28,7 +28,7 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 from docx.shared import RGBColor
 
-from core.ports.llm_gateway import LLMGateway
+from core.ports.llm_gateway import LLMGateway, OutputTruncatedError
 from core.domain.offer import ScoringResult, OfferDraft
 from config.settings import settings
 from modules.uc10_presales.scoring_pipeline import _clean_json
@@ -613,7 +613,20 @@ class OfferGenerator:
             + "\n\nRessources demandées :\n"
             + "\n".join(f"- {r}" for r in scoring.ressources_demandees[:6])
         )
-        raw = await self._llm.generate(system=_SECTIONS_SYSTEM, user=user, max_tokens=3000)
+        # 6000 (était 3000) : les rubriques de l'offre (besoins + objectifs + présentation +
+        # fonctionnalités + modules + planning) dépassaient 3000 tokens → JSON coupé → toutes
+        # les sections retombaient sur le texte générique. raise_on_truncation pour le SAVOIR.
+        try:
+            raw = await self._llm.generate(
+                system=_SECTIONS_SYSTEM, user=user, max_tokens=6000, raise_on_truncation=True,
+                temperature=0.7,  # rédaction de l'offre : créativité conservée
+            )
+        except OutputTruncatedError as exc:
+            logger.error(
+                "Sections d'offre TRONQUÉES au plafond de %d tokens — relever si récurrent.",
+                exc.max_tokens,
+            )
+            raw = exc.partial_text  # on tente quand même un parse de récupération
         try:
             data = json.loads(_clean_json(raw))
         except Exception as exc:

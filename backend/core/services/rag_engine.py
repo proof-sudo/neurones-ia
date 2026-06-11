@@ -2,6 +2,7 @@ import asyncio
 import logging
 from typing import Optional
 
+from config.settings import settings
 from core.ports.vector_store import VectorStore
 from core.ports.sparse_search import SparseSearch
 from core.ports.embedder import Embedder
@@ -61,7 +62,14 @@ class RAGEngine:
             filter_metadata=filter_metadata,
         )
 
-        fused = self._reciprocal_rank_fusion(dense_results, sparse_results)
+        # Vrai hybride : un document trouvé UNIQUEMENT par BM25 (match lexical exact, ex.
+        # "Commvault") n'est pas dans le top-k dense. On résout son meilleur chunk en Source
+        # pour qu'il puisse remonter dans la fusion, au lieu d'être silencieusement jeté.
+        extra_sources = await self._resolve_sparse_only(
+            sparse_results, dense_results, filter_metadata
+        )
+
+        fused = self._reciprocal_rank_fusion(dense_results, sparse_results, extra_sources)
 
         # Dédoublonnage par filename
         seen_filenames: set[str] = set()
@@ -125,7 +133,9 @@ class RAGEngine:
         parts = []
         total = 0
         for src in sources:
-            excerpt = src.excerpt[:600]
+            # On garde l'excerpt quasi entier (un chunk ~600 mots) : le couper à 600 chars
+            # ne laissait au LLM que ~8% d'un CV/offre → notation sur des bribes.
+            excerpt = src.excerpt[: settings.excerpt_chars]
             entry = f"[{src.filename} | {src.doc_type.value}]\n{excerpt}"
             entry_tokens = len(entry.split())
             if total + entry_tokens > max_tokens:
@@ -134,10 +144,59 @@ class RAGEngine:
             total += entry_tokens
         return "\n\n---\n\n".join(parts)
 
+    @staticmethod
+    def _doc_id_of(chunk_id: str) -> str:
+        """Extrait le doc_id d'un chunk_id de la forme '<doc_id>_chunk_<n>'."""
+        parts = chunk_id.rsplit("_chunk_", 1)
+        return parts[0] if len(parts) == 2 else chunk_id
+
+    async def _resolve_sparse_only(
+        self,
+        sparse: list[tuple[str, float]],
+        dense: list[Source],
+        filter_metadata: Optional[dict],
+    ) -> list[Source]:
+        """Résout en Source les documents trouvés UNIQUEMENT par BM25 (absents du dense).
+
+        BM25 n'applique aucun filtre de métadonnée : on récupère le meilleur chunk de chaque
+        doc sparse-only via le vector store puis on filtre par doc_type (si demandé), pour ne
+        pas faire entrer des documents du mauvais type dans une recherche filtrée.
+        """
+        if not sparse:
+            return []
+        dense_doc_ids = {s.doc_id for s in dense}
+        # Meilleur chunk_id par doc_id côté sparse
+        best_chunk: dict[str, tuple[str, float]] = {}
+        for cid, score in sparse:
+            doc_id = self._doc_id_of(cid)
+            if doc_id in dense_doc_ids:
+                continue  # déjà couvert par le dense
+            cur = best_chunk.get(doc_id)
+            if cur is None or score > cur[1]:
+                best_chunk[doc_id] = (cid, score)
+        if not best_chunk:
+            return []
+
+        try:
+            resolved = await self._vector_store.get_by_chunk_ids(
+                [cid for cid, _ in best_chunk.values()]
+            )
+        except Exception as exc:
+            logger.debug("Résolution sparse-only échouée (%s) — hybride dégradé sur cette requête", exc)
+            return []
+
+        wanted_type = (filter_metadata or {}).get("doc_type")
+        if wanted_type:
+            resolved = [s for s in resolved if s.doc_type.value == wanted_type]
+        if resolved:
+            logger.debug("Hybride : %d doc(s) BM25-only réintégré(s)", len(resolved))
+        return resolved
+
     def _reciprocal_rank_fusion(
         self,
         dense: list[Source],
         sparse: list[tuple[str, float]],
+        extra: Optional[list[Source]] = None,
         k: int = 60,
     ) -> list[Source]:
         scores: dict[str, float] = {}
@@ -147,10 +206,14 @@ class RAGEngine:
             scores[src.doc_id] = scores.get(src.doc_id, 0) + 1 / (k + rank + 1)
             doc_map[src.doc_id] = src
 
+        # Documents trouvés uniquement par BM25, déjà résolus en Source : on les enregistre
+        # dans doc_map pour qu'ils soient éligibles au résultat final (ne pas les écraser).
+        for src in (extra or []):
+            doc_map.setdefault(src.doc_id, src)
+
         sparse_map: dict[str, float] = {}
         for cid, score in sparse:
-            parts = cid.rsplit("_chunk_", 1)
-            doc_id = parts[0] if len(parts) == 2 else cid
+            doc_id = self._doc_id_of(cid)
             sparse_map[doc_id] = max(sparse_map.get(doc_id, 0), score)
 
         for rank, (doc_id, _) in enumerate(sorted(sparse_map.items(), key=lambda x: -x[1])):

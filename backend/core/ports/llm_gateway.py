@@ -33,13 +33,16 @@ class LLMGateway(ABC):
     @abstractmethod
     async def generate(
         self, system: str, user: str, max_tokens: int = 1024,
-        raise_on_truncation: bool = False,
+        raise_on_truncation: bool = False, temperature: float | None = None,
     ) -> str:
         """Génère une réponse complète.
 
         Si `raise_on_truncation=True` et que la sortie est coupée au plafond
         `max_tokens`, lève `OutputTruncatedError` au lieu de renvoyer un texte
         incomplet silencieusement.
+
+        `temperature` : None = défaut du fournisseur. 0 = quasi-déterministe (extraction,
+        notation reproductibles) ; ~0.7 pour la rédaction créative (stratégie, offre).
         """
 
     @abstractmethod
@@ -49,11 +52,12 @@ class LLMGateway(ABC):
     @abstractmethod
     async def extract(
         self, prompt: str, text: str, max_tokens: int = 512,
-        raise_on_truncation: bool = False,
+        raise_on_truncation: bool = False, temperature: float | None = None,
     ) -> str:
         """Extrait des informations structurées d'un texte.
 
         `raise_on_truncation` : cf. `generate` (lève `OutputTruncatedError` si coupé).
+        `temperature` : cf. `generate` (None = défaut fournisseur).
         """
 
     @abstractmethod

@@ -480,7 +480,7 @@ export async function generateBidStrategy(
       decision_reason: decisionReason,
       partner: partner ?? null,
     }),
-  }, 120_000);
+  }, 240_000);  // 4 min : la stratégie Sonnet (8000 tokens) prend ~90-145s, +marge contention sync Odoo
   if (!response.ok) throw new Error(`Strategy error: ${response.status}`);
   return response.json();
 }

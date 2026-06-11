@@ -26,14 +26,17 @@ class ClaudeSonnetAdapter(LLMGateway):
 
     async def generate(
         self, system: str, user: str, max_tokens: int = 4096,
-        raise_on_truncation: bool = False,
+        raise_on_truncation: bool = False, temperature: float | None = None,
     ) -> str:
-        response = await self._client.messages.create(
+        kwargs = dict(
             model=self._model,
             max_tokens=max_tokens,
             system=[{"type": "text", "text": system, "cache_control": _SYSTEM_CACHE_CONTROL}],
             messages=[{"role": "user", "content": user}],
         )
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        response = await self._client.messages.create(**kwargs)
         text = response.content[0].text
         if response.stop_reason == "max_tokens":
             logger.warning(
@@ -57,11 +60,11 @@ class ClaudeSonnetAdapter(LLMGateway):
 
     async def extract(
         self, prompt: str, text: str, max_tokens: int = 1024,
-        raise_on_truncation: bool = False,
+        raise_on_truncation: bool = False, temperature: float | None = None,
     ) -> str:
         return await self.generate(
             system=prompt, user=text, max_tokens=max_tokens,
-            raise_on_truncation=raise_on_truncation,
+            raise_on_truncation=raise_on_truncation, temperature=temperature,
         )
 
     async def classify(self, text: str, categories: list[str], default: str | None = None) -> str:

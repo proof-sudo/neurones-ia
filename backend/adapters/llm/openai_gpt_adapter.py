@@ -25,13 +25,16 @@ class OpenAIGPTAdapter(LLMGateway):
 
     async def generate(
         self, system: str, user: str, max_tokens: int = 1024,
-        raise_on_truncation: bool = False,
+        raise_on_truncation: bool = False, temperature: float | None = None,
     ) -> str:
-        response = await self._client.chat.completions.create(
+        kwargs = dict(
             model=self._model,
             max_tokens=max_tokens,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
         )
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        response = await self._client.chat.completions.create(**kwargs)
         text = response.choices[0].message.content or ""
         if raise_on_truncation and response.choices[0].finish_reason == "length":
             logger.warning("Réponse OpenAI/Ollama TRONQUÉE (finish_reason=length, budget=%d).", max_tokens)
@@ -52,11 +55,11 @@ class OpenAIGPTAdapter(LLMGateway):
 
     async def extract(
         self, prompt: str, text: str, max_tokens: int = 512,
-        raise_on_truncation: bool = False,
+        raise_on_truncation: bool = False, temperature: float | None = None,
     ) -> str:
         return await self.generate(
             system=prompt, user=text, max_tokens=max_tokens,
-            raise_on_truncation=raise_on_truncation,
+            raise_on_truncation=raise_on_truncation, temperature=temperature,
         )
 
     async def classify(self, text: str, categories: list[str], default: str | None = None) -> str:

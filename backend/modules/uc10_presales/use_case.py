@@ -5,7 +5,7 @@ from pathlib import Path
 import yaml
 
 from config.settings import settings
-from core.ports.llm_gateway import LLMGateway
+from core.ports.llm_gateway import LLMGateway, OutputTruncatedError
 from core.ports.document_parser import DocumentParser
 from core.domain.offer import (
     ScoringResult, OfferDraft, StrategyPhase, PhaseAction, BidStrategy, Partner, Precondition,
@@ -278,8 +278,19 @@ class PresalesUseCase:
             lines += [f"═══ JUSTIFICATION DE LA DÉCISION ═══", decision_reason, ""]
 
         user = "\n".join(lines)
-        # Budget large : 5 phases × jusqu'à 4 actions + strategy (5§) + response_plan (4§). Cf. gate token.
-        raw = await self._llm_sonnet.generate(system=system, user=user, max_tokens=4000)
+        # 8000 (était 4000) : 5 phases × jusqu'à 4 actions + strategy (5§) + response_plan (4§)
+        # dépassaient 4000 tokens → JSON coupé → parse échoué → squelette SANS actions.
+        # raise_on_truncation pour récupérer le texte partiel et alimenter le fallback regex.
+        try:
+            raw = await self._llm_sonnet.generate(
+                system=system, user=user, max_tokens=8000, raise_on_truncation=True,
+                temperature=0.7,  # rédaction : on garde de la créativité (≠ extraction déterministe)
+            )
+        except OutputTruncatedError as exc:
+            logger.error(
+                "Stratégie TRONQUÉE au plafond de %d tokens — relever si récurrent.", exc.max_tokens,
+            )
+            raw = exc.partial_text
 
         # PHASE_0 (validation) = préalables du scoring, réutilisés tels quels (pas de duplication)
         partner_validation = list(scoring.preconditions)
