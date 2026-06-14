@@ -18,6 +18,7 @@ Zones préservées : Présentation Neurones, Méthodologie, Gestion de projet, C
 
 import json
 import logging
+import re
 import unicodedata
 from datetime import datetime
 from io import BytesIO
@@ -223,45 +224,82 @@ def _replace_in_cover_textboxes(doc: DocxDocument, old: str, new: str) -> None:
             break
 
 
-def _update_txbx_title(doc: DocxDocument, new_title: str) -> None:
-    """Remplace le titre legacy dans les text boxes de couverture."""
-    body = doc.element.body
-    for txbx in body.findall(".//" + qn("w:txbxContent")):
-        for p_elem in txbx.findall(qn("w:p")):
-            t_elems = p_elem.findall(".//" + qn("w:t"))
-            full = "".join(t.text or "" for t in t_elems)
-            if any(kw in _norm(full) for kw in _LEGACY_TITLE_KEYWORDS):
-                if t_elems:
-                    t_elems[0].text = new_title
+def _update_header_title(doc: DocxDocument, new_title: str) -> None:
+    """Remplace le titre legacy dans les en-têtes (parties header*.xml, hors corps).
+
+    Le titre peut y être réparti sur PLUSIEURS paragraphes d'une même zone de
+    texte (cas MCI CARE) : on matche donc le texte concaténé de chaque zone, et
+    on traite chaque copie mc:Choice / mc:Fallback séparément. Les paragraphes
+    hors zone de texte sont matchés individuellement.
+    """
+    seen: set[int] = set()
+    for section in doc.sections:
+        for kind in ("header", "first_page_header", "even_page_header"):
+            hdr_el = getattr(section, kind)._element
+            if id(hdr_el) in seen:
+                continue
+            seen.add(id(hdr_el))
+            for txbx in hdr_el.findall(".//" + qn("w:txbxContent")):
+                t_elems = txbx.findall(".//" + qn("w:t"))
+                full = "".join(t.text or "" for t in t_elems)
+                if t_elems and any(kw in _norm(full) for kw in _LEGACY_TITLE_KEYWORDS):
+                    t_elems[0].text = new_title.upper() if full.isupper() else new_title
                     for t in t_elems[1:]:
                         t.text = ""
-                return
+            for p_elem in hdr_el.findall(".//" + qn("w:p")):
+                if any(True for _ in p_elem.iterancestors(qn("w:txbxContent"))):
+                    continue  # déjà traité au niveau de la zone de texte
+                t_elems = p_elem.findall(".//" + qn("w:t"))
+                own = [t for t in t_elems
+                       if not any(True for _ in t.iterancestors(qn("w:txbxContent")))]
+                full = "".join(t.text or "" for t in own)
+                if own and any(kw in _norm(full) for kw in _LEGACY_TITLE_KEYWORDS):
+                    own[0].text = new_title.upper() if full.isupper() else new_title
+                    for t in own[1:]:
+                        t.text = ""
+
+
+def _cover_paragraphs(doc: DocxDocument, limit: int = 80) -> list:
+    """Les premiers w:p du document : page de garde, paragraphes du corps ET
+    paragraphes de text boxes (copies mc:Choice / mc:Fallback comprises)."""
+    return doc.element.body.findall(".//" + qn("w:p"))[:limit]
+
+
+def _update_txbx_title(doc: DocxDocument, new_title: str) -> None:
+    """Remplace le titre legacy sur la page de garde — selon le template, il vit
+    dans une text box (KORAZ) ou dans un paragraphe normal du corps (MCI CARE)."""
+    for p_elem in _cover_paragraphs(doc):
+        t_elems = p_elem.findall(".//" + qn("w:t"))
+        full = "".join(t.text or "" for t in t_elems)
+        if t_elems and any(kw in _norm(full) for kw in _LEGACY_TITLE_KEYWORDS):
+            t_elems[0].text = new_title.upper() if full.isupper() else new_title
+            for t in t_elems[1:]:
+                t.text = ""
 
 
 def _update_txbx_date(doc: DocxDocument) -> None:
-    """Met à jour la date dans les text boxes de couverture."""
+    """Met à jour la date (mois + année) sur la page de garde, quelle que soit la
+    casse du template (« AVRIL 2026 » comme « Avril 2026 »)."""
     months_fr = {
         1: "Janvier", 2: "Février", 3: "Mars", 4: "Avril",
         5: "Mai", 6: "Juin", 7: "Juillet", 8: "Août",
         9: "Septembre", 10: "Octobre", 11: "Novembre", 12: "Décembre",
     }
     now = datetime.now()
-    new_date = f"{months_fr[now.month]}  {now.year}"
+    new_date = f"{months_fr[now.month]} {now.year}"
     all_months = list(months_fr.values()) + [
         "January", "February", "March", "April", "May", "June",
         "July", "August", "September", "October", "November", "December",
     ]
-    body = doc.element.body
-    for txbx in body.findall(".//" + qn("w:txbxContent")):
-        for p_elem in txbx.findall(qn("w:p")):
-            t_elems = p_elem.findall(".//" + qn("w:t"))
-            full = "".join(t.text or "" for t in t_elems)
-            if any(m in full for m in all_months) and any(str(y) in full for y in range(2020, 2030)):
-                if t_elems:
-                    t_elems[0].text = new_date
-                    for t in t_elems[1:]:
-                        t.text = ""
-                return
+    month_re = re.compile(r"\b(" + "|".join(m.upper() for m in all_months) + r")\b")
+    year_re = re.compile(r"\b20[2-9]\d\b")
+    for p_elem in _cover_paragraphs(doc):
+        t_elems = p_elem.findall(".//" + qn("w:t"))
+        full = "".join(t.text or "" for t in t_elems)
+        if t_elems and month_re.search(_norm(full).upper()) and year_re.search(full):
+            t_elems[0].text = new_date.upper() if full.isupper() else new_date
+            for t in t_elems[1:]:
+                t.text = ""
 
 
 # ── Sections (heading-based) ──────────────────────────────────────────────────
@@ -702,6 +740,9 @@ class OfferGenerator:
             _replace_in_cover_textboxes(doc, legacy, real_client)
         _update_txbx_title(doc, sections["titre_projet"])
         _update_txbx_date(doc)
+
+        # ── 2bis. En-têtes : titre projet (parties header*.xml, hors corps) ──
+        _update_header_title(doc, sections["titre_projet"])
 
         # ── 3. EXPRESSION DES BESOINS ─────────────────────────────────────────
         _clear_section(doc, "EXPRESSION DES BESOINS", "OBJECTIFS DE NEURONES TECHNOLOGIES")

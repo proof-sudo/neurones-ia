@@ -1073,7 +1073,7 @@ function Step1({ ao, onExport, exporting, onNext }: {
       <CalendarCard events={r.calendar} />
 
       {(r.key_elements?.length ?? 0) > 0 && (
-        <SectionCard title="Points clés identifiés par l'IA" icon={<BarChart2 size={15} />}>
+        <SectionCard title="Points clés identifiés" icon={<BarChart2 size={15} />}>
           <table className="w-full text-xs">
             <tbody className="divide-y divide-slate-100">
               {r.key_elements.map((el, i) => (
@@ -1230,13 +1230,6 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-sm font-semibold text-slate-700 truncate">{name}</span>
-                      <span className={cn(
-                        "text-[11px] font-bold shrink-0 px-1.5 py-0.5 rounded-full",
-                        doc.relevance_score >= 0.7 ? "bg-green-100 text-green-700" :
-                        doc.relevance_score >= 0.4 ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-500"
-                      )}>
-                        {Math.round(doc.relevance_score * 100)}%
-                      </span>
                     </div>
                     <p className="text-[11px] text-slate-500 mt-0.5 line-clamp-2">{doc.excerpt}</p>
                   </div>
@@ -1269,9 +1262,6 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
                       docTypeColor[doc.doc_type] ?? "bg-slate-100 text-slate-500"
                     )}>
                       {docTypeLabel[doc.doc_type] ?? doc.doc_type}
-                    </span>
-                    <span className="text-xs text-green-600 font-bold shrink-0">
-                      {Math.round(doc.relevance_score * 100)}%
                     </span>
                   </div>
                   <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{doc.excerpt}</p>

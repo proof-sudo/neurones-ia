@@ -64,6 +64,11 @@ _ANALYZE_INPUT_BUDGET_TOKENS = 120_000
 # JSON le plus volumineux (grille scorée + risques + écarts + préalables) : 20K met le pire
 # cas dense très au large, là où 7000 le tronquait en silence → faux score=50.
 _ANALYZE_OUTPUT_BUDGET_TOKENS = 20_000
+# Résumé exécutif : 2000 (était 1100, 900, 500 — chaque palier s'est avéré court sur un AO
+# plus dense que le précédent ; 1100 coupait l'AO GPB-H en plein mot). Si malgré tout la
+# sortie est tronquée, retry unique à budget élargi.
+_SUMMARY_OUTPUT_BUDGET_TOKENS = 2_000
+_SUMMARY_OUTPUT_RETRY_TOKENS = 3_000
 
 # Température 0 sur TOUTES les étapes d'extraction et de notation : ce sont des tâches
 # factuelles/structurées où l'on veut la REPRODUCTIBILITÉ (même AO → même grille → même
@@ -269,8 +274,25 @@ RÈGLE — concret avant tout :
   "un outil de gestion" ; "authentification Azure AD/O365" plutôt que "une authentification".
 - N'INVENTE rien : ne cite que ce qui est dans le texte. Si une info n'y est pas, ne la mentionne pas.
 
-Rédige 4 à 6 phrases courtes et professionnelles couvrant : contexte et objectif, périmètre
-technique chiffré, enjeux/contraintes principaux, modalités d'évaluation si présentes.
+RÈGLE — formulation et mise en forme :
+- HIÉRARCHISE comme une note de synthèse, pas comme un inventaire. Conserve INTÉGRALEMENT les
+  faits décisifs : critères éliminatoires, montants, seuils et garanties chiffrés, périmètre
+  (nombre de sites/pays/utilisateurs), délais et durée, barème d'évaluation, technologies
+  structurantes. Les énumérations secondaires (listes de modules, certifications, livrables...)
+  peuvent être synthétisées : cite les 2-3 éléments les plus significatifs et agrège le reste
+  (ex : "les modules Deposits, Loans et 4 autres modules S/4HANA for Banking"). En condensant,
+  ne déforme ni n'invente rien.
+- Rédaction soignée et professionnelle : phrases complètes et bien construites, ton de note de
+  synthèse destinée à une direction commerciale. Évite les phrases interminables : découpe les
+  longues énumérations en plusieurs phrases courtes et lisibles.
+- Structure le résumé en 3 à 5 paragraphes thématiques (ex : contexte et objectif ; périmètre et
+  exigences techniques ; enjeux et contraintes ; technologies, planning et livrables ; modalités
+  d'évaluation et de paiement), chacun de 2 à 4 phrases. Vise 250 à 400 mots au total : le résumé
+  doit TOUJOURS se terminer par une phrase complète de conclusion, jamais en cours d'énumération.
+- OBLIGATOIRE : sépare chaque paragraphe par une LIGNE VIDE (deux retours à la ligne consécutifs),
+  sinon les paragraphes seront fusionnés à l'affichage.
+- NE commence PAS par un titre (pas de "RÉSUMÉ EXÉCUTIF" ni équivalent) : entre directement dans
+  le premier paragraphe.
 IMPORTANT : réponds en texte brut uniquement, sans markdown, sans titres, sans puces, sans caractères gras."""
 
 _ANALYSIS_SYSTEM = """Tu es un directeur commercial senior en IT.
@@ -1072,14 +1094,28 @@ class ScoringPipeline:
 
     async def _step2_summarize(self, ao_text: str) -> str:
         snippet = _truncate_by_tokens(ao_text, self._llm, _SUMMARY_INPUT_BUDGET_TOKENS, step="summarize")
-        # 900 (était 500) : le résumé exécutif de 4-6 phrases concrètes sur un AO dense
-        # (type ABI) dépassait 500 tokens → tronqué en plein milieu.
-        return await self._llm.generate(
-            system=_SUMMARY_SYSTEM,
-            user=snippet,
-            max_tokens=900,
-            temperature=_TEMP_DETERMINISTIC,
-        )
+        partial = ""
+        for budget in (_SUMMARY_OUTPUT_BUDGET_TOKENS, _SUMMARY_OUTPUT_RETRY_TOKENS):
+            try:
+                return await self._llm.generate(
+                    system=_SUMMARY_SYSTEM,
+                    user=snippet,
+                    max_tokens=budget,
+                    raise_on_truncation=True,
+                    temperature=_TEMP_DETERMINISTIC,
+                )
+            except OutputTruncatedError as exc:
+                partial = exc.partial_text
+                logger.warning(
+                    "Résumé exécutif tronqué au plafond de %d tokens — %s.",
+                    budget,
+                    "retry à budget élargi" if budget < _SUMMARY_OUTPUT_RETRY_TOKENS
+                    else "récupération à la dernière phrase complète",
+                )
+        # Toujours tronqué après retry (AO hors norme) : plutôt que d'afficher un mot coupé,
+        # on rend le texte partiel arrêté à sa dernière phrase complète.
+        cut = partial.rfind(".")
+        return partial[: cut + 1] if cut > 0 else partial
 
     _VALID_RISK_LEVELS = {"FAIBLE", "MODÉRÉ", "ÉLEVÉ", "CRITIQUE"}
     _VALID_CRITICITE = {"MODÉRÉ", "ÉLEVÉ", "CRITIQUE", "BLOQUANT"}

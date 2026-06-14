@@ -328,13 +328,15 @@ export async function* streamChat(
   }
 }
 
-export async function scoreAO(file: File): Promise<ScoringResult> {
+export async function scoreAO(file: File, force = false): Promise<ScoringResult> {
   const formData = new FormData();
   formData.append("file", file);
 
+  // force=true : ignore le cache disque (par hash du fichier) et relance une analyse complète.
+  const url = `${API_BASE}/presales/score${force ? "?force=true" : ""}`;
   let response: Response;
   try {
-    response = await fetch(`${API_BASE}/presales/score`, {
+    response = await fetch(url, {
       method: "POST",
       headers: authHeader(),
       body: formData,

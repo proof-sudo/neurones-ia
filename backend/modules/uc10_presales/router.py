@@ -1,8 +1,14 @@
+import hashlib
 import json
 import logging
 import re
+import unicodedata
 from datetime import datetime
 from io import BytesIO
+from pathlib import Path
+from urllib.parse import quote
+
+from config.settings import settings
 
 from fastapi import APIRouter, Request, UploadFile, File, HTTPException
 from fastapi.responses import Response
@@ -43,6 +49,22 @@ _ALLOWED_TYPES = {"application/pdf", "application/vnd.openxmlformats-officedocum
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 
 
+def _attachment_headers(filename: str) -> dict[str, str]:
+    """Content-Disposition sûr : Starlette encode les en-têtes HTTP en latin-1, donc un
+    caractère hors latin-1 dans le nom (—, ', …) fait crasher Response() en 500. Repli
+    ASCII pour filename= + nom UTF-8 complet en filename* (RFC 5987) pour le navigateur."""
+    ascii_name = (
+        unicodedata.normalize("NFKD", filename)
+        .encode("ascii", "ignore")
+        .decode()
+        .replace('"', "'")
+        .strip()
+    ) or "document.docx"
+    return {
+        "Content-Disposition": f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
+    }
+
+
 def _get_use_case(request: Request) -> PresalesUseCase:
     container = request.app.state.container
     return PresalesUseCase(
@@ -54,19 +76,45 @@ def _get_use_case(request: Request) -> PresalesUseCase:
     )
 
 
+# Cache d'analyse sur DISQUE (pas de dépendance externe). Fichier JSON nommé par le SHA-256
+# du contenu de l'AO → ré-analyser le MÊME document renvoie le MÊME résultat (le pipeline LLM
+# n'est pas déterministe, même à température 0 : c'est la seule garantie de reproductibilité).
+# `force=true` recalcule et écrase l'entrée. Content-addressé → pas de TTL nécessaire.
+_SCORE_CACHE_DIR = Path(settings.uploads_path).parent / "score_cache"
+
+
+def _score_cache_path(file_bytes: bytes) -> Path:
+    return _SCORE_CACHE_DIR / f"{hashlib.sha256(file_bytes).hexdigest()}.json"
+
+
 @router.post("/score", response_model=ScoringResultSchema)
 async def score_ao(
     request: Request,
     file: UploadFile = File(..., description="AO en PDF ou Word"),
+    force: bool = False,
 ):
-    """Upload un AO et lance le pipeline de scoring en 5 étapes."""
-    logger.info("Score AO reçu — fichier=%s content_type=%s", file.filename, file.content_type)
+    """Upload un AO et lance le pipeline de scoring en 5 étapes.
+
+    Le résultat est mis en cache sur disque par empreinte (SHA-256) du fichier : ré-analyser
+    le même document renvoie le même score (reproductibilité). `?force=true` force une nouvelle analyse.
+    """
+    logger.info("Score AO reçu — fichier=%s content_type=%s force=%s", file.filename, file.content_type, force)
     if file.content_type not in _ALLOWED_TYPES and not file.filename.endswith((".pdf", ".docx")):
         raise HTTPException(status_code=400, detail="Format non supporté. Utilisez PDF ou DOCX.")
 
     file_bytes = await file.read()
     if len(file_bytes) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Fichier trop volumineux (max 10 MB).")
+
+    cache_path = _score_cache_path(file_bytes)
+    if cache_path.exists() and not force:
+        try:
+            cached = json.loads(cache_path.read_text(encoding="utf-8"))
+            schema = ScoringResultSchema.model_validate(cached)
+            logger.info("Score AO servi depuis le cache disque — %s", file.filename)
+            return schema
+        except Exception as exc:
+            logger.warning("Cache score illisible (%s) — recalcul de %s", exc, file.filename)
 
     use_case = _get_use_case(request)
     try:
@@ -77,7 +125,13 @@ async def score_ao(
         logger.exception("Erreur pipeline scoring AO '%s'", file.filename)
         raise HTTPException(status_code=500, detail=f"Erreur analyse AO : {type(e).__name__}: {e}")
 
-    return _to_schema(result)
+    schema = _to_schema(result)
+    try:
+        _SCORE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(json.dumps(schema.model_dump(mode="json"), ensure_ascii=False), encoding="utf-8")
+    except OSError as exc:
+        logger.debug("Écriture cache score échouée (%s) — non bloquant", exc)
+    return schema
 
 
 @router.post("/generate")
@@ -92,7 +146,7 @@ async def generate_offer(body: OfferGenerationRequest, request: Request):
     return Response(
         content=draft.content_docx,
         media_type=_DOCX_MIME,
-        headers={"Content-Disposition": f'attachment; filename="{draft.filename}"'},
+        headers=_attachment_headers(draft.filename),
     )
 
 
@@ -615,7 +669,7 @@ async def export_analysis(body: AnalysisExportRequest, request: Request):
     safe_name = re.sub(r"\.(pdf|docx)$", "", scoring.ao_filename, flags=re.IGNORECASE).replace(" ", "-")
     return Response(
         content=buffer.getvalue(), media_type=_DOCX_MIME,
-        headers={"Content-Disposition": f'attachment; filename="Analyse-AO_{safe_name}.docx"'},
+        headers=_attachment_headers(f"Analyse-AO_{safe_name}.docx"),
     )
 
 
@@ -865,7 +919,7 @@ async def export_scoring(body: AnalysisExportRequest, request: Request):
     safe_name = re.sub(r"\.(pdf|docx)$", "", scoring.ao_filename, flags=re.IGNORECASE).replace(" ", "-")
     return Response(
         content=buffer.getvalue(), media_type=_DOCX_MIME,
-        headers={"Content-Disposition": f'attachment; filename="Scoring-AO_{safe_name}.docx"'},
+        headers=_attachment_headers(f"Scoring-AO_{safe_name}.docx"),
     )
 
 
@@ -1105,7 +1159,7 @@ async def export_strategy(body: StrategyExportRequest):
     safe_name = re.sub(r"\.(pdf|docx)$", "", scoring.ao_filename, flags=re.IGNORECASE).replace(" ", "-")
     return Response(
         content=buffer.getvalue(), media_type=_DOCX_MIME,
-        headers={"Content-Disposition": f'attachment; filename="Strategie-Reponse_{safe_name}.docx"'},
+        headers=_attachment_headers(f"Strategie-Reponse_{safe_name}.docx"),
     )
 
 
@@ -1249,7 +1303,7 @@ async def export_checklist(body: ChecklistExportRequest):
     safe_name = re.sub(r"\.(pdf|docx)$", "", body.ao_filename, flags=re.IGNORECASE).replace(" ", "-")
     return Response(
         content=buffer.getvalue(), media_type=_DOCX_MIME,
-        headers={"Content-Disposition": f'attachment; filename="Checklist_{safe_name}.docx"'},
+        headers=_attachment_headers(f"Checklist_{safe_name}.docx"),
     )
 
 

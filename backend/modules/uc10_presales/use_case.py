@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -152,6 +153,47 @@ Utilise exclusivement ces rôles comme `responsable` :
 §4 — Facteurs de succès et pièges à éviter : erreurs fréquentes sur ce type d'AO, points sur lesquels les dossiers sont souvent rejetés, éléments différenciants à ne pas oublier"""
 
 
+# ── Prompts SCINDÉS pour génération PARALLÈLE (3 appels Sonnet concurrents au lieu d'un
+#    bloc unique de 8000 tokens ~220s → wall-clock divisé par ~3). Chaque appel produit moins
+#    de tokens et tourne en //. strategy/plan = texte brut ; phases = JSON. ──────────────────
+_STRATEGY_TEXT_SYSTEM = """Tu es un directeur commercial senior chez Neurones Technologies CI (ESN ivoirienne : intégration IT, dev logiciel, infrastructure, cybersécurité).
+Décision retenue : {decision}
+
+Produis UNIQUEMENT la STRATÉGIE de réponse, en 5 paragraphes, en TEXTE BRUT (pas de markdown, pas de JSON, pas de titres), séparés par une ligne vide :
+§1 — Lecture stratégique de l'AO : enjeux pour le commanditaire, opportunité pour Neurones, niveau de compétition estimé, criticité du projet
+§2 — Positionnement différenciant : pourquoi Neurones est bien placé, références pertinentes à valoriser, atouts sur les critères clés
+§3 — Axes prioritaires de l'offre : critères de sélection à surcoter, sections à soigner, angle de réponse sur les besoins
+§4 — Gestion des écarts et risques : comment compenser les gaps, partenariats à mobiliser, arguments pour atténuer les faiblesses
+§5 — Stratégie de prix et positionnement commercial : fourchette recommandée, arbitrages marge/compétitivité, valeur à mettre en avant
+Ne cite que ce qui est dans le contexte fourni. Réponds uniquement avec les 5 paragraphes."""
+
+_RESPONSE_PLAN_SYSTEM = """Tu es un directeur commercial senior chez Neurones Technologies CI.
+
+Produis UNIQUEMENT le PLAN DE RÉPONSE opérationnel, en 4 paragraphes, en TEXTE BRUT (pas de markdown, pas de JSON, pas de titres), séparés par une ligne vide :
+§1 — Organisation de l'équipe de réponse : qui fait quoi, coordination, cadence des revues
+§2 — Documents à rassembler en priorité : pièces admin (RCCM, DGI, CNPS, bilans N-1/N-2/N-3, statuts, pouvoirs de signature), preuves de références (attestations, PV de recette), CVs à actualiser
+§3 — Points de vérification critiques avant dépôt : conformité administrative, cohérence technique/financière, respect du plan exigé, délais de validité des documents
+§4 — Facteurs de succès et pièges à éviter : erreurs fréquentes, motifs de rejet, éléments différenciants
+Réponds uniquement avec les 4 paragraphes."""
+
+_PHASES_SYSTEM = """Tu es un directeur commercial senior chez Neurones Technologies CI.
+Décision retenue : {decision}
+
+On te fournit un SQUELETTE DE PHASES (ids fixes, intitulés, actions types). Pour CHAQUE phase, produis 1 à 4 actions concrètes. NE crée AUCUNE phase, NE change AUCUN id.
+
+`responsable` = un rôle EXACT parmi : Directeur Commercial, Directeur Technique, Chef de Projet désigné, Responsable RH, Responsable Administratif & Juridique, Responsable Financier, Équipe de rédaction technique, Direction Générale.
+Date chaque action (`day_label`) en cohérence avec start_day/end_day de la phase et la deadline. `deliverable` = livrable concret. PHASE_0 = actions de décision/kick-off (la validation partenaire est gérée à part, ne pas dupliquer).
+
+Réponds UNIQUEMENT en JSON valide, \\n pour les sauts de ligne dans les valeurs :
+{
+  "phases": [
+    {"id": "PHASE_0", "actions": [
+      {"day_label": "J1", "action": "action concrète", "responsable": "Rôle exact", "duree_estimee": "2h", "deliverable": "ce qui sort"}
+    ]}
+  ]
+}"""
+
+
 class PresalesUseCase:
     """
     UC10 — Avant-vente : scoring AO + génération d'offre technique.
@@ -200,7 +242,6 @@ class PresalesUseCase:
         partner: Partner | None = None,
     ) -> BidStrategy:
         decision_label = {"GO": "GO — Répondre", "CONDITIONAL": "CONDITIONNEL — Sous conditions", "NO_BID": "NO-BID — Ne pas répondre"}.get(decision, decision)
-        system = _STRATEGY_SYSTEM.replace("{decision}", decision_label)
 
         # Extraire les éléments clés du scoring
         key_map: dict[str, str] = {e.category.lower(): e.value for e in scoring.key_elements}
@@ -278,41 +319,20 @@ class PresalesUseCase:
             lines += [f"═══ JUSTIFICATION DE LA DÉCISION ═══", decision_reason, ""]
 
         user = "\n".join(lines)
-        # 8000 (était 4000) : 5 phases × jusqu'à 4 actions + strategy (5§) + response_plan (4§)
-        # dépassaient 4000 tokens → JSON coupé → parse échoué → squelette SANS actions.
-        # raise_on_truncation pour récupérer le texte partiel et alimenter le fallback regex.
-        try:
-            raw = await self._llm_sonnet.generate(
-                system=system, user=user, max_tokens=8000, raise_on_truncation=True,
-                temperature=0.7,  # rédaction : on garde de la créativité (≠ extraction déterministe)
-            )
-        except OutputTruncatedError as exc:
-            logger.error(
-                "Stratégie TRONQUÉE au plafond de %d tokens — relever si récurrent.", exc.max_tokens,
-            )
-            raw = exc.partial_text
+
+        # 3 appels Sonnet EN PARALLÈLE (au lieu d'un bloc unique de 8000 tokens ≈ 220s) :
+        # stratégie (texte) ∥ plan de réponse (texte) ∥ phases (JSON). Chacun produit moins de
+        # tokens et tourne en concurrence → wall-clock ≈ le plus lent des 3 (~70-90s) au lieu de la somme.
+        strategy_text, response_plan, phases_raw = await asyncio.gather(
+            self._gen_strategy_block(_STRATEGY_TEXT_SYSTEM.replace("{decision}", decision_label), user, 2500, "stratégie"),
+            self._gen_strategy_block(_RESPONSE_PLAN_SYSTEM, user, 2000, "plan de réponse"),
+            self._gen_phases_block(_PHASES_SYSTEM.replace("{decision}", decision_label), user),
+        )
+        strategy_text = strategy_text or "Génération indisponible — veuillez réessayer."
+        phases = self._merge_phase_actions(skeleton, phases_raw)
 
         # PHASE_0 (validation) = préalables du scoring, réutilisés tels quels (pas de duplication)
         partner_validation = list(scoring.preconditions)
-
-        try:
-            data = json.loads(_clean_json(raw))
-            strategy_text = str(data.get("strategy", "") or "")
-            response_plan = str(data.get("response_plan", "") or "")
-            phases = self._merge_phase_actions(skeleton, data.get("phases"))
-        except Exception as exc:
-            logger.warning("Strategy JSON parse failed (%s) — fallback regex + squelette vide", exc)
-            import re
-            m = re.search(r'"strategy"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
-            strategy_text = m.group(1).replace("\\n", "\n") if m else ""
-            m2 = re.search(r'"response_plan"\s*:\s*"((?:[^"\\]|\\.)*)"', raw, re.DOTALL)
-            response_plan = m2.group(1).replace("\\n", "\n") if m2 else ""
-            if not strategy_text:
-                strategy_text = re.sub(r'^\s*\{.*?"strategy"\s*:\s*"', "", raw, flags=re.DOTALL)
-                strategy_text = re.sub(r'",?\s*"phases".*$', "", strategy_text, flags=re.DOTALL).strip()
-            strategy_text = strategy_text or "Génération indisponible — veuillez réessayer."
-            # Dégradation gracieuse : on garde le squelette (phases sans actions) plutôt que rien
-            phases = skeleton
 
         from datetime import datetime
         logger.info(
@@ -329,6 +349,43 @@ class PresalesUseCase:
             partner_validation=partner_validation,
             generated_at=datetime.now().isoformat(timespec="seconds"),
         )
+
+    async def _gen_strategy_block(self, system: str, user: str, max_tokens: int, label: str) -> str:
+        """Un bloc TEXTE de la stratégie (stratégie ou plan de réponse). Dégradation gracieuse."""
+        try:
+            txt = await self._llm_sonnet.generate(
+                system=system, user=user, max_tokens=max_tokens,
+                raise_on_truncation=True, temperature=0.7,
+            )
+            return txt.strip()
+        except OutputTruncatedError as exc:
+            logger.warning("Bloc '%s' tronqué (%d tok) — texte partiel conservé.", label, exc.max_tokens)
+            return (exc.partial_text or "").strip()
+        except Exception as exc:
+            logger.warning("Bloc '%s' échoué (%s) — vide.", label, exc)
+            return ""
+
+    async def _gen_phases_block(self, system: str, user: str) -> object:
+        """Le bloc PHASES (JSON) de la stratégie. Retourne la liste `phases` ou None (squelette vide)."""
+        try:
+            # 5000 : sur un AO riche, 5 phases × jusqu'à 4 actions détaillées dépassent 3000 tok
+            # → JSON coupé → 0 action. 5000 laisse de la marge tout en restant le bloc le plus lent
+            # des 3 appels // (donc il fixe le wall-clock de la phase B, ~60-80s).
+            raw = await self._llm_sonnet.generate(
+                system=system, user=user, max_tokens=5000,
+                raise_on_truncation=True, temperature=0.7,
+            )
+        except OutputTruncatedError as exc:
+            logger.warning("Phases stratégie tronquées (%d tok) — parse de récupération.", exc.max_tokens)
+            raw = exc.partial_text
+        except Exception as exc:
+            logger.warning("Phases stratégie échouées (%s) — squelette sans actions.", exc)
+            return None
+        try:
+            return json.loads(_clean_json(raw)).get("phases")
+        except Exception as exc:
+            logger.warning("Phases JSON parse failed (%s) — squelette sans actions.", exc)
+            return None
 
     # Rôles autorisés (whitelist du prompt) — sert à normaliser le responsable retourné
     _STRATEGY_ROLES = {
