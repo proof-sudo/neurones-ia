@@ -54,7 +54,7 @@ class Settings(BaseSettings):
     chunk_overlap: int = 60
     retrieval_top_k: int = 10
     rerank_top_k: int = 5
-    max_context_tokens: int = 3000
+    max_context_tokens: int = 10000   # budget contexte RAG (tokens réels) ; Haiku gère 200k, 3000 tronquait les parents
 
     # Extraction structurée (couche kb_*) — Phase 1
     extraction_confidence_threshold: float = 0.6   # sous ce score → revue_humaine=True

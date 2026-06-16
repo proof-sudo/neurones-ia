@@ -386,7 +386,7 @@ class QueryDispatcher:
         intent: QueryIntent,
     ) -> str:
         history = self._format_history(query.history)
-        rag_context = await self._rag_engine.build_context(sources) if sources else ""
+        rag_context = await self._rag_engine.build_context(sources, max_tokens=settings.max_context_tokens) if sources else ""
 
         context_block = ""
         if rag_context:

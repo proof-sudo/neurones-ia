@@ -1245,7 +1245,7 @@ async def chat_query(
                     return [], ""
                 try:
                     srcs = await rag_engine.search(text)
-                    ctx = await rag_engine.build_context(srcs) if srcs else ""
+                    ctx = await rag_engine.build_context(srcs, max_tokens=settings.max_context_tokens) if srcs else ""
                     return srcs, ctx
                 except Exception as e:
                     logger.warning("RAG indisponible: %s", e)
