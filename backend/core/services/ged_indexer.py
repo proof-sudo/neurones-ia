@@ -84,6 +84,10 @@ class GEDIndexer:
         de stratégie de chunking).
         Retourne True si indexé, False si ignoré (hash identique ou quarantaine).
         """
+        # Normaliser en chemin absolu résolu : le watcher passe des chemins relatifs
+        # (../data/ged/...) et le reindex de l'API des chemins absolus. Sans ça, le même
+        # fichier est enregistré sous deux clés → indexation en double.
+        file_path = Path(file_path).resolve()
         file_str = str(file_path)
 
         # ── 1. Hash check ──────────────────────────────────────────────────
@@ -199,6 +203,7 @@ class GEDIndexer:
         Supprime un fichier du RAG.
         hard_delete=True pour les CV (RGPD : purge complète du registre, pas soft-delete).
         """
+        file_path = Path(file_path).resolve()
         file_str = str(file_path)
         entry = await self._registry.get_entry(file_str)
         if entry:
