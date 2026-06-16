@@ -40,6 +40,11 @@ class Container:
         self._quality_validator = None
         self._pii_detector = None
         self._quarantine = None
+        self._structured_extractor = None
+        self._kb_repository = None
+        self._classifier = None
+        self._entity_resolver = None
+        self._ro_sql = None
 
     async def startup(self):
         logger.info("Initialisation des adapters...")
@@ -55,6 +60,8 @@ class Container:
             self._ged_watcher.stop()
         if self._odoo_adapter:
             await self._odoo_adapter.close()
+        if self._ro_sql:
+            await self._ro_sql.dispose()
 
     def _init_adapters(self):
         from adapters.llm.claude_haiku_adapter import ClaudeHaikuAdapter
@@ -106,6 +113,11 @@ class Container:
         self._docx_parser = DocxAdapter()
         self._ged_storage = LocalGEDAdapter()
         self._doc_registry = SQLiteRegistryAdapter()
+        from adapters.kb.readonly_sql_adapter import ReadOnlySqlAdapter
+        self._ro_sql = ReadOnlySqlAdapter(
+            db_path=settings.local_db_path,
+            timeout_seconds=settings.sql_query_timeout_seconds,
+        )
         from adapters.crm.odoo_adapter import OdooAdapter
         self._crm_repo = LocalCRMAdapter()
         self._odoo_adapter = OdooAdapter()
@@ -137,7 +149,11 @@ class Container:
         from core.services.metadata_extractor import MetadataExtractor
         from core.services.quality_validator import QualityValidator
         from core.services.pii_detector import PIIDetector
+        from core.services.structured_extractor import StructuredExtractor
+        from core.services.document_classifier import DocumentClassifier
+        from core.services.entity_resolver import EntityResolver
         from adapters.registry.quarantine_adapter import QuarantineAdapter
+        from adapters.kb.sqlite_kb_adapter import SQLiteKBAdapter
 
         self._data_shield = DataShield()
         self._chunking_router = ChunkingRouter(
@@ -148,6 +164,17 @@ class Container:
         self._quality_validator = QualityValidator()
         self._pii_detector = PIIDetector()
         self._quarantine = QuarantineAdapter()
+        self._kb_repository = SQLiteKBAdapter()
+        self._structured_extractor = StructuredExtractor(
+            llm=self._llm_haiku,
+            confidence_threshold=settings.extraction_confidence_threshold,
+            text_limit=settings.structured_extract_text_limit,
+        )
+        self._classifier = DocumentClassifier(llm=self._llm_haiku)
+        self._entity_resolver = EntityResolver(
+            auto_threshold=settings.entity_match_auto_threshold,
+            review_threshold=settings.entity_match_review_threshold,
+        )
         self._rag_engine = RAGEngine(
             vector_store=self._vector_store,
             sparse_search=self._sparse_search,
@@ -177,6 +204,10 @@ class Container:
             quality_validator=self._quality_validator,
             pii_detector=self._pii_detector,
             quarantine=self._quarantine,
+            structured_extractor=self._structured_extractor,
+            kb_repository=self._kb_repository,
+            classifier=self._classifier,
+            entity_resolver=self._entity_resolver,
         )
 
     async def _start_jobs(self):
@@ -257,3 +288,23 @@ class Container:
     @property
     def quarantine(self):
         return self._quarantine
+
+    @property
+    def kb_repository(self):
+        return self._kb_repository
+
+    @property
+    def structured_extractor(self):
+        return self._structured_extractor
+
+    @property
+    def classifier(self):
+        return self._classifier
+
+    @property
+    def entity_resolver(self):
+        return self._entity_resolver
+
+    @property
+    def ro_sql(self):
+        return self._ro_sql

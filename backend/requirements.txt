@@ -28,6 +28,9 @@ sqlalchemy[asyncio]==2.0.36
 aiosqlite==0.20.0
 alembic==1.14.0
 
+# Entity resolution (Phase 2) — appariement flou (fallback difflib si absent)
+rapidfuzz==3.10.1
+
 # HTTP client (Odoo distant)
 httpx==0.28.1
 

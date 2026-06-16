@@ -52,6 +52,17 @@ class Settings(BaseSettings):
     rerank_top_k: int = 5
     max_context_tokens: int = 3000
 
+    # Extraction structurée (couche kb_*) — Phase 1
+    extraction_confidence_threshold: float = 0.6   # sous ce score → revue_humaine=True
+    structured_extract_text_limit: int = 8000       # nb de caractères envoyés au LLM
+
+    # Résolution d'entités (Phase 2)
+    entity_match_auto_threshold: float = 0.90       # ≥ → lien automatique
+    entity_match_review_threshold: float = 0.75      # [review, auto[ → revue humaine
+
+    # Text-to-SQL lecture seule (Phase 3)
+    sql_query_timeout_seconds: float = 8.0           # timeout applicatif d'une requête générée
+
     # Reranker (P6) — cross-encoder local optionnel après la fusion RRF
     rerank_enabled: bool = False     # si True, le chat re-classe par défaut
     rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"

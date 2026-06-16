@@ -13,6 +13,7 @@ class DocumentType(str, Enum):
     FICHE_TECHNIQUE = "fiche_technique"
     COMPTE_RENDU = "compte_rendu"
     AO = "ao"
+    CERTIFICATION = "certification"
     TEMPLATE = "template"
     MARCHES_SIMILAIRES = "marches_similaires"
     UNKNOWN = "unknown"

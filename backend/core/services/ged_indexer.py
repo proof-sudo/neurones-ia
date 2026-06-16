@@ -50,6 +50,10 @@ class GEDIndexer:
         quality_validator: QualityValidator,
         pii_detector: PIIDetector,
         quarantine,  # QuarantineAdapter — import circulaire évité
+        structured_extractor=None,  # StructuredExtractor — couche kb_* (optionnel)
+        kb_repository=None,         # KBRepository — persistance kb_* (optionnel)
+        classifier=None,            # DocumentClassifier — fallback si type UNKNOWN (optionnel)
+        entity_resolver=None,       # EntityResolver — résolution d'entités P2 (optionnel)
         chunk_size: int = 600,
         chunk_overlap: int = 60,
     ):
@@ -63,6 +67,10 @@ class GEDIndexer:
         self._quality_validator = quality_validator
         self._pii_detector = pii_detector
         self._quarantine = quarantine
+        self._structured_extractor = structured_extractor
+        self._kb_repository = kb_repository
+        self._classifier = classifier
+        self._entity_resolver = entity_resolver
 
     async def process(
         self,
@@ -104,6 +112,14 @@ class GEDIndexer:
         if validation.warnings:
             for w in validation.warnings:
                 logger.warning("QualityValidator [%s] : %s", file_path.name, w)
+
+        # ── 3bis. Classification (fallback si le dossier n'a pas donné le type) ──
+        if doc_type == DocumentType.UNKNOWN and self._classifier:
+            try:
+                doc_type = await self._classifier.classify(text, file_path.name)
+                logger.info("Classifieur → %s pour %s", doc_type.value, file_path.name)
+            except Exception as exc:
+                logger.warning("Classification échouée pour %s : %s", file_path.name, exc)
 
         # ── 4. Extraction métadonnées ──────────────────────────────────────
         extracted_fields = await self._metadata_extractor.extract(text, doc_type)
@@ -164,6 +180,13 @@ class GEDIndexer:
         # Retirer de la quarantaine si le fichier y était (ex : retry après correction)
         await self._quarantine.remove(file_str)
 
+        # ── 10. Extraction structurée → base relationnelle kb_* (couche additive) ──
+        # Jamais bloquant : un échec ici n'invalide pas l'indexation vectorielle.
+        await self._extract_structured(text, doc_type, doc_id, file_str, current_hash)
+
+        # ── 11. Résolution d'entités → ids canoniques (kb_clients/personnes/projets) ──
+        await self._resolve_entities(doc_id, doc_type)
+
         pii_note = f" [PII: {','.join(pii_report.categories)}]" if pii_report and pii_report.has_pii else ""
         logger.info(
             "Indexé : %s → %d chunks (type=%s, doc_id=%s)%s",
@@ -182,6 +205,11 @@ class GEDIndexer:
             await self._vector_store.delete_by_doc_id(entry.doc_id)
             self._sparse_search.remove(entry.vector_ids)
             await asyncio.to_thread(self._sparse_search.save)
+            if self._kb_repository:
+                try:
+                    await self._kb_repository.delete_by_doc_id(entry.doc_id)
+                except Exception as exc:
+                    logger.warning("Suppression kb_* échouée pour %s : %s", file_path.name, exc)
             if hard_delete:
                 await self._registry.hard_delete(file_str)
                 logger.info("RGPD — Purge complète : %s", file_path.name)
@@ -189,6 +217,35 @@ class GEDIndexer:
                 await self._registry.mark_deleted(file_str)
                 logger.info("Supprimé du RAG : %s", file_path.name)
         await self._quarantine.remove(file_str)
+
+    async def _extract_structured(
+        self, text: str, doc_type: DocumentType, doc_id: str, file_str: str, current_hash: str
+    ) -> None:
+        """Extraction typée + persistance kb_*. Tolérante aux pannes (best-effort)."""
+        if not self._structured_extractor or not self._kb_repository:
+            return
+        try:
+            result = await self._structured_extractor.extract(text, doc_type)
+            if result is None:
+                return
+            await self._kb_repository.save_extraction(
+                doc_id=doc_id,
+                doc_type=doc_type,
+                fichier_source=file_str,
+                hash_sha256=current_hash,
+                result=result,
+            )
+        except Exception as exc:
+            logger.warning("Extraction structurée échouée pour %s : %s", file_str, exc)
+
+    async def _resolve_entities(self, doc_id: str, doc_type: DocumentType) -> None:
+        """Résolution d'entités → ids canoniques. Tolérante aux pannes (best-effort)."""
+        if not self._entity_resolver or not self._kb_repository:
+            return
+        try:
+            await self._kb_repository.resolve_document(doc_id, doc_type, self._entity_resolver)
+        except Exception as exc:
+            logger.warning("Résolution d'entités échouée pour %s : %s", doc_id, exc)
 
     # ── Helpers ────────────────────────────────────────────────────────────
 

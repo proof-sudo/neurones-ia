@@ -253,3 +253,248 @@ class DossierModel(Base):
     nb_factures_fournisseur: Mapped[int] = mapped_column(Integer, default=0)
     nb_achats: Mapped[int] = mapped_column(Integer, default=0)
     synced_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# COUCHE STRUCTURÉE (kb_*) — faits typés extraits des documents GED (Phase 1).
+# Préfixe `kb_` pour ne PAS entrer en collision avec les tables miroir Odoo
+# `clients` / `projects`. Alimentées par le StructuredExtractor + SQLiteKBAdapter.
+# ════════════════════════════════════════════════════════════════════════════
+
+
+class _KBFactCommon:
+    """Colonnes techniques communes à toute table de faits (traçabilité + audit).
+
+    `doc_id` n'est PAS ici : les tables de tête l'utilisent en clé primaire,
+    les tables enfants en colonne indexée + FK logique.
+    """
+    doc_type: Mapped[str] = mapped_column(String(50), default="")
+    fichier_source: Mapped[str] = mapped_column(String, default="")
+    page: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    hash_sha256: Mapped[str] = mapped_column(String(64), default="")
+    date_ingestion: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    score_confiance: Mapped[float] = mapped_column(Float, default=0.0)
+    revue_humaine: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+# ── Entités canoniques (pivots) — créées en P1, peuplées en P2 ───────────────
+
+class KBClientModel(Base):
+    __tablename__ = "kb_clients"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    raison_sociale: Mapped[str] = mapped_column(String(255), index=True)
+    secteur: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    pays: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class KBPersonneModel(Base):
+    __tablename__ = "kb_personnes"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    nom_complet: Mapped[str] = mapped_column(String(255), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class KBProjetModel(Base):
+    __tablename__ = "kb_projets"
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    intitule: Mapped[str] = mapped_column(String(500), index=True)
+    client_id: Mapped[str | None] = mapped_column(String, ForeignKey("kb_clients.id"), nullable=True)
+    secteur: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    montant_valeur: Mapped[float | None] = mapped_column(Float, nullable=True)
+    montant_devise: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    date_debut: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    date_fin: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# ── CV ───────────────────────────────────────────────────────────────────────
+
+class KBCvModel(Base, _KBFactCommon):
+    __tablename__ = "kb_cv"
+    doc_id: Mapped[str] = mapped_column(String, primary_key=True)
+    nom_complet: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
+    titre_poste: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    annees_experience: Mapped[float | None] = mapped_column(Float, nullable=True)
+    localisation: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    personne_ref_id: Mapped[str | None] = mapped_column(String, ForeignKey("kb_personnes.id"), nullable=True)
+    langues: Mapped[list] = mapped_column(JSON, default=list)
+    competences: Mapped[list] = mapped_column(JSON, default=list)
+    formations: Mapped[list] = mapped_column(JSON, default=list)
+    secteurs_expertise: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class KBCvExperienceModel(Base):
+    __tablename__ = "kb_cv_experiences"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    doc_id: Mapped[str] = mapped_column(String, ForeignKey("kb_cv.doc_id"), index=True)
+    intitule_projet: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    client: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    role: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    secteur: Mapped[str | None] = mapped_column(String(150), index=True, nullable=True)
+    date_debut: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    date_fin: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    en_cours: Mapped[bool] = mapped_column(Boolean, default=False)
+    description_courte: Mapped[str | None] = mapped_column(Text, nullable=True)
+    projet_ref_id: Mapped[str | None] = mapped_column(String, ForeignKey("kb_projets.id"), nullable=True)
+
+
+class KBCvCertificationModel(Base):
+    __tablename__ = "kb_cv_certifications"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    doc_id: Mapped[str] = mapped_column(String, ForeignKey("kb_cv.doc_id"), index=True)
+    intitule: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
+    organisme: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    annee: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
+# ── Appel d'offres ───────────────────────────────────────────────────────────
+
+class KBAoModel(Base, _KBFactCommon):
+    __tablename__ = "kb_ao"
+    doc_id: Mapped[str] = mapped_column(String, primary_key=True)
+    reference: Mapped[str | None] = mapped_column(String(150), index=True, nullable=True)
+    intitule: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    maitre_ouvrage: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    date_publication: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    date_limite_remise: Mapped[datetime | None] = mapped_column(DateTime, index=True, nullable=True)
+    budget_valeur: Mapped[float | None] = mapped_column(Float, nullable=True)
+    budget_devise: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    type_marche: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    duree_execution: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    client_ref_id: Mapped[str | None] = mapped_column(String, ForeignKey("kb_clients.id"), nullable=True)
+    projet_ref_id: Mapped[str | None] = mapped_column(String, ForeignKey("kb_projets.id"), nullable=True)
+    lots: Mapped[list] = mapped_column(JSON, default=list)
+    certifications_exigees: Mapped[list] = mapped_column(JSON, default=list)
+    criteres_evaluation: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class KBAoExigenceModel(Base):
+    __tablename__ = "kb_ao_exigences"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    doc_id: Mapped[str] = mapped_column(String, ForeignKey("kb_ao.doc_id"), index=True)
+    categorie: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    libelle: Mapped[str | None] = mapped_column(Text, nullable=True)
+    obligatoire: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class KBAoReferenceDemandeeModel(Base):
+    __tablename__ = "kb_ao_references_demandees"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    doc_id: Mapped[str] = mapped_column(String, ForeignKey("kb_ao.doc_id"), index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    nombre_min: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    montant_min_valeur: Mapped[float | None] = mapped_column(Float, nullable=True)
+    montant_min_devise: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    periode: Mapped[str | None] = mapped_column(String(150), nullable=True)
+
+
+# ── Compte rendu ─────────────────────────────────────────────────────────────
+
+class KBCompteRenduModel(Base, _KBFactCommon):
+    __tablename__ = "kb_compte_rendu"
+    doc_id: Mapped[str] = mapped_column(String, primary_key=True)
+    date_reunion: Mapped[datetime | None] = mapped_column(DateTime, index=True, nullable=True)
+    objet: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    projet_associe: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    lieu: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    projet_ref_id: Mapped[str | None] = mapped_column(String, ForeignKey("kb_projets.id"), nullable=True)
+    participants: Mapped[list] = mapped_column(JSON, default=list)
+    decisions: Mapped[list] = mapped_column(JSON, default=list)
+    points_abordes: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class KBCrActionModel(Base):
+    __tablename__ = "kb_cr_actions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    doc_id: Mapped[str] = mapped_column(String, ForeignKey("kb_compte_rendu.doc_id"), index=True)
+    libelle: Mapped[str | None] = mapped_column(Text, nullable=True)
+    responsable: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    echeance: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    statut: Mapped[str | None] = mapped_column(String(100), nullable=True)
+
+
+# ── Certification ────────────────────────────────────────────────────────────
+
+class KBCertificationModel(Base, _KBFactCommon):
+    __tablename__ = "kb_certification"
+    doc_id: Mapped[str] = mapped_column(String, primary_key=True)
+    titulaire: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
+    intitule: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
+    organisme_emetteur: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    numero_identifiant: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    date_emission: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    date_expiration: Mapped[datetime | None] = mapped_column(DateTime, index=True, nullable=True)
+    statut: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    domaine: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    personne_ref_id: Mapped[str | None] = mapped_column(String, ForeignKey("kb_personnes.id"), nullable=True)
+
+
+# ── PV de recette ────────────────────────────────────────────────────────────
+
+class KBPvRecetteModel(Base, _KBFactCommon):
+    __tablename__ = "kb_pv_recette"
+    doc_id: Mapped[str] = mapped_column(String, primary_key=True)
+    reference: Mapped[str | None] = mapped_column(String(150), index=True, nullable=True)
+    projet_associe: Mapped[str | None] = mapped_column(String(500), index=True, nullable=True)
+    client: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    date: Mapped[datetime | None] = mapped_column(DateTime, index=True, nullable=True)
+    type_recette: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    statut_global: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    projet_ref_id: Mapped[str | None] = mapped_column(String, ForeignKey("kb_projets.id"), nullable=True)
+    client_ref_id: Mapped[str | None] = mapped_column(String, ForeignKey("kb_clients.id"), nullable=True)
+    livrables: Mapped[list] = mapped_column(JSON, default=list)
+    signataires: Mapped[list] = mapped_column(JSON, default=list)
+
+
+class KBPvReserveModel(Base):
+    __tablename__ = "kb_pv_reserves"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    doc_id: Mapped[str] = mapped_column(String, ForeignKey("kb_pv_recette.doc_id"), index=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    criticite: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    statut: Mapped[str | None] = mapped_column(String(50), index=True, nullable=True)
+    date_levee: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+# ── Attestation de bonne exécution ───────────────────────────────────────────
+
+class KBAttestationModel(Base, _KBFactCommon):
+    __tablename__ = "kb_attestation"
+    doc_id: Mapped[str] = mapped_column(String, primary_key=True)
+    reference: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    emetteur_client: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
+    projet_marche: Mapped[str | None] = mapped_column(String(500), index=True, nullable=True)
+    montant_valeur: Mapped[float | None] = mapped_column(Float, index=True, nullable=True)
+    montant_devise: Mapped[str | None] = mapped_column(String(10), nullable=True)
+    date_debut: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    date_fin: Mapped[datetime | None] = mapped_column(DateTime, index=True, nullable=True)
+    duree_mois: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    niveau_appreciation: Mapped[str | None] = mapped_column(String(150), nullable=True)
+    secteur: Mapped[str | None] = mapped_column(String(150), index=True, nullable=True)
+    client_ref_id: Mapped[str | None] = mapped_column(String, ForeignKey("kb_clients.id"), nullable=True)
+    projet_ref_id: Mapped[str | None] = mapped_column(String, ForeignKey("kb_projets.id"), nullable=True)
+    perimetre_prestations: Mapped[list] = mapped_column(JSON, default=list)
+    signataire: Mapped[dict] = mapped_column(JSON, default=dict)
+
+
+class KBAliasModel(Base):
+    """Journal des libellés observés → entité canonique (Phase 2).
+
+    Sert d'index de recherche normalisé ET de file de revue humaine :
+    - status `confirmed` : alias canonique (ou validé par un humain) ;
+    - status `auto`      : rapproché automatiquement (score ≥ seuil auto) ;
+    - status `pending`   : rapprochement incertain → revue humaine requise
+      (`entity_id` = suggestion ; le fait n'est PAS lié tant que non confirmé).
+    """
+    __tablename__ = "kb_aliases"
+    __table_args__ = (Index("ix_kb_alias_type_norm", "entity_type", "alias_norm"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    entity_type: Mapped[str] = mapped_column(String(20), index=True)   # client | personne | projet
+    alias_norm: Mapped[str] = mapped_column(String(500), index=True)
+    alias_raw: Mapped[str] = mapped_column(String(500), default="")
+    entity_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    status: Mapped[str] = mapped_column(String(20), default="auto")
+    score: Mapped[float] = mapped_column(Float, default=0.0)
+    source_doc_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
