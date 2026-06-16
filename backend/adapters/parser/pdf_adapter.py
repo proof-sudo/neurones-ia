@@ -31,6 +31,11 @@ except ImportError:
     pass
 
 _TESSERACT_AVAILABLE = False
+# Langues OCR réellement disponibles, déterminées après détection du binaire.
+# On ne demande jamais une langue absente : Tesseract n'échoue pas toujours sur
+# "fra+eng" quand "fra" manque (il retombe silencieusement sur "eng"), donc le
+# repli via except ne suffit pas à garantir le bon modèle.
+_OCR_LANGS = "eng"
 try:
     import pytesseract
     from PIL import Image
@@ -52,6 +57,24 @@ try:
             )
     else:
         _TESSERACT_AVAILABLE = True
+
+    if _TESSERACT_AVAILABLE:
+        try:
+            _installed_langs = set(pytesseract.get_languages(config=""))
+        except Exception as e:  # binaire injoignable, droits, etc.
+            logger.debug("Liste des langues Tesseract indisponible : %s", e)
+            _installed_langs = set()
+        _wanted = [lang for lang in ("fra", "eng") if lang in _installed_langs]
+        if _wanted:
+            _OCR_LANGS = "+".join(_wanted)
+        if _installed_langs and "fra" not in _installed_langs:
+            logger.warning(
+                "Pack de langue Tesseract 'fra' absent (langues présentes : %s) — "
+                "OCR en anglais uniquement, qualité dégradée sur les PDF scannés en "
+                "français. Installez fra.traineddata dans le dossier tessdata "
+                "(https://github.com/tesseract-ocr/tessdata).",
+                ", ".join(sorted(_installed_langs)) or "aucune",
+            )
 except ImportError:
     pass
 
@@ -160,7 +183,10 @@ class PDFAdapter(DocumentParser):
             return ""
 
     def _try_ocr(self, file_path: str) -> str:
-        """Rendu page → image (200 DPI) puis OCR Tesseract (fra+eng). Max 20 pages."""
+        """Rendu page → image (200 DPI) puis OCR Tesseract. Max 20 pages.
+
+        Utilise les langues réellement installées (_OCR_LANGS, idéalement fra+eng).
+        """
         try:
             import fitz
             import pytesseract
@@ -179,9 +205,9 @@ class PDFAdapter(DocumentParser):
                     mat = fitz.Matrix(200 / 72, 200 / 72)
                     pix = page.get_pixmap(matrix=mat, alpha=False)
                     img = Image.open(io.BytesIO(pix.tobytes("png")))
-                    # Tente français puis anglais en fallback
+                    # Langues installées (fra+eng si dispo) ; repli eng par sécurité
                     try:
-                        text = pytesseract.image_to_string(img, lang="fra+eng")
+                        text = pytesseract.image_to_string(img, lang=_OCR_LANGS)
                     except pytesseract.TesseractError:
                         text = pytesseract.image_to_string(img, lang="eng")
                     if text.strip():
