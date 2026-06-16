@@ -25,8 +25,12 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1"           # ollama pull llama3.1 (ou mistral-nemo, qwen2.5)
     ollama_timeout_seconds: float = 120.0    # modèles locaux peuvent être lents au premier appel
+    # Backend d'embedding : "local" (sentence-transformers, indépendant du quota OpenAI)
+    # ou "openai" (text-embedding-3-small). "local" = UN SEUL modèle indexation + requête
+    # → évite tout mélange de dimensions (Cause A).
+    embedding_backend: str = "local"
     embed_fallback_enabled: bool = True      # bascule sur sentence-transformers si OpenAI indisponible
-    embed_fallback_model: str = "all-MiniLM-L6-v2"   # modèle local sentence-transformers
+    embed_fallback_model: str = "paraphrase-multilingual-MiniLM-L12-v2"   # local multilingue (FR), 384d
 
     # Odoo (serveur distant)
     odoo_url: str = ""

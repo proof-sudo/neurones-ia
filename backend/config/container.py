@@ -99,7 +99,12 @@ class Container:
         else:
             self._llm_haiku = _haiku
             self._llm_sonnet = _sonnet
-        if settings.embed_fallback_enabled:
+        if settings.embedding_backend == "local":
+            # Backend unique local : un seul modèle à l'indexation ET à la requête (évite Cause A)
+            from adapters.embeddings.sentence_transformers_adapter import SentenceTransformersAdapter
+            self._embedder = SentenceTransformersAdapter(model_name=settings.embed_fallback_model)
+            logger.info("Embeddings : local sentence-transformers (%s) — backend unique", settings.embed_fallback_model)
+        elif settings.embed_fallback_enabled:
             from adapters.embeddings.sentence_transformers_adapter import SentenceTransformersAdapter
             from adapters.embeddings.fallback_embed_adapter import FallbackEmbedAdapter
             _local = SentenceTransformersAdapter(model_name=settings.embed_fallback_model)
