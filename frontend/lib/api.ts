@@ -333,11 +333,13 @@ export async function fetchGEDQuarantine(): Promise<{ quarantine: GEDQuarantineE
   return r.json();
 }
 
-export async function retryGEDQuarantine(filePath: string): Promise<void> {
+export async function retryGEDQuarantine(filePath: string, forceIndex = false): Promise<void> {
+  // forceIndex : trappe d'acceptation manuelle — ignore la validation qualité
+  // (texte trop court, ratio PDF) pour accepter un document court mais légitime.
   const r = await apiFetch(`${API_BASE}/ged/quarantine/retry`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ file_path: filePath }),
+    body: JSON.stringify({ file_path: filePath, force_index: forceIndex }),
   });
   if (!r.ok) {
     const err = await r.json().catch(() => ({}));

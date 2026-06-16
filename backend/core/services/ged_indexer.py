@@ -77,11 +77,16 @@ class GEDIndexer:
         file_path: Path,
         doc_type: DocumentType = DocumentType.UNKNOWN,
         force: bool = False,
+        bypass_validation: bool = False,
     ) -> bool:
         """
         Indexe un fichier si son contenu a changé depuis la dernière indexation.
         force=True : ré-indexe même si le hash est identique (ex. après changement
         de stratégie de chunking).
+        bypass_validation=True : trappe d'acceptation manuelle — saute la validation
+        qualité (longueur minimale, ratio PDF). Réservé à une action humaine explicite
+        depuis la revue de quarantaine, pour accepter un document court mais légitime
+        (ex. certification scannée). N'affecte JAMAIS l'ingestion automatique.
         Retourne True si indexé, False si ignoré (hash identique ou quarantaine).
         """
         # Normaliser en chemin absolu résolu : le watcher passe des chemins relatifs
@@ -103,15 +108,21 @@ class GEDIndexer:
         # ── 3. Validation qualité ──────────────────────────────────────────
         validation = self._quality_validator.validate(text, file_path)
         if not validation.is_valid:
-            file_size = self._file_size(file_path)
-            await self._quarantine.add(
-                file_path=file_str,
-                doc_type=doc_type.value,
-                reason=validation.reason,
-                file_size_bytes=file_size,
-                text_length=len(text),
-            )
-            return False
+            if bypass_validation:
+                logger.warning(
+                    "Validation qualité ignorée (force_index manuel) pour %s : %s",
+                    file_path.name, validation.reason,
+                )
+            else:
+                file_size = self._file_size(file_path)
+                await self._quarantine.add(
+                    file_path=file_str,
+                    doc_type=doc_type.value,
+                    reason=validation.reason,
+                    file_size_bytes=file_size,
+                    text_length=len(text),
+                )
+                return False
 
         if validation.warnings:
             for w in validation.warnings:

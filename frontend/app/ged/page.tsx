@@ -399,12 +399,14 @@ function CreateFolderModal({ categories, initialParent, onClose, onCreated }: {
 
 function QuarantineRow({ e, retentionDays, onRetry, onDelete }: {
   e: GEDQuarantineEntry; retentionDays: number;
-  onRetry: (e: GEDQuarantineEntry) => Promise<void>;
+  onRetry: (e: GEDQuarantineEntry, forceIndex?: boolean) => Promise<void>;
   onDelete: (e: GEDQuarantineEntry) => Promise<void>;
 }) {
   const [retrying, setRetrying] = useState(false);
+  const [forcing, setForcing] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirming, setConfirming] = useState(false);
+  const [confirmForce, setConfirmForce] = useState(false);
 
   // Jours restants avant auto-suppression (depuis la dernière tentative)
   const daysLeft = retentionDays > 0
@@ -432,12 +434,35 @@ function QuarantineRow({ e, retentionDays, onRetry, onDelete }: {
       <div className="flex items-center gap-1.5 shrink-0">
         <button
           onClick={async () => { setRetrying(true); try { await onRetry(e); } finally { setRetrying(false); } }}
-          disabled={retrying || deleting}
+          disabled={retrying || forcing || deleting}
           className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-amber-300 text-amber-700 hover:bg-amber-100 transition-colors font-medium disabled:opacity-50"
         >
           {retrying ? <RefreshCw className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
           Réessayer
         </button>
+        {confirmForce ? (
+          <>
+            <button
+              onClick={async () => { setForcing(true); try { await onRetry(e, true); } finally { setForcing(false); setConfirmForce(false); } }}
+              disabled={forcing}
+              className="text-xs px-2 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700 transition-colors font-medium disabled:opacity-50"
+            >
+              {forcing ? <RefreshCw className="w-3 h-3 animate-spin" /> : "Indexer quand même"}
+            </button>
+            <button onClick={() => setConfirmForce(false)} className="text-xs px-2 py-1.5 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors">
+              Annuler
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => setConfirmForce(true)}
+            disabled={retrying || forcing || deleting}
+            className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200 transition-colors font-medium disabled:opacity-50"
+            title="Accepter et indexer malgré la validation qualité (document court mais légitime, ex. certification scannée)"
+          >
+            Forcer
+          </button>
+        )}
         {confirming ? (
           <>
             <button
@@ -467,7 +492,7 @@ function QuarantineRow({ e, retentionDays, onRetry, onDelete }: {
 
 function QuarantinePanel({ entries, retentionDays, onRetry, onDelete }: {
   entries: GEDQuarantineEntry[]; retentionDays: number;
-  onRetry: (e: GEDQuarantineEntry) => Promise<void>;
+  onRetry: (e: GEDQuarantineEntry, forceIndex?: boolean) => Promise<void>;
   onDelete: (e: GEDQuarantineEntry) => Promise<void>;
 }) {
   if (entries.length === 0) return null;
@@ -1123,10 +1148,15 @@ export default function GEDPage() {
     setDeletingFolder(null);
   };
 
-  const handleRetryQuarantine = async (entry: GEDQuarantineEntry) => {
+  const handleRetryQuarantine = async (entry: GEDQuarantineEntry, forceIndex = false) => {
     try {
-      await retryGEDQuarantine(entry.file_path);
-      setUploadMsg({ type: "ok", text: `Réindexation lancée pour ${entry.filename}…` });
+      await retryGEDQuarantine(entry.file_path, forceIndex);
+      setUploadMsg({
+        type: "ok",
+        text: forceIndex
+          ? `Indexation forcée lancée pour ${entry.filename}…`
+          : `Réindexation lancée pour ${entry.filename}…`,
+      });
       startPolling(selectedFolder, search);
     } catch (e: unknown) {
       setUploadMsg({ type: "err", text: e instanceof Error ? e.message : "Erreur réessai" });

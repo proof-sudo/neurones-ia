@@ -401,9 +401,17 @@ async def upload_file(
     }
 
 
-async def _index_file(ged_indexer, file_path: Path, doc_type: DocumentType, force: bool = False):
+async def _index_file(
+    ged_indexer,
+    file_path: Path,
+    doc_type: DocumentType,
+    force: bool = False,
+    bypass_validation: bool = False,
+):
     try:
-        indexed = await ged_indexer.process(file_path, doc_type, force=force)
+        indexed = await ged_indexer.process(
+            file_path, doc_type, force=force, bypass_validation=bypass_validation
+        )
         logger.info("Indexation %s : %s", file_path.name, "OK" if indexed else "ignoré (inchangé)")
     except Exception as e:
         logger.error("Erreur indexation %s : %s", file_path.name, e)
@@ -466,6 +474,11 @@ async def delete_quarantine(file_path: str, request: Request):
 
 class RetryRequest(BaseModel):
     file_path: str
+    # Trappe d'acceptation manuelle : accepte le document malgré l'échec de validation
+    # qualité (texte trop court, ratio PDF). À n'activer qu'après revue humaine — ex.
+    # une certification scannée légitimement courte. Les seuils restent inchangés pour
+    # l'ingestion automatique.
+    force_index: bool = False
 
 
 @router.post("/ged/quarantine/retry")
@@ -474,7 +487,10 @@ async def retry_quarantine(
     request: Request,
     background_tasks: BackgroundTasks,
 ):
-    """Retente l'indexation d'un fichier en quarantaine."""
+    """Retente l'indexation d'un fichier en quarantaine.
+
+    Avec force_index=True, la validation qualité est ignorée (acceptation manuelle).
+    """
     path = Path(body.file_path)
     if not path.exists():
         raise HTTPException(status_code=404, detail="Fichier introuvable sur le disque")
@@ -483,8 +499,11 @@ async def retry_quarantine(
     folder_name = next((p for p in parts if p in _TYPE_MAP), None)
     doc_type = _TYPE_MAP.get(folder_name, {}).get("doc_type", DocumentType.UNKNOWN) if folder_name else DocumentType.UNKNOWN
     ged_indexer = _container(request).ged_indexer
-    background_tasks.add_task(_index_file, ged_indexer, path, doc_type)
-    return {"status": "retrying", "file_path": body.file_path}
+    background_tasks.add_task(
+        _index_file, ged_indexer, path, doc_type,
+        force=body.force_index, bypass_validation=body.force_index,
+    )
+    return {"status": "retrying", "file_path": body.file_path, "force_index": body.force_index}
 
 
 # ── DELETE /ged/files/{doc_id} ────────────────────────────────────────────────
