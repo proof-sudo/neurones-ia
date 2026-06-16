@@ -185,26 +185,22 @@ export default function ChatPage() {
     } catch { return "neurones_session_id"; }
   }, []);
 
-  const [sessionId, setSessionId] = useState<string>(() => {
-    if (typeof window !== "undefined") {
-      const key = (() => {
-        try {
-          const raw = localStorage.getItem("neurones_user");
-          const uid = raw ? (JSON.parse(raw) as { id: number }).id : 0;
-          return `neurones_session_${uid}`;
-        } catch { return "neurones_session_id"; }
-      })();
-      let id = localStorage.getItem(key);
-      if (!id) {
-        id = generateSessionId();
-        localStorage.setItem(key, id);
-      }
-      return id;
-    }
-    return generateSessionId();
-  });
+  // État initial stable (identique serveur/client) → évite le hydration mismatch.
+  // L'ID réel est résolu côté client uniquement, dans le useEffect ci-dessous.
+  const [sessionId, setSessionId] = useState<string>("");
   const bottomRef = useRef<HTMLDivElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+
+  // Résolution de l'ID de session — localStorage n'existe pas au rendu serveur,
+  // donc on lit/génère exclusivement après le montage (strict useEffect).
+  useEffect(() => {
+    let id = localStorage.getItem(sessionKey);
+    if (!id) {
+      id = generateSessionId();
+      localStorage.setItem(sessionKey, id);
+    }
+    setSessionId(id);
+  }, [sessionKey]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -218,6 +214,7 @@ export default function ChatPage() {
   }, [input]);
 
   useEffect(() => {
+    if (!sessionId) return;
     const saved = localStorage.getItem(`neurones_chat_${sessionId}`);
     if (saved) {
       try {
@@ -229,6 +226,7 @@ export default function ChatPage() {
 
   // Debounce à 500ms — évite 100+ writes/s pendant le streaming
   useEffect(() => {
+    if (!sessionId) return;
     const completed = messages.filter((m) => !m.streaming && !m.thinking);
     if (completed.length === 0) return;
     const timer = window.setTimeout(() => {

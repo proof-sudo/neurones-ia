@@ -454,15 +454,27 @@ function EvaluationModalitiesCard({ evaluation }: { evaluation?: EvaluationModal
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 mb-2">
         <div className="bg-[#eef2f7] rounded-lg p-3">
           <div className="text-[10px] font-medium text-[#0a2a43] uppercase tracking-wide">Pondération technique</div>
-          <div className="text-2xl font-bold text-[#0a2a43] mt-1">{ponderation_technique}<span className="text-sm font-medium">%</span></div>
+          {ponderation_technique > 0 ? (
+            <div className="text-2xl font-bold text-[#0a2a43] mt-1">{ponderation_technique}<span className="text-sm font-medium">%</span></div>
+          ) : (
+            <div className="text-sm font-medium text-slate-400 italic mt-2">Non précisé dans l&apos;AO</div>
+          )}
         </div>
         <div className="bg-teal-50 rounded-lg p-3">
           <div className="text-[10px] font-medium text-teal-700 uppercase tracking-wide">Pondération financière</div>
-          <div className="text-2xl font-bold text-teal-700 mt-1">{ponderation_financiere}<span className="text-sm font-medium">%</span></div>
+          {ponderation_financiere > 0 ? (
+            <div className="text-2xl font-bold text-teal-700 mt-1">{ponderation_financiere}<span className="text-sm font-medium">%</span></div>
+          ) : (
+            <div className="text-sm font-medium text-slate-400 italic mt-2">Non précisé dans l&apos;AO</div>
+          )}
         </div>
         <div className="bg-slate-50 rounded-lg p-3">
           <div className="text-[10px] font-medium text-slate-500 uppercase tracking-wide">Seuil minimum technique</div>
-          <div className="text-2xl font-bold text-slate-700 mt-1">{seuil_minimum_technique}<span className="text-sm font-medium">/100</span></div>
+          {seuil_minimum_technique > 0 ? (
+            <div className="text-2xl font-bold text-slate-700 mt-1">{seuil_minimum_technique}<span className="text-sm font-medium">/100</span></div>
+          ) : (
+            <div className="text-sm font-medium text-slate-400 italic mt-2">Non précisé dans l&apos;AO</div>
+          )}
         </div>
       </div>
       {formule_notation_financiere && (

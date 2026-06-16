@@ -717,3 +717,4 @@ feature/ma-feature  →  dev  →  main  →  déploiement automatique VPS
 | Application (préprod) | http://187.127.228.104:8080 |
 | Repo GitHub | https://github.com/proof-sudo/neurones-ia |
 | Odoo (production) | https://odoo.neuronestech.com |
+

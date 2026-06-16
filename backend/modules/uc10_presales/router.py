@@ -532,15 +532,32 @@ async def export_analysis(body: AnalysisExportRequest, request: Request):
                 for run in para.runs:
                     run.bold = True; run.font.color.rgb = h["C_WHITE"]; run.font.size = Pt(10)
         vals_row = eval_t.add_row().cells
-        vals_row[0].text = f"{evaluation.ponderation_technique} %"
-        vals_row[1].text = f"{evaluation.ponderation_financiere} %"
-        vals_row[2].text = f"{evaluation.seuil_minimum_technique} / 100"
-        for cell, bg in zip(vals_row, ["EFF6FF", "EEF2FF", "F1F5F9"]):
+        vals_row[0].text = (
+            f"{evaluation.ponderation_technique} %"
+            if evaluation.ponderation_technique > 0 else "Non précisé dans l'AO"
+        )
+        vals_row[1].text = (
+            f"{evaluation.ponderation_financiere} %"
+            if evaluation.ponderation_financiere > 0 else "Non précisé dans l'AO"
+        )
+        vals_row[2].text = (
+            f"{evaluation.seuil_minimum_technique} / 100"
+            if evaluation.seuil_minimum_technique > 0 else "Non précisé dans l'AO"
+        )
+        eval_present = [
+            evaluation.ponderation_technique > 0,
+            evaluation.ponderation_financiere > 0,
+            evaluation.seuil_minimum_technique > 0,
+        ]
+        for cell, bg, present in zip(vals_row, ["EFF6FF", "EEF2FF", "F1F5F9"], eval_present):
             h["cell_bg"](cell, bg)
             for para in cell.paragraphs:
                 para.alignment = h["WD_ALIGN_PARAGRAPH"].CENTER
                 for run in para.runs:
-                    run.bold = True; run.font.size = Pt(14); run.font.color.rgb = h["C_NAVY"]
+                    if present:
+                        run.bold = True; run.font.size = Pt(14); run.font.color.rgb = h["C_NAVY"]
+                    else:
+                        run.italic = True; run.font.size = Pt(9); run.font.color.rgb = h["C_GRAY"]
         doc.add_paragraph("")
 
         if evaluation.formule_notation_financiere:
