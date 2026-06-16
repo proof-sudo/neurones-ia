@@ -6,6 +6,11 @@ import platform
 import pdfplumber
 
 from core.ports.document_parser import DocumentParser
+from adapters.parser.markdown_fidelity import (
+    alnum_count as _alnum_count,
+    is_faithful as _is_faithful,
+    FIDELITY_MIN_RATIO as _FIDELITY_MIN_RATIO,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +20,13 @@ _FITZ_AVAILABLE = False
 try:
     import fitz  # PyMuPDF
     _FITZ_AVAILABLE = True
+except ImportError:
+    pass
+
+_PYMUPDF4LLM_AVAILABLE = False
+try:
+    import pymupdf4llm  # PDF → Markdown (titres, tableaux, listes) ; s'appuie sur PyMuPDF
+    _PYMUPDF4LLM_AVAILABLE = True
 except ImportError:
     pass
 
@@ -46,13 +58,33 @@ except ImportError:
 
 class PDFAdapter(DocumentParser):
     """
-    Extraction de texte PDF avec triple fallback :
-    1. pdfplumber  — PDFs structurés standard
+    Extraction de texte PDF avec cascade :
+    0. pymupdf4llm — Markdown structuré (titres, tableaux, listes) ; repli si fidélité < seuil
+    1. pdfplumber  — PDFs structurés standard (texte plat)
     2. PyMuPDF     — PDFs complexes / encodage non-standard
     3. OCR (PyMuPDF + pytesseract) — PDFs scannés (images)
     """
 
     async def parse(self, file_path: str) -> str:
+        # Étape 0 : Markdown structuré (pymupdf4llm) — préserve titres, tableaux, listes.
+        # Garde-fou : repli sur le texte plat si la conversion perd du contenu.
+        if _PYMUPDF4LLM_AVAILABLE:
+            markdown = self._try_pymupdf4llm(file_path)
+            if markdown:
+                baseline = self._plain_text_baseline(file_path)
+                if _is_faithful(markdown, baseline):
+                    logger.info(
+                        "PDF → Markdown via pymupdf4llm (%d caractères) : %s",
+                        len(markdown), file_path,
+                    )
+                    return markdown
+                logger.warning(
+                    "PDF → Markdown rejeté (fidélité %d/%d car. alphanum. < %.0f %%) — "
+                    "repli sur le texte plat : %s",
+                    _alnum_count(markdown), _alnum_count(baseline),
+                    _FIDELITY_MIN_RATIO * 100, file_path,
+                )
+
         # Étape 1 : pdfplumber
         text = self._try_pdfplumber(file_path)
         if text:
@@ -77,6 +109,24 @@ class PDFAdapter(DocumentParser):
         return ""
 
     # ── Extracteurs ────────────────────────────────────────────────────────────
+
+    def _try_pymupdf4llm(self, file_path: str) -> str:
+        """Conversion PDF → Markdown (titres #, tableaux |…|, listes). Vide si échec."""
+        try:
+            import pymupdf4llm
+            md = pymupdf4llm.to_markdown(file_path)
+            return md.strip() if md else ""
+        except Exception as e:
+            logger.debug("pymupdf4llm échoué sur %s : %s", file_path, e)
+            return ""
+
+    def _plain_text_baseline(self, file_path: str) -> str:
+        """Texte plat de référence pour juger la fidélité du Markdown (PyMuPDF puis pdfplumber)."""
+        if _FITZ_AVAILABLE:
+            text = self._try_pymupdf(file_path)
+            if text:
+                return text
+        return self._try_pdfplumber(file_path)
 
     def _try_pdfplumber(self, file_path: str) -> str:
         try:
