@@ -253,18 +253,31 @@ _CRM_TOOLS = [
     {
         "name": "rechercher_documents_ged",
         "description": (
-            "Recherche dans la base documentaire GED (Gestion Électronique de Documents) "
+            "Recherche SÉMANTIQUE dans la base documentaire GED (Gestion Électronique de Documents) "
             "de Neurones Technologies. Contient : CVs des ingénieurs, offres techniques soumises, "
             "procédures internes, PV de réunion, fiches techniques produits, appels d'offres. "
             "Utilise cet outil pour : contenu d'un document, compétences d'un ingénieur, "
             "spécifications d'un appel d'offres, texte d'une procédure, références de projets passés. "
-            "Utilise aussi pour 'combien de documents', 'quels fichiers', 'liste des documents GED'."
+            "ATTENTION : ne retourne QUE les quelques documents les plus pertinents, PAS la liste "
+            "complète. Pour 'combien de documents', 'quels fichiers', 'liste/inventaire de la GED', "
+            "utilise plutôt l'outil 'inventaire_ged'."
         ),
         "input_schema": {
             "type": "object",
             "properties": {"query": {"type": "string", "description": "Recherche dans les documents"}},
             "required": ["query"],
         },
+    },
+    {
+        "name": "inventaire_ged",
+        "description": (
+            "Retourne l'inventaire EXHAUSTIF de la base documentaire GED : le nombre total de "
+            "documents indexés et leur répartition par type (CV, ABE, offre technique, etc.). "
+            "C'est la SEULE source fiable pour répondre à : 'combien de documents en GED', "
+            "'quels types de documents', 'répartition de la GED', 'la GED est-elle complète'. "
+            "N'utilise PAS rechercher_documents_ged pour ces questions (qui ne voit qu'un sous-ensemble)."
+        ),
+        "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "rechercher_commandes_par_produit",
@@ -577,6 +590,21 @@ _CRM_TOOLS = [
 ]
 
 # Labels lisibles pour les événements SSE progress
+# Libellés FR des types de documents (DocumentType) pour l'inventaire GED
+_GED_TYPE_LABELS = {
+    "cv": "CV / certifications",
+    "offre_technique": "Offres techniques",
+    "abe": "Attestations de bonne exécution (ABE)",
+    "pv_recette": "PV de recette",
+    "procedure": "Procédures",
+    "fiche_technique": "Fiches techniques",
+    "compte_rendu": "Comptes-rendus",
+    "ao": "Appels d'offres",
+    "template": "Modèles / templates",
+    "marches_similaires": "Marchés similaires",
+    "unknown": "Type non classé",
+}
+
 _TOOL_LABELS = {
     "rechercher_clients": "Recherche de clients dans Odoo…",
     "obtenir_donnees_client": "Consultation des données client…",
@@ -584,6 +612,7 @@ _TOOL_LABELS = {
     "statistiques_globales": "Calcul des statistiques…",
     "requete_analytique": "Analyse des données Odoo…",
     "rechercher_documents_ged": "Recherche dans les documents GED…",
+    "inventaire_ged": "Inventaire de la base documentaire GED…",
     "rechercher_commandes_par_produit": "Recherche de commandes par produit…",
     "analyse_ca_par_produit": "Analyse du CA par produit…",
     "obtenir_dossier": "Consultation du dossier commercial…",
@@ -1042,11 +1071,38 @@ async def _execute_tool(tool_name: str, tool_input: dict, crm_repo, rag_engine) 
                 "clients_à_cibler": data,
             }, ensure_ascii=False, default=str), False
 
+        elif tool_name == "inventaire_ged":
+            try:
+                inv = await rag_engine.inventory()
+                par_type = {
+                    _GED_TYPE_LABELS.get(t, t): n for t, n in inv["par_type"].items()
+                }
+                return json.dumps({
+                    "total_documents": inv["total_documents"],
+                    "total_chunks_indexes": inv["total_chunks"],
+                    "repartition_par_type": par_type,
+                    "note": (
+                        "Inventaire exhaustif et exact de la GED. Utilise total_documents comme "
+                        "nombre total de documents."
+                    ),
+                }, ensure_ascii=False), False
+            except Exception as e:
+                return json.dumps({"erreur": f"Inventaire GED indisponible : {e}."}), True
+
         elif tool_name == "rechercher_documents_ged":
             try:
                 sources = await rag_engine.search(tool_input["query"])
+                # Total exhaustif pour éviter que le LLM prenne ce top-k pour toute la GED.
+                try:
+                    total_ged = (await rag_engine.inventory())["total_documents"]
+                except Exception:
+                    total_ged = None
                 if not sources:
-                    return json.dumps({"message": "Aucun document trouvé dans la GED pour cette recherche.", "documents": []}), False
+                    return json.dumps({
+                        "message": "Aucun document trouvé dans la GED pour cette recherche.",
+                        "documents": [],
+                        "total_documents_ged": total_ged,
+                    }, ensure_ascii=False), False
                 return json.dumps({
                     "documents": [
                         {
@@ -1056,7 +1112,13 @@ async def _execute_tool(tool_name: str, tool_input: dict, crm_repo, rag_engine) 
                             "pertinence": round(s.relevance_score * 100),
                         }
                         for s in sources
-                    ]
+                    ],
+                    "total_documents_ged": total_ged,
+                    "avertissement": (
+                        "Ces documents sont seulement les plus pertinents pour la recherche, "
+                        "PAS la liste complète de la GED. Pour le nombre total ou un inventaire, "
+                        "utilise l'outil inventaire_ged."
+                    ),
                 }, ensure_ascii=False), False
             except Exception as e:
                 return json.dumps({"erreur": f"GED indisponible : {e}. Essaie un autre outil."}), True

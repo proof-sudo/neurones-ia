@@ -29,5 +29,9 @@ class VectorStore(ABC):
         """Retourne tous les doc_ids indexés."""
 
     @abstractmethod
+    async def inventory(self) -> dict:
+        """Inventaire exhaustif : total documents, total chunks, répartition par type."""
+
+    @abstractmethod
     async def get_by_chunk_ids(self, chunk_ids: list[str]) -> list[Source]:
         """Récupère des chunks par leur id exact (pour résoudre les hits BM25-only en Source)."""

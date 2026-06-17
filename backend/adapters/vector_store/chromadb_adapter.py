@@ -122,6 +122,35 @@ class ChromaDBAdapter(VectorStore):
         results = self._collection.get(include=["metadatas"])
         return list({m["doc_id"] for m in results["metadatas"]})
 
+    async def inventory(self) -> dict:
+        """Inventaire exhaustif de la GED : nombre réel de documents, chunks, et répartition
+        par type. Contrairement à search_dense (plafonné à top_k), parcourt TOUTES les
+        métadonnées → sert de source de vérité pour 'combien de documents en GED ?'.
+
+        Chaque fichier est compté UNE fois, assigné à son doc_type majoritaire : des chunks
+        périmés taggés sous un autre type (suite à une réindexation) ne le double-comptent pas,
+        donc la somme de par_type égale total_documents."""
+        results = self._collection.get(include=["metadatas"])
+        metadatas = results.get("metadatas") or []
+        # filename -> {doc_type: nb_chunks}
+        type_counts: dict[str, dict[str, int]] = {}
+        for m in metadatas:
+            filename = m.get("filename") or m.get("doc_id") or ""
+            if not filename:
+                continue
+            doc_type = m.get("doc_type") or "unknown"
+            counts = type_counts.setdefault(filename, {})
+            counts[doc_type] = counts.get(doc_type, 0) + 1
+        par_type: dict[str, int] = {}
+        for counts in type_counts.values():
+            dominant = max(counts, key=counts.get)
+            par_type[dominant] = par_type.get(dominant, 0) + 1
+        return {
+            "total_documents": len(type_counts),
+            "total_chunks": len(metadatas),
+            "par_type": dict(sorted(par_type.items())),
+        }
+
     async def get_by_chunk_ids(self, chunk_ids: list[str]) -> list[Source]:
         """Récupère des chunks par leur id exact. Sert à résoudre en Source les documents
         trouvés UNIQUEMENT par BM25 (absents du top-k dense) pour un vrai hybride."""

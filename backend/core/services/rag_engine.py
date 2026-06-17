@@ -83,6 +83,12 @@ class RAGEngine:
         logger.debug("RAG: %d sources uniques pour '%s'", len(top), query[:50])
         return top
 
+    async def inventory(self) -> dict:
+        """Inventaire exhaustif de la GED (total documents/chunks + répartition par type).
+        Source de vérité pour les questions quantitatives ('combien de documents ?'),
+        que la recherche sémantique plafonnée à rerank_top_k ne peut pas répondre."""
+        return await self._vector_store.inventory()
+
     async def search_diverse(
         self,
         query: str,
