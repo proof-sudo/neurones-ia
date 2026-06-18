@@ -31,3 +31,7 @@ class SparseSearch(ABC):
     @abstractmethod
     def load(self) -> None:
         """Charge l'index depuis le disque."""
+
+    @abstractmethod
+    def clear(self) -> None:
+        """Vide entièrement l'index (reconstruction à neuf)."""

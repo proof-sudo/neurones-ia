@@ -151,6 +151,32 @@ class ChromaDBAdapter(VectorStore):
             "par_type": dict(sorted(par_type.items())),
         }
 
+    def reset(self) -> None:
+        """Supprime puis recrée la collection vide (reconstruction à neuf)."""
+        try:
+            self._client.delete_collection(COLLECTION_NAME)
+        except Exception as exc:
+            logger.debug("reset : delete_collection sans effet (%s)", exc)
+        self._collection = self._get_or_create_collection()
+        self._approx_count = 0
+        logger.info("ChromaDB : collection '%s' réinitialisée (rebuild)", COLLECTION_NAME)
+
+    async def delete_orphans(self, valid_doc_ids: set[str]) -> list[str]:
+        """Supprime les chunks dont le doc_id n'est plus un document actif du registre
+        (orphelins laissés par d'anciennes réindexations sous un autre doc_type). Retourne
+        les chunk_ids supprimés (pour purge BM25 en miroir)."""
+        results = self._collection.get(include=["metadatas"])
+        ids = results.get("ids") or []
+        metas = results.get("metadatas") or []
+        orphan_ids = [
+            cid for cid, m in zip(ids, metas) if m.get("doc_id") not in valid_doc_ids
+        ]
+        if orphan_ids:
+            self._collection.delete(ids=orphan_ids)
+            self._approx_count = max(0, self._approx_count - len(orphan_ids))
+            logger.info("Purge orphelins : %d chunks supprimés", len(orphan_ids))
+        return orphan_ids
+
     async def get_by_chunk_ids(self, chunk_ids: list[str]) -> list[Source]:
         """Récupère des chunks par leur id exact. Sert à résoudre en Source les documents
         trouvés UNIQUEMENT par BM25 (absents du top-k dense) pour un vrai hybride."""

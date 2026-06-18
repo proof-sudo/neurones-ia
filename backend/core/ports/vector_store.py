@@ -33,5 +33,13 @@ class VectorStore(ABC):
         """Inventaire exhaustif : total documents, total chunks, répartition par type."""
 
     @abstractmethod
+    async def delete_orphans(self, valid_doc_ids: set[str]) -> list[str]:
+        """Supprime les chunks dont le doc_id n'est pas dans valid_doc_ids. Retourne les ids supprimés."""
+
+    @abstractmethod
+    def reset(self) -> None:
+        """Vide entièrement le stockage vectoriel (reconstruction à neuf)."""
+
+    @abstractmethod
     async def get_by_chunk_ids(self, chunk_ids: list[str]) -> list[Source]:
         """Récupère des chunks par leur id exact (pour résoudre les hits BM25-only en Source)."""

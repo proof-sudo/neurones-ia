@@ -51,13 +51,23 @@ class Settings(BaseSettings):
     retrieval_top_k: int = 10
     rerank_top_k: int = 5
     max_context_tokens: int = 3000
+    # Chunks max conservés par fichier après fusion (dédoublonnage). 1 = un seul chunk/doc
+    # (max de diversité) mais un CV multi-pages ne remonte alors que sa page la mieux classée
+    # → ses certifs (autre page) sont perdues. 2 = recall des docs multi-pages sans noyer le top-k.
+    rag_max_chunks_per_file: int = 2
     # Taille d'extrait conservée par chunk (chars). Un chunk fait ~600 mots (~4000 chars) :
     # un excerpt trop court (ex. 300) ne laisse au LLM que ~8% du CV/offre → notation sur des bribes.
     excerpt_chars: int = 2500
 
     # OCR PDF
-    ocr_max_pages: int = 40           # cap pages OCR (perf) — au-delà, WARNING explicite
-    ocr_min_chars_per_page: int = 80  # en-dessous, la couche texte est jugée trop maigre → OCR
+    ocr_max_pages: int = 40              # cap pages OCR (perf) — au-delà, WARNING explicite
+    ocr_min_chars_per_page: int = 80     # en-dessous, la couche texte est jugée trop maigre → OCR
+    # Page avec une image significative (certif/diplôme scanné) ET peu de texte → OCR ciblé,
+    # même si la couche texte dépasse ocr_min_chars_per_page (cas du titre « Certifications »
+    # suivi d'une image). Évite de perdre les pages-image noyées dans un document textuel.
+    ocr_image_page_text_max: int = 600   # plafond texte pour déclencher l'OCR d'une page-image
+    ocr_image_area_ratio: float = 0.06   # image couvrant ≥ 6 % de la page = significative
+                                         # (sépare nettement logos ~1 % des scans de certifs ~9 %+)
 
     # Chat
     max_history_turns: int = 6

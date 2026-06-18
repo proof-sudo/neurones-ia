@@ -22,3 +22,7 @@ class DocumentRegistry(ABC):
     @abstractmethod
     async def list_active_entries(self, doc_type: Optional[DocumentType] = None) -> list[GEDEntry]:
         """Liste toutes les entrées actives, filtrées par type si spécifié."""
+
+    @abstractmethod
+    async def clear_all(self) -> int:
+        """Supprime toutes les entrées du registre (reconstruction à neuf). Retourne le nombre supprimé."""

@@ -2,7 +2,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.ports.document_registry import DocumentRegistry
@@ -60,6 +60,12 @@ class SQLiteRegistryAdapter(DocumentRegistry):
                 query = query.where(GEDEntryModel.doc_type == doc_type.value)
             result = await session.execute(query)
             return [self._to_domain(row) for row in result.scalars()]
+
+    async def clear_all(self) -> int:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(delete(GEDEntryModel))
+            await session.commit()
+            return result.rowcount or 0
 
     @staticmethod
     def _to_domain(model: GEDEntryModel) -> GEDEntry:

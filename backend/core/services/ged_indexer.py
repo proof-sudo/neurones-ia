@@ -42,10 +42,19 @@ class GEDIndexer:
         self._chunk_size = chunk_size
         self._chunk_overlap = chunk_overlap
 
-    async def process(self, file_path: Path, doc_type: DocumentType = DocumentType.UNKNOWN) -> bool:
+    async def process(
+        self,
+        file_path: Path,
+        doc_type: DocumentType = DocumentType.UNKNOWN,
+        force: bool = False,
+    ) -> bool:
         """
         Indexe un fichier si son contenu a changé depuis la dernière indexation.
         Retourne True si le fichier a été (re-)indexé, False si ignoré (hash identique).
+
+        force=True : ré-indexe même si le hash est identique. Indispensable après une
+        amélioration du parser (ex. OCR ciblé) qui change le texte extrait sans changer
+        le fichier source.
         """
         file_str = str(file_path)
 
@@ -53,7 +62,7 @@ class GEDIndexer:
         current_hash = await asyncio.to_thread(self._compute_hash_sync, file_path)
 
         existing = await self._registry.get_entry(file_str)
-        if existing and existing.hash_sha256 == current_hash:
+        if existing and existing.hash_sha256 == current_hash and not force:
             logger.debug("Fichier inchangé, skip : %s", file_path.name)
             return False
 
@@ -108,6 +117,29 @@ class GEDIndexer:
 
         logger.info("Indexé : %s → %d chunks (doc_id=%s)", file_path.name, len(chunks), doc_id)
         return True
+
+    async def reset_index(self) -> dict:
+        """Vide entièrement l'index (ChromaDB + BM25 + registre) pour une reconstruction à neuf.
+        À enchaîner avec une ré-indexation de tous les fichiers du disque."""
+        self._vector_store.reset()
+        self._sparse_search.clear()
+        removed = await self._registry.clear_all()
+        logger.info("Index GED réinitialisé — %d entrées de registre purgées", removed)
+        return {"registry_cleared": removed}
+
+    async def cleanup_orphans(self) -> dict:
+        """Purge les chunks orphelins : ceux dont le doc_id n'est plus un document actif du
+        registre (séquelles de réindexations passées sous un autre doc_type). Nettoie aussi
+        le miroir BM25. Retourne un récapitulatif."""
+        entries = await self._registry.list_active_entries()
+        valid_doc_ids = {e.doc_id for e in entries}
+        orphan_ids = await self._vector_store.delete_orphans(valid_doc_ids)
+        if orphan_ids:
+            self._sparse_search.remove(orphan_ids)
+            await asyncio.to_thread(self._sparse_search.save)
+        logger.info("cleanup_orphans : %d chunks orphelins purgés (%d docs actifs)",
+                    len(orphan_ids), len(valid_doc_ids))
+        return {"orphans_deleted": len(orphan_ids), "active_docs": len(valid_doc_ids)}
 
     async def remove(self, file_path: Path) -> None:
         """Supprime un fichier du RAG (suite à suppression dans la GED)."""

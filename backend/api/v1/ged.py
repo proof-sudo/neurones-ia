@@ -238,9 +238,9 @@ async def upload_file(
     }
 
 
-async def _index_file(ged_indexer, file_path: Path, doc_type: DocumentType):
+async def _index_file(ged_indexer, file_path: Path, doc_type: DocumentType, force: bool = False):
     try:
-        indexed = await ged_indexer.process(file_path, doc_type)
+        indexed = await ged_indexer.process(file_path, doc_type, force=force)
         logger.info("Indexation %s : %s", file_path.name, "OK" if indexed else "ignoré (inchangé)")
     except Exception as e:
         logger.error("Erreur indexation %s : %s", file_path.name, e)
@@ -286,13 +286,82 @@ async def create_folder(body: FolderRequest):
     return {"path": body.path, "created": True}
 
 
-@router.post("/ged/reindex")
-async def reindex_all(request: Request, background_tasks: BackgroundTasks):
-    """Relance l'indexation de tous les fichiers non encore indexés (ou modifiés)."""
-    registry = _container(request).doc_registry
+@router.post("/ged/rebuild")
+async def rebuild_index(request: Request, background_tasks: BackgroundTasks):
+    """Reconstruction à neuf : vide ChromaDB + BM25 + registre, puis ré-indexe tous les
+    fichiers réellement présents sur le disque (OCR + embeddings). Élimine d'un coup les
+    chunks orphelins, les entrées de registre périmées et les variantes de chemin accumulées."""
     ged_indexer = _container(request).ged_indexer
     ged_root_abs = _GED_ROOT.resolve()
 
+    reset = await ged_indexer.reset_index()
+
+    pending = []
+    for folder_name, meta in _TYPE_MAP.items():
+        root = ged_root_abs / folder_name
+        if not root.exists():
+            continue
+        for f in root.rglob("*"):
+            if f.is_file() and f.suffix.lower() in _SUPPORTED_EXT:
+                pending.append((f, meta["doc_type"]))
+
+    for file_path, doc_type in pending:
+        background_tasks.add_task(_index_file, ged_indexer, file_path, doc_type, True)
+
+    return {
+        "reset": reset,
+        "queued": len(pending),
+        "message": f"Reconstruction à neuf : {len(pending)} fichier(s) en file d'indexation",
+    }
+
+
+@router.post("/ged/cleanup-orphans")
+async def cleanup_orphans(request: Request):
+    """Purge les chunks orphelins (doc_id absent du registre) de ChromaDB + BM25.
+    Utile après des réindexations passées ayant laissé un même fichier sous plusieurs doc_types."""
+    ged_indexer = _container(request).ged_indexer
+    result = await ged_indexer.cleanup_orphans()
+    return result
+
+
+def _doc_type_for(file_path: Path, ged_root_abs: Path) -> DocumentType:
+    """Déduit le doc_type d'un fichier depuis son dossier racine sous la GED."""
+    try:
+        rel = file_path.resolve().relative_to(ged_root_abs)
+        top = rel.parts[0] if rel.parts else ""
+        meta = _TYPE_MAP.get(top)
+        return meta["doc_type"] if meta else DocumentType.UNKNOWN
+    except (ValueError, RuntimeError):
+        return DocumentType.UNKNOWN
+
+
+@router.post("/ged/reindex")
+async def reindex_all(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    force: bool = False,
+    path: Optional[str] = None,
+):
+    """Relance l'indexation des fichiers GED.
+
+    - défaut : seulement les fichiers non encore indexés.
+    - force=true : ré-indexe TOUS les fichiers (à appliquer après une amélioration du parser,
+      ex. OCR ciblé des certifs en image — le contenu extrait change sans que le fichier change).
+    - path=<chemin relatif> : ne (ré-)indexe que ce fichier (implique force).
+    """
+    ged_indexer = _container(request).ged_indexer
+    ged_root_abs = _GED_ROOT.resolve()
+
+    # Ciblage d'un seul fichier
+    if path:
+        target = _safe_resolve(path)
+        if not target.is_file() or target.suffix.lower() not in _SUPPORTED_EXT:
+            raise HTTPException(status_code=404, detail="Fichier introuvable ou non supporté")
+        doc_type = _doc_type_for(target, ged_root_abs)
+        background_tasks.add_task(_index_file, ged_indexer, target, doc_type, True)
+        return {"queued": 1, "force": True, "message": f"Ré-indexation de {target.name} en file"}
+
+    registry = _container(request).doc_registry
     entries = await registry.list_active_entries()
     indexed_paths = {str(Path(e.file_path).resolve()) for e in entries}
 
@@ -303,13 +372,18 @@ async def reindex_all(request: Request, background_tasks: BackgroundTasks):
             continue
         for f in root.rglob("*"):
             if f.is_file() and f.suffix.lower() in _SUPPORTED_EXT:
-                if str(f.resolve()) not in indexed_paths:
+                # force → tout ; sinon seulement ce qui n'est pas déjà indexé
+                if force or str(f.resolve()) not in indexed_paths:
                     pending.append((f, meta["doc_type"]))
 
     for file_path, doc_type in pending:
-        background_tasks.add_task(_index_file, ged_indexer, file_path, doc_type)
+        background_tasks.add_task(_index_file, ged_indexer, file_path, doc_type, force)
 
-    return {"queued": len(pending), "message": f"{len(pending)} fichier(s) mis en file d'indexation"}
+    return {
+        "queued": len(pending),
+        "force": force,
+        "message": f"{len(pending)} fichier(s) mis en file d'indexation",
+    }
 
 
 @router.delete("/ged/folders")

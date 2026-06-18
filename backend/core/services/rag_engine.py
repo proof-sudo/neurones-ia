@@ -71,13 +71,15 @@ class RAGEngine:
 
         fused = self._reciprocal_rank_fusion(dense_results, sparse_results, extra_sources)
 
-        # Dédoublonnage par filename
-        seen_filenames: set[str] = set()
+        # Dédoublonnage par filename — on garde jusqu'à rag_max_chunks_per_file chunks par
+        # fichier (et non 1 seul) : un CV multi-pages doit pouvoir remonter son intro ET sa
+        # page de certifications, sinon le chunk le mieux classé masque les autres.
+        per_file: dict[str, int] = {}
         unique: list[Source] = []
         for src in fused:
-            if src.filename not in seen_filenames:
+            if per_file.get(src.filename, 0) < settings.rag_max_chunks_per_file:
                 unique.append(src)
-                seen_filenames.add(src.filename)
+                per_file[src.filename] = per_file.get(src.filename, 0) + 1
 
         top = unique[: self._rerank_top_k]
         logger.debug("RAG: %d sources uniques pour '%s'", len(top), query[:50])

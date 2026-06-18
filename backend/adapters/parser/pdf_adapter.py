@@ -54,38 +54,60 @@ class PDFAdapter(DocumentParser):
     """
 
     async def parse(self, file_path: str) -> str:
-        n_pages = self._page_count(file_path)
+        # Décision OCR PAGE PAR PAGE (et non sur la moyenne du document) : un CV peut
+        # avoir des pages texte ET une page de certifications/diplômes en image. Une
+        # moyenne globale « ok » sauterait l'OCR et perdrait cette page-image noyée dans
+        # un document par ailleurs textuel. On OCR-ise donc uniquement les pages maigres.
+        plumber_pages = self._pdfplumber_pages(file_path)
+        mupdf_pages = self._pymupdf_pages(file_path) if _FITZ_AVAILABLE else []
+        n_pages = max(len(plumber_pages), len(mupdf_pages))
 
-        # Étape 1 : pdfplumber
-        text = self._try_pdfplumber(file_path)
+        if n_pages == 0:
+            logger.warning("Aucune page lisible dans %s", file_path)
+            return ""
 
-        # Étape 2 : PyMuPDF (garde le plus riche des deux)
-        if _FITZ_AVAILABLE:
-            text2 = self._try_pymupdf(file_path)
-            if len(text2) > len(text):
-                logger.info("PDF : PyMuPDF plus riche que pdfplumber sur %s", file_path)
-                text = text2
+        # Pages contenant une image significative (scan de certif/diplôme) — un second signal
+        # au-delà du simple compte de caractères, pour les pages « titre + image ».
+        image_pages = self._image_heavy_pages(file_path) if _FITZ_AVAILABLE else set()
 
-        # Si la couche texte est suffisante, on s'arrête là (pas d'OCR inutile).
-        if text and self._text_layer_ok(text, n_pages):
-            return text
+        # Par page : on garde la couche texte la plus riche (pdfplumber vs PyMuPDF).
+        pages: list[str] = []
+        thin_pages: list[int] = []
+        for i in range(n_pages):
+            p = plumber_pages[i] if i < len(plumber_pages) else ""
+            m = mupdf_pages[i] if i < len(mupdf_pages) else ""
+            best = m if len(m) > len(p) else p
+            pages.append(best)
+            n_chars = len(best.strip())
+            # Maigre si : (a) presque pas de texte, ou (b) image significative + texte modéré
+            # (cas « Certifications » : un titre/légende noie le seuil mais le contenu est en image).
+            if n_chars < settings.ocr_min_chars_per_page or (
+                i in image_pages and n_chars < settings.ocr_image_page_text_max
+            ):
+                thin_pages.append(i)
 
-        # Étape 3 : OCR — soit aucun texte, soit couche texte anormalement maigre (PDF
-        # quasi scanné). On OCR-ise et on garde le résultat s'il est plus riche.
-        if _FITZ_AVAILABLE and _TESSERACT_AVAILABLE:
-            reason = "aucun texte" if not text else (
-                f"couche texte maigre (~{len(text) // max(1, n_pages)} chars/page < "
-                f"{settings.ocr_min_chars_per_page})"
+        # OCR ciblé : seulement les pages à couche texte maigre (scans, certifs en image).
+        if thin_pages and _FITZ_AVAILABLE and _TESSERACT_AVAILABLE:
+            logger.info(
+                "OCR ciblé sur %d/%d page(s) maigre(s) de %s : pages %s",
+                len(thin_pages), n_pages, file_path, thin_pages,
             )
-            logger.info("Lancement OCR sur %s (%s)…", file_path, reason)
-            ocr_text = self._try_ocr(file_path)
-            if len(ocr_text) > len(text):
-                logger.info("PDF extrait via OCR (%d caractères) : %s", len(ocr_text), file_path)
-                return ocr_text
+            ocr_by_page = self._ocr_pages(file_path, thin_pages)
+            for i, otext in ocr_by_page.items():
+                if len(otext) > len(pages[i]):
+                    logger.info("Page %d de %s récupérée par OCR (%d chars)", i, file_path, len(otext))
+                    pages[i] = otext
+        elif thin_pages and not (_FITZ_AVAILABLE and _TESSERACT_AVAILABLE):
+            logger.warning(
+                "%d page(s) maigre(s) dans %s mais OCR indisponible (fitz=%s, tesseract=%s) "
+                "— contenu en image non lu.",
+                len(thin_pages), file_path, _FITZ_AVAILABLE, _TESSERACT_AVAILABLE,
+            )
 
-        if not text:
+        result = "\n\n".join(p for p in pages if p.strip())
+        if not result:
             logger.warning("Aucun texte extrait de %s", file_path)
-        return text
+        return result
 
     @staticmethod
     def _page_count(file_path: str) -> int:
@@ -117,7 +139,37 @@ class PDFAdapter(DocumentParser):
 
     # ── Extracteurs ────────────────────────────────────────────────────────────
 
-    def _try_pdfplumber(self, file_path: str) -> str:
+    @staticmethod
+    def _image_heavy_pages(file_path: str) -> set[int]:
+        """Indices des pages contenant ≥ 1 image couvrant une fraction significative de la page
+        (settings.ocr_image_area_ratio). Sert à repérer les certifs/diplômes scannés posés sur
+        une page par ailleurs peu textuelle. Best-effort : toute erreur → page non signalée."""
+        heavy: set[int] = set()
+        try:
+            import fitz
+            with fitz.open(file_path) as doc:
+                for i, page in enumerate(doc):
+                    page_area = abs(page.rect.width * page.rect.height)
+                    if page_area <= 0:
+                        continue
+                    try:
+                        infos = page.get_image_info()
+                    except Exception:
+                        continue
+                    for info in infos:
+                        bbox = info.get("bbox")
+                        if not bbox:
+                            continue
+                        w, h = (bbox[2] - bbox[0]), (bbox[3] - bbox[1])
+                        if (abs(w * h) / page_area) >= settings.ocr_image_area_ratio:
+                            heavy.add(i)
+                            break
+        except Exception as e:
+            logger.debug("Détection d'images échouée sur %s : %s", file_path, e)
+        return heavy
+
+    def _pdfplumber_pages(self, file_path: str) -> list[str]:
+        """Texte par page via pdfplumber (tableaux rendus en Markdown inclus)."""
         try:
             with pdfplumber.open(file_path) as pdf:
                 pages = []
@@ -136,12 +188,14 @@ class PDFAdapter(DocumentParser):
                     tables_md = self._render_tables(page)
                     if tables_md:
                         parts.append(tables_md)
-                    if parts:
-                        pages.append("\n\n".join(parts))
-            return "\n\n".join(pages)
+                    pages.append("\n\n".join(parts))
+            return pages
         except Exception as e:
             logger.debug("pdfplumber échoué sur %s : %s", file_path, e)
-            return ""
+            return []
+
+    def _try_pdfplumber(self, file_path: str) -> str:
+        return "\n\n".join(p for p in self._pdfplumber_pages(file_path) if p.strip())
 
     @staticmethod
     def _render_tables(page) -> str:
@@ -167,44 +221,48 @@ class PDFAdapter(DocumentParser):
                 blocks.append(f"[TABLEAU {idx}]\n" + "\n".join(rows))
         return "\n\n".join(blocks)
 
-    def _try_pymupdf(self, file_path: str) -> str:
+    def _pymupdf_pages(self, file_path: str) -> list[str]:
+        """Texte par page via PyMuPDF."""
         try:
             import fitz
             pages = []
             with fitz.open(file_path) as doc:
                 for page in doc:
                     text = page.get_text("text")
-                    if text and text.strip():
-                        pages.append(text.strip())
-            return "\n\n".join(pages)
+                    pages.append(text.strip() if text else "")
+            return pages
         except Exception as e:
             logger.debug("PyMuPDF échoué sur %s : %s", file_path, e)
-            return ""
+            return []
 
-    def _try_ocr(self, file_path: str) -> str:
-        """Rendu page → image (200 DPI) puis OCR Tesseract (fra+eng). Max 20 pages."""
+    def _try_pymupdf(self, file_path: str) -> str:
+        return "\n\n".join(p for p in self._pymupdf_pages(file_path) if p.strip())
+
+    def _ocr_pages(self, file_path: str, page_indices: list[int]) -> dict[int, str]:
+        """OCR ciblé : rend chaque page demandée en image (200 DPI) puis Tesseract (fra+eng).
+        Retourne {index_page: texte}. Cappé à settings.ocr_max_pages pages OCR-isées."""
         try:
             import fitz
             import pytesseract
             from PIL import Image
 
-            pages_text = []
+            out: dict[int, str] = {}
             with fitz.open(file_path) as doc:
                 n = len(doc)
+                wanted = [i for i in page_indices if 0 <= i < n]
                 cap = settings.ocr_max_pages
-                max_pages = min(n, cap)  # cap pages pour éviter les timeouts
-                if n > cap:
+                if len(wanted) > cap:
                     logger.warning(
-                        "OCR TRONQUÉ : %d pages sur %d traitées (cap=%d) — pages %d→%d non lues "
-                        "sur %s. Relever settings.ocr_max_pages si nécessaire.",
-                        cap, n, cap, cap + 1, n, file_path,
+                        "OCR TRONQUÉ : %d pages à OCR-iser sur %s, cap=%d — pages %s non lues. "
+                        "Relever settings.ocr_max_pages si nécessaire.",
+                        len(wanted), file_path, cap, wanted[cap:],
                     )
-                for i in range(max_pages):
-                    page = doc[i]
-                    logger.debug("OCR page %d/%d…", i + 1, max_pages)
-                    # 200 DPI : bon compromis vitesse/qualité (était 300 DPI → trop lent)
-                    mat = fitz.Matrix(200 / 72, 200 / 72)
-                    pix = page.get_pixmap(matrix=mat, alpha=False)
+                    wanted = wanted[:cap]
+                # 200 DPI : bon compromis vitesse/qualité (était 300 DPI → trop lent)
+                mat = fitz.Matrix(200 / 72, 200 / 72)
+                for i in wanted:
+                    logger.debug("OCR page %d de %s…", i, file_path)
+                    pix = doc[i].get_pixmap(matrix=mat, alpha=False)
                     img = Image.open(io.BytesIO(pix.tobytes("png")))
                     # Tente français puis anglais en fallback
                     try:
@@ -212,12 +270,19 @@ class PDFAdapter(DocumentParser):
                     except pytesseract.TesseractError:
                         text = pytesseract.image_to_string(img, lang="eng")
                     if text.strip():
-                        pages_text.append(text.strip())
-
-            return "\n\n".join(pages_text)
+                        out[i] = text.strip()
+            return out
         except Exception as e:
             logger.warning("OCR échoué sur %s : %s", file_path, e)
+            return {}
+
+    def _try_ocr(self, file_path: str) -> str:
+        """OCR de toutes les pages (compat). Préférer _ocr_pages pour l'OCR ciblé."""
+        n = self._page_count(file_path)
+        if n <= 0:
             return ""
+        by_page = self._ocr_pages(file_path, list(range(n)))
+        return "\n\n".join(by_page[i] for i in sorted(by_page))
 
     def supports(self, file_path: str) -> bool:
         return file_path.lower().endswith(".pdf")
