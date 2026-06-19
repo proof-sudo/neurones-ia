@@ -23,9 +23,13 @@ from modules.uc10_presales.schemas import (
     ScoringCriterionSchema, RiskSchema, PreconditionSchema, AppendixSchema,
     PartnerSchema, PhaseActionSchema, StrategyPhaseSchema,
     RequiredProfileSchema, EligibilityThresholdSchema, FinancialDataSchema,
+    ClientContextSchema, CapabilityMatchSchema, CapabilityDealSchema,
 )
 from modules.uc10_presales.use_case import PresalesUseCase
-from core.domain.offer import ScoringResult, BidStrategy, Partner, Appendix
+from core.domain.offer import (
+    ScoringResult, BidStrategy, Partner, Appendix,
+    ClientContext, CapabilityMatch, CapabilityDeal,
+)
 
 # Checklist générique inférée (CI / marchés publics) — utilisée quand l'AO ne liste
 # aucune pièce explicite. Affichée avec un avertissement « inférée ».
@@ -1384,6 +1388,16 @@ def _to_schema(result: ScoringResult) -> ScoringResultSchema:
         profils_demandes=[RequiredProfileSchema(**p.__dict__) for p in result.profils_demandes],
         seuils_eligibilite=[EligibilityThresholdSchema(**s.__dict__) for s in result.seuils_eligibilite],
         donnees_financieres=FinancialDataSchema(**result.donnees_financieres.__dict__),
+        client_context=ClientContextSchema(**result.client_context.__dict__),
+        capability_matches=[
+            CapabilityMatchSchema(
+                theme=m.theme, confidence=m.confidence, is_critical=m.is_critical,
+                won_count=m.won_count, clients=m.clients,
+                deals=[CapabilityDealSchema(**d.__dict__) for d in m.deals],
+            )
+            for m in result.capability_matches
+        ],
+        capability_gaps=result.capability_gaps,
     )
 
 
@@ -1443,4 +1457,14 @@ def _from_schema(schema: ScoringResultSchema) -> ScoringResult:
         profils_demandes=[RequiredProfile(**p.model_dump()) for p in schema.profils_demandes],
         seuils_eligibilite=[EligibilityThreshold(**s.model_dump()) for s in schema.seuils_eligibilite],
         donnees_financieres=FinancialData(**schema.donnees_financieres.model_dump()),
+        client_context=ClientContext(**schema.client_context.model_dump()),
+        capability_matches=[
+            CapabilityMatch(
+                theme=m.theme, confidence=m.confidence, is_critical=m.is_critical,
+                won_count=m.won_count, clients=m.clients,
+                deals=[CapabilityDeal(**d.model_dump()) for d in m.deals],
+            )
+            for m in schema.capability_matches
+        ],
+        capability_gaps=schema.capability_gaps,
     )

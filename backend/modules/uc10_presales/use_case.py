@@ -14,6 +14,7 @@ from core.domain.offer import (
 from core.services.rag_engine import RAGEngine
 from modules.uc10_presales.scoring_pipeline import ScoringPipeline, _clean_json
 from modules.uc10_presales.offer_generator import OfferGenerator
+from modules.uc10_presales.odoo_enrichment import OdooEnrichmentService
 
 logger = logging.getLogger(__name__)
 
@@ -213,6 +214,7 @@ class PresalesUseCase:
         self._llm_sonnet = llm_sonnet
         self._pdf_parser = pdf_parser
         self._docx_parser = docx_parser
+        self._odoo_enrichment = OdooEnrichmentService(db_path=settings.local_db_path, llm=llm_haiku)
 
     async def score_ao(self, filename: str, file_bytes: bytes) -> ScoringResult:
         text = await self._extract_text(filename, file_bytes)
@@ -224,7 +226,10 @@ class PresalesUseCase:
                 "(https://github.com/UB-Mannheim/tesseract/wiki) "
                 "avec le pack de langue français (fra), puis relancez le backend."
             )
-        return await self._pipeline.run(ao_filename=filename, ao_text=text)
+        result = await self._pipeline.run(ao_filename=filename, ao_text=text)
+        # Étape 6 — enrichissement Odoo (non-bloquant : ne casse jamais le scoring)
+        await self._odoo_enrichment.enrich(result)
+        return result
 
     async def generate_offer(
         self,

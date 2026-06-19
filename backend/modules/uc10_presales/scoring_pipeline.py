@@ -491,8 +491,13 @@ class ScoringPipeline:
                 query=project_query,
                 doc_types=["offre_technique", "abe", "pv_recette", "marches_similaires"],
                 per_type=2,
+                min_dense_score=settings.project_min_similarity,  # levier ① projets
             ),
         )
+        # Levier ③ projets : le LLM écarte les références hors-domaine (ex. ABE Cisco/Fortinet
+        # pour un AO Odoo) que le plancher seul ne distingue pas.
+        if self._llm and settings.project_llm_rerank and project_sources:
+            project_sources = await self._rerank_projects(project_sources, project_query)
 
         team_matches = [
             MatchedDocument(
@@ -620,7 +625,10 @@ class ScoringPipeline:
 
         results = await asyncio.gather(
             *(
-                self._rag_engine.search(query=q, filter_metadata={"doc_type": "cv"}, top_k=4)
+                self._rag_engine.search(
+                    query=q, filter_metadata={"doc_type": "cv"}, top_k=4,
+                    min_dense_score=settings.cv_min_similarity,  # levier ① : écarte les CV hors-sujet
+                )
                 for q in queries
             ),
             return_exceptions=True,
@@ -635,9 +643,84 @@ class ScoringPipeline:
                 cur = best.get(s.filename)
                 if cur is None or s.relevance_score > cur.relevance_score:
                     best[s.filename] = s
-        sources = sorted(best.values(), key=lambda s: s.relevance_score, reverse=True)
-        logger.info("CV matching : %d requête(s) profil → %d CV uniques", len(queries), len(sources))
-        return sources[:12]
+        sources = sorted(best.values(), key=lambda s: s.relevance_score, reverse=True)[:12]
+        logger.info("CV matching : %d requête(s) profil → %d CV uniques (post-plancher)", len(queries), len(sources))
+
+        # Levier ③ — re-rank LLM par domaine : le plancher cosinus écarte les CV lointains, mais
+        # l'embedder (surtout le fallback) discrimine mal Odoo-vs-réseau. Le LLM tranche.
+        if self._llm and settings.cv_llm_rerank and profils_demandes and sources:
+            sources = await self._rerank_cvs(sources, profils_demandes)
+        return sources
+
+    async def _rerank_cvs(
+        self, sources: list[Source], profils_demandes: list[RequiredProfile],
+    ) -> list[Source]:
+        """Filtre les CV candidats : ne garde que ceux qui correspondent vraiment, par domaine,
+        à au moins un profil demandé. Repli non-bloquant sur la liste cosinus si le LLM échoue."""
+        profil_lines = []
+        for p in profils_demandes[:12]:
+            comps = ", ".join((p.competences or [])[:6])
+            profil_lines.append(f"- {p.profil} ({p.domaine}) : {comps}".strip())
+        cv_lines = []
+        for i, s in enumerate(sources):
+            # extrait large : les certifications/expériences décisives vivent souvent en fin de CV
+            # (ex. « ODOO Functional Certification ») — un snippet trop court les masquerait au juge.
+            snippet = " ".join((s.excerpt or "").split())[:2500]
+            cv_lines.append(f"[{i}] {s.filename}\n{snippet}")
+
+        system = (
+            "Tu es un recruteur technique exigeant. Tu juges si un CV correspond à AU MOINS un "
+            "des profils demandés par un appel d'offres. Sois STRICT sur le DOMAINE : un CV "
+            "réseau/sécurité (Cisco, Fortinet…) ne correspond PAS à un besoin de développeur ou "
+            "consultant ERP/Odoo, et inversement. En cas de doute, marque non pertinent."
+        )
+        user = (
+            "Profils demandés :\n" + "\n".join(profil_lines)
+            + "\n\nCV candidats :\n" + "\n\n".join(cv_lines)
+            + "\n\nPour CHAQUE CV, indique s'il correspond. Réponds UNIQUEMENT par un objet JSON "
+            '{"cvs": [{"i": 0, "relevant": true, "profil": "profil correspondant ou \'\'"}]}.'
+        )
+        try:
+            raw = await self._llm.generate(system=system, user=user, max_tokens=800, temperature=0.0)
+            data = json.loads(_clean_json(raw))
+            verdicts = {int(v["i"]): bool(v.get("relevant")) for v in data.get("cvs", []) if "i" in v}
+        except Exception as exc:  # noqa: BLE001 — jamais bloquant
+            logger.warning("Re-rank CV LLM échoué (%s) — liste cosinus conservée", exc)
+            return sources
+        kept = [s for i, s in enumerate(sources) if verdicts.get(i, True)]
+        logger.info("CV re-rank LLM : %d → %d CV pertinents", len(sources), len(kept))
+        return kept
+
+    async def _rerank_projects(self, sources: list[Source], need: str) -> list[Source]:
+        """Filtre les projets/offres similaires : ne garde que ceux du MÊME domaine/nature que
+        l'AO. Repli non-bloquant sur la liste d'origine si le LLM échoue."""
+        proj_lines = []
+        for i, s in enumerate(sources):
+            snippet = " ".join((s.excerpt or "").split())[:600]
+            proj_lines.append(f"[{i}] {s.filename} ({s.doc_type.value})\n{snippet}")
+        system = (
+            "Tu es un expert avant-vente. Tu juges si un projet/offre passé est une RÉFÉRENCE "
+            "PERTINENTE pour un nouvel appel d'offres — c.-à-d. de même NATURE de prestation. "
+            "Sois STRICT : une attestation de fourniture d'équipements réseau (Cisco, Fortinet…) "
+            "n'est PAS une référence pertinente pour un projet de développement/intégration ERP "
+            "ou logiciel, et inversement. En cas de doute, marque non pertinent."
+        )
+        user = (
+            f"Besoin (appel d'offres) :\n{need[:1500]}\n\nProjets/offres candidats :\n"
+            + "\n\n".join(proj_lines)
+            + "\n\nPour CHAQUE projet, indique s'il est une référence pertinente. Réponds "
+            'UNIQUEMENT par un objet JSON {"projets": [{"i": 0, "relevant": true}]}.'
+        )
+        try:
+            raw = await self._llm.generate(system=system, user=user, max_tokens=600, temperature=0.0)
+            data = json.loads(_clean_json(raw))
+            verdicts = {int(v["i"]): bool(v.get("relevant")) for v in data.get("projets", []) if "i" in v}
+        except Exception as exc:  # noqa: BLE001 — jamais bloquant
+            logger.warning("Re-rank projets LLM échoué (%s) — liste conservée", exc)
+            return sources
+        kept = [s for i, s in enumerate(sources) if verdicts.get(i, True)]
+        logger.info("Projets re-rank LLM : %d → %d projets pertinents", len(sources), len(kept))
+        return kept
 
     async def _step1_extract(self, ao_text: str) -> tuple[list[KeyElement], dict]:
         snippet = _truncate_by_tokens(ao_text, self._llm, _EXTRACT_INPUT_BUDGET_TOKENS, step="extract")

@@ -55,9 +55,26 @@ class Settings(BaseSettings):
     # (max de diversité) mais un CV multi-pages ne remonte alors que sa page la mieux classée
     # → ses certifs (autre page) sont perdues. 2 = recall des docs multi-pages sans noyer le top-k.
     rag_max_chunks_per_file: int = 2
-    # Taille d'extrait conservée par chunk (chars). Un chunk fait ~600 mots (~4000 chars) :
-    # un excerpt trop court (ex. 300) ne laisse au LLM que ~8% du CV/offre → notation sur des bribes.
-    excerpt_chars: int = 2500
+    # Taille d'extrait conservée par chunk (chars). Un chunk fait ~600 mots (~4000-4500 chars) :
+    # un excerpt trop court ampute la FIN du chunk — or les certifications d'un CV y vivent
+    # (ex. « ODOO Functional Certification » à l'offset 2657 d'un CV de 3112 chars était coupée à
+    # 2500). On dimensionne pour tenir un chunk entier → plus de troncature en plein milieu d'une
+    # info décisive. Le budget global reste borné par max_context_tokens dans build_context.
+    excerpt_chars: int = 4500
+    # Levier ① — plancher de similarité cosinus pour le matching CV (étape 3a). En-dessous,
+    # un CV est jugé hors-sujet et écarté, AU LIEU de remplir le quota avec du bruit (un AO Odoo
+    # ne doit pas remonter des CV réseau à cosinus ~0.4). 0 = désactivé. Tunable selon l'embedder :
+    # text-embedding-3-small discrimine mieux (~0.3-0.7) que le fallback sentence-transformers (~0.4-0.6).
+    cv_min_similarity: float = 0.50
+    # Levier ③ — re-rank LLM de pertinence par domaine (étape 3a). Après le plancher cosinus,
+    # le LLM juge STRICTEMENT si chaque CV correspond à un profil demandé (un CV réseau ≠ besoin
+    # dev Odoo) et écarte les hors-sujet que l'embedder seul ne sait pas distinguer. 1 appel/scoring.
+    cv_llm_rerank: bool = True
+    # Mêmes leviers ①+③ pour les PROJETS similaires (étape 3b, search_diverse) : sans eux, le
+    # matching « par type » remonte toujours le top-2 ABE (souvent Cisco/Fortinet) même pour un AO
+    # Odoo, et un fallback injecte des docs hors-type/hors-sujet. Floor + re-rank LLM règlent ça.
+    project_min_similarity: float = 0.50
+    project_llm_rerank: bool = True
 
     # OCR PDF
     ocr_max_pages: int = 40              # cap pages OCR (perf) — au-delà, WARNING explicite
