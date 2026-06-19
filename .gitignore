@@ -14,6 +14,7 @@ data/ged/
 data/score_cache/
 data/ollama_models/
 data/debug/
+data/score_cache/
 ollama_models/
 
 # ── Dossiers temporaires ────────────────────────────────────────────────────
