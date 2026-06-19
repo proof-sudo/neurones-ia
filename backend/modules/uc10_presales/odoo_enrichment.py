@@ -27,7 +27,7 @@ from datetime import datetime
 import aiosqlite
 
 from core.domain.offer import (
-    CapabilityDeal, CapabilityMatch, ClientContext, ScoringResult,
+    CapabilityDeal, CapabilityMatch, ClientContext, MatchedDocument, ScoringResult,
 )
 from modules.uc10_presales.odoo_taxonomy import (
     find_critical_terms, is_hardware_dominated, normalize_product,
@@ -114,6 +114,11 @@ class OdooEnrichmentService:
             matches, gaps = await self.match_capabilities(result)
             result.capability_matches = matches
             result.capability_gaps = gaps
+
+            # Verser les affaires Odoo similaires dans la section « Projets similaires »
+            # (taguées doc_type="odoo") — elles complètent les projets GED, souvent vides
+            # sur un sujet (ex. Odoo) où nos vraies références vivent dans le CRM, pas la GED.
+            self._append_odoo_projects(result)
 
             self._inject_signals(result)
         except Exception:  # noqa: BLE001 — jamais bloquant pour le scoring
@@ -456,6 +461,31 @@ class OdooEnrichmentService:
         for c in candidates:
             groups.setdefault(c["anchor"].title(), []).append(deal(c))
         return groups
+
+    def _append_odoo_projects(self, result: ScoringResult, limit: int = 5) -> None:
+        """Convertit les affaires Odoo (capability_matches) en projets similaires taguées
+        doc_type="odoo" et les ajoute à result.similar_projects (gagnés d'abord)."""
+        seen: set[tuple] = set()
+        odoo_docs: list[MatchedDocument] = []
+        for m in result.capability_matches:
+            for d in m.deals:
+                key = (_norm(d.client), _norm(d.title)[:40])
+                if key in seen:
+                    continue
+                seen.add(key)
+                score = 0.9 if d.status == "Gagné" else 0.6
+                odoo_docs.append(MatchedDocument(
+                    doc_id=f"odoo:{d.client}:{d.title}"[:90],
+                    filename=d.title or d.client,
+                    doc_type="odoo",
+                    relevance_score=score,
+                    excerpt=f"{d.client} — {d.year or 'n.d.'} — {d.status} · référence Odoo « {m.theme} »",
+                ))
+        if not odoo_docs:
+            return
+        odoo_docs.sort(key=lambda x: -x.relevance_score)
+        result.similar_projects = list(result.similar_projects) + odoo_docs[:limit]
+        logger.info("Projets similaires : +%d référence(s) Odoo ajoutée(s)", min(len(odoo_docs), limit))
 
     # ── Injection Niveau 2 dans le scoring ───────────────────────────────────
     def _inject_signals(self, result: ScoringResult) -> None:

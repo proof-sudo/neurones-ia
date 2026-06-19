@@ -61,20 +61,28 @@ class Settings(BaseSettings):
     # 2500). On dimensionne pour tenir un chunk entier → plus de troncature en plein milieu d'une
     # info décisive. Le budget global reste borné par max_context_tokens dans build_context.
     excerpt_chars: int = 4500
-    # Levier ① — plancher de similarité cosinus pour le matching CV (étape 3a). En-dessous,
-    # un CV est jugé hors-sujet et écarté, AU LIEU de remplir le quota avec du bruit (un AO Odoo
-    # ne doit pas remonter des CV réseau à cosinus ~0.4). 0 = désactivé. Tunable selon l'embedder :
-    # text-embedding-3-small discrimine mieux (~0.3-0.7) que le fallback sentence-transformers (~0.4-0.6).
-    cv_min_similarity: float = 0.50
+    # Levier ① — plancher de similarité cosinus pour le matching CV (étape 3a). C'est un
+    # PRÉ-FILTRE LÉGER (enlève le bruit grossier), PAS le filtre de précision : avec le fallback
+    # sentence-transformers (cosinus compressés ~0.4-0.6), un seuil trop haut (ex. 0.50) écarte
+    # des matches légitimes AVANT que le re-rank LLM (levier ③) puisse les juger. On garde donc
+    # bas et on laisse le LLM trancher. Avec text-embedding-3-small (cosinus mieux étalés ~0.3-0.7),
+    # ce seuil pourra remonter. 0 = désactivé.
+    cv_min_similarity: float = 0.35
     # Levier ③ — re-rank LLM de pertinence par domaine (étape 3a). Après le plancher cosinus,
     # le LLM juge STRICTEMENT si chaque CV correspond à un profil demandé (un CV réseau ≠ besoin
     # dev Odoo) et écarte les hors-sujet que l'embedder seul ne sait pas distinguer. 1 appel/scoring.
     cv_llm_rerank: bool = True
     # Mêmes leviers ①+③ pour les PROJETS similaires (étape 3b, search_diverse) : sans eux, le
     # matching « par type » remonte toujours le top-2 ABE (souvent Cisco/Fortinet) même pour un AO
-    # Odoo, et un fallback injecte des docs hors-type/hors-sujet. Floor + re-rank LLM règlent ça.
-    project_min_similarity: float = 0.50
+    # Odoo, et un fallback injecte des docs hors-type/hors-sujet. Le plancher reste BAS (pré-filtre :
+    # à 0.50 il éliminait des ABE GED pertinentes — ex. routeur Cisco pour un AO réseau — avant le
+    # re-rank). Le re-rank LLM (project_llm_rerank) fait la précision.
+    project_min_similarity: float = 0.35
     project_llm_rerank: bool = True
+    # Cache disque des analyses /score (1 fichier JSON par AO, nommé par SHA-256). Désactivé en
+    # prod : chaque AO écrivait un fichier → saturation disque serveur. False = aucune lecture ni
+    # écriture de cache (chaque /score recalcule). Réactivable sans toucher au code.
+    score_cache_enabled: bool = False
 
     # OCR PDF
     ocr_max_pages: int = 40              # cap pages OCR (perf) — au-delà, WARNING explicite
