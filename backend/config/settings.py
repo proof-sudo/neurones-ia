@@ -55,9 +55,34 @@ class Settings(BaseSettings):
     # (max de diversité) mais un CV multi-pages ne remonte alors que sa page la mieux classée
     # → ses certifs (autre page) sont perdues. 2 = recall des docs multi-pages sans noyer le top-k.
     rag_max_chunks_per_file: int = 2
-    # Taille d'extrait conservée par chunk (chars). Un chunk fait ~600 mots (~4000 chars) :
-    # un excerpt trop court (ex. 300) ne laisse au LLM que ~8% du CV/offre → notation sur des bribes.
-    excerpt_chars: int = 2500
+    # Taille d'extrait conservée par chunk (chars). Un chunk fait ~600 mots (~4000-4500 chars) :
+    # un excerpt trop court ampute la FIN du chunk — or les certifications d'un CV y vivent
+    # (ex. « ODOO Functional Certification » à l'offset 2657 d'un CV de 3112 chars était coupée à
+    # 2500). On dimensionne pour tenir un chunk entier → plus de troncature en plein milieu d'une
+    # info décisive. Le budget global reste borné par max_context_tokens dans build_context.
+    excerpt_chars: int = 4500
+    # Levier ① — plancher de similarité cosinus pour le matching CV (étape 3a). C'est un
+    # PRÉ-FILTRE LÉGER (enlève le bruit grossier), PAS le filtre de précision : avec le fallback
+    # sentence-transformers (cosinus compressés ~0.4-0.6), un seuil trop haut (ex. 0.50) écarte
+    # des matches légitimes AVANT que le re-rank LLM (levier ③) puisse les juger. On garde donc
+    # bas et on laisse le LLM trancher. Avec text-embedding-3-small (cosinus mieux étalés ~0.3-0.7),
+    # ce seuil pourra remonter. 0 = désactivé.
+    cv_min_similarity: float = 0.35
+    # Levier ③ — re-rank LLM de pertinence par domaine (étape 3a). Après le plancher cosinus,
+    # le LLM juge STRICTEMENT si chaque CV correspond à un profil demandé (un CV réseau ≠ besoin
+    # dev Odoo) et écarte les hors-sujet que l'embedder seul ne sait pas distinguer. 1 appel/scoring.
+    cv_llm_rerank: bool = True
+    # Mêmes leviers ①+③ pour les PROJETS similaires (étape 3b, search_diverse) : sans eux, le
+    # matching « par type » remonte toujours le top-2 ABE (souvent Cisco/Fortinet) même pour un AO
+    # Odoo, et un fallback injecte des docs hors-type/hors-sujet. Le plancher reste BAS (pré-filtre :
+    # à 0.50 il éliminait des ABE GED pertinentes — ex. routeur Cisco pour un AO réseau — avant le
+    # re-rank). Le re-rank LLM (project_llm_rerank) fait la précision.
+    project_min_similarity: float = 0.35
+    project_llm_rerank: bool = True
+    # Cache disque des analyses /score (1 fichier JSON par AO, nommé par SHA-256). Désactivé en
+    # prod : chaque AO écrivait un fichier → saturation disque serveur. False = aucune lecture ni
+    # écriture de cache (chaque /score recalcule). Réactivable sans toucher au code.
+    score_cache_enabled: bool = False
 
     # OCR PDF
     ocr_max_pages: int = 40              # cap pages OCR (perf) — au-delà, WARNING explicite

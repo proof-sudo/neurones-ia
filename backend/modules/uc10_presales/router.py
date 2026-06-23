@@ -23,17 +23,8 @@ from modules.uc10_presales.schemas import (
     ScoringCriterionSchema, RiskSchema, PreconditionSchema, AppendixSchema,
     PartnerSchema, PhaseActionSchema, StrategyPhaseSchema,
     RequiredProfileSchema, EligibilityThresholdSchema, FinancialDataSchema,
-    TemplateValidationSchema, TemplateCheckSchema,
-    OfferSectionsSchema, OfferSectionsResponse, OfferRenderRequest,
 )
 from modules.uc10_presales.use_case import PresalesUseCase
-from modules.uc10_presales.template_validator import (
-    TemplateValidation, validate_template, validate_domain_template, make_validation,
-)
-from modules.uc10_presales.template_contract import DEFAULT_DOMAIN
-from modules.uc10_presales.offer_generator import OfferGenerator
-from modules.uc10_presales.requirements_builder import build_matrice
-from modules.uc10_presales.matrix_export import render_matrix_xlsx
 from core.domain.offer import ScoringResult, BidStrategy, Partner, Appendix
 
 # Checklist générique inférée (CI / marchés publics) — utilisée quand l'AO ne liste
@@ -105,8 +96,9 @@ async def score_ao(
 ):
     """Upload un AO et lance le pipeline de scoring en 5 étapes.
 
-    Le résultat est mis en cache sur disque par empreinte (SHA-256) du fichier : ré-analyser
-    le même document renvoie le même score (reproductibilité). `?force=true` force une nouvelle analyse.
+    Le cache disque est désactivé par défaut en prod (settings.score_cache_enabled) pour ne pas
+    saturer le serveur : chaque appel recalcule. S'il est réactivé, le résultat est mémorisé par
+    empreinte SHA-256 du fichier et `?force=true` force une nouvelle analyse.
     """
     logger.info("Score AO reçu — fichier=%s content_type=%s force=%s", file.filename, file.content_type, force)
     if file.content_type not in _ALLOWED_TYPES and not file.filename.endswith((".pdf", ".docx")):
@@ -116,8 +108,10 @@ async def score_ao(
     if len(file_bytes) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="Fichier trop volumineux (max 10 MB).")
 
-    cache_path = _score_cache_path(file_bytes)
-    if cache_path.exists() and not force:
+    # Cache disque désactivé en prod (settings.score_cache_enabled=False) : évite de saturer
+    # le disque du serveur. Quand actif, sert le résultat mémorisé par empreinte SHA-256.
+    cache_path = _score_cache_path(file_bytes) if settings.score_cache_enabled else None
+    if settings.score_cache_enabled and cache_path.exists() and not force:
         try:
             cached = json.loads(cache_path.read_text(encoding="utf-8"))
             schema = ScoringResultSchema.model_validate(cached)
@@ -136,11 +130,12 @@ async def score_ao(
         raise HTTPException(status_code=500, detail=f"Erreur analyse AO : {type(e).__name__}: {e}")
 
     schema = _to_schema(result)
-    try:
-        _SCORE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        cache_path.write_text(json.dumps(schema.model_dump(mode="json"), ensure_ascii=False), encoding="utf-8")
-    except OSError as exc:
-        logger.debug("Écriture cache score échouée (%s) — non bloquant", exc)
+    if settings.score_cache_enabled:
+        try:
+            _SCORE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(json.dumps(schema.model_dump(mode="json"), ensure_ascii=False), encoding="utf-8")
+        except OSError as exc:
+            logger.debug("Écriture cache score échouée (%s) — non bloquant", exc)
     return schema
 
 
@@ -1508,6 +1503,16 @@ def _to_schema(result: ScoringResult) -> ScoringResultSchema:
         profils_demandes=[RequiredProfileSchema(**p.__dict__) for p in result.profils_demandes],
         seuils_eligibilite=[EligibilityThresholdSchema(**s.__dict__) for s in result.seuils_eligibilite],
         donnees_financieres=FinancialDataSchema(**result.donnees_financieres.__dict__),
+        client_context=ClientContextSchema(**result.client_context.__dict__),
+        capability_matches=[
+            CapabilityMatchSchema(
+                theme=m.theme, confidence=m.confidence, is_critical=m.is_critical,
+                won_count=m.won_count, clients=m.clients,
+                deals=[CapabilityDealSchema(**d.__dict__) for d in m.deals],
+            )
+            for m in result.capability_matches
+        ],
+        capability_gaps=result.capability_gaps,
     )
 
 
@@ -1567,4 +1572,14 @@ def _from_schema(schema: ScoringResultSchema) -> ScoringResult:
         profils_demandes=[RequiredProfile(**p.model_dump()) for p in schema.profils_demandes],
         seuils_eligibilite=[EligibilityThreshold(**s.model_dump()) for s in schema.seuils_eligibilite],
         donnees_financieres=FinancialData(**schema.donnees_financieres.model_dump()),
+        client_context=ClientContext(**schema.client_context.model_dump()),
+        capability_matches=[
+            CapabilityMatch(
+                theme=m.theme, confidence=m.confidence, is_critical=m.is_critical,
+                won_count=m.won_count, clients=m.clients,
+                deals=[CapabilityDeal(**d.model_dump()) for d in m.deals],
+            )
+            for m in schema.capability_matches
+        ],
+        capability_gaps=schema.capability_gaps,
     )

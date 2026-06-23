@@ -11,6 +11,7 @@ data/bm25_index/
 data/local_db/
 data/uploads/
 data/ged/
+data/score_cache/
 data/ollama_models/
 data/debug/
 data/score_cache/

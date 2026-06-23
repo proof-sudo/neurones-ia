@@ -146,6 +146,50 @@ class FinancialDataSchema(BaseModel):
     source_section: str = ""
 
 
+class CapabilityDealSchema(BaseModel):
+    client: str
+    title: str
+    year: str = ""
+    status: str = ""
+    source: str = "opportunité"
+
+
+class CapabilityMatchSchema(BaseModel):
+    theme: str
+    confidence: str = "MOYENNE"
+    is_critical: bool = False
+    won_count: int = 0
+    clients: list[str] = []
+    deals: list[CapabilityDealSchema] = []
+
+
+class ClientContextSchema(BaseModel):
+    matched: bool = False
+    odoo_client_name: str = ""
+    match_confidence: str = ""
+    city: str = ""
+    country: str = ""
+    known_contact: str = ""
+    is_existing_client: bool = False
+    first_interaction: str = ""
+    last_interaction: str = ""
+    account_owner: str = ""
+    opportunities_total: int = 0
+    opportunities_won: int = 0
+    opportunities_lost: int = 0
+    win_rate_pct: int = 0
+    open_opportunities: list[str] = []
+    orders_count: int = 0
+    deployed_technologies: list[str] = []
+    invoices_total: int = 0
+    invoices_paid: int = 0
+    invoices_overdue: int = 0
+    payment_reliability: str = ""
+    relationship_signals: list[str] = []
+    relationship_risks: list[str] = []
+    notes: str = ""
+
+
 class ScoringResultSchema(BaseModel):
     ao_filename: str
     summary: str
@@ -177,6 +221,9 @@ class ScoringResultSchema(BaseModel):
     profils_demandes: list[RequiredProfileSchema] = []
     seuils_eligibilite: list[EligibilityThresholdSchema] = []
     donnees_financieres: FinancialDataSchema = Field(default_factory=FinancialDataSchema)
+    client_context: ClientContextSchema = Field(default_factory=ClientContextSchema)
+    capability_matches: list[CapabilityMatchSchema] = []
+    capability_gaps: list[str] = []
 
 
 class PartnerSchema(BaseModel):

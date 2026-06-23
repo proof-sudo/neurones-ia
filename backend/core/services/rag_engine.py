@@ -39,6 +39,7 @@ class RAGEngine:
         query: str,
         filter_metadata: Optional[dict] = None,
         top_k: Optional[int] = None,
+        min_dense_score: Optional[float] = None,
     ) -> list[Source]:
         """
         Pipeline hybride parallèle :
@@ -46,6 +47,12 @@ class RAGEngine:
         2. Dense search (ChromaDB) sur le résultat de l'embedding
         3. RRF fusion + dédoublonnage par filename
         → retourne max rerank_top_k sources uniques
+
+        `min_dense_score` (levier ①) : plancher de similarité cosinus. Les candidats denses
+        sous ce seuil sont écartés AVANT la fusion — on ne garde que les documents
+        sémantiquement proches au lieu de remplir le quota avec les plus proches voisins,
+        même lointains. Le score RRF étant purement rangé (≈0.016–0.05), il ne peut pas
+        servir de plancher : c'est bien le cosinus dense (1.0 − distance) qui filtre.
         """
         effective_top_k = top_k or self._top_k
 
@@ -62,11 +69,26 @@ class RAGEngine:
             filter_metadata=filter_metadata,
         )
 
+        # Levier ① — plancher de pertinence : un plus proche voisin lointain (cosinus faible)
+        # n'est PAS une vraie correspondance. On le retire ici, tant que le cosinus est encore
+        # porté par relevance_score (la fusion RRF l'écrasera ensuite par un score de rang).
+        dense_full = dense_results  # avant plancher — sert à la couverture sparse-only
+        if min_dense_score is not None:
+            kept = [s for s in dense_results if s.relevance_score >= min_dense_score]
+            if len(kept) < len(dense_results):
+                logger.debug(
+                    "RAG floor : %d/%d candidats denses écartés (<%.2f) pour '%s'",
+                    len(dense_results) - len(kept), len(dense_results), min_dense_score, query[:40],
+                )
+            dense_results = kept
+
         # Vrai hybride : un document trouvé UNIQUEMENT par BM25 (match lexical exact, ex.
         # "Commvault") n'est pas dans le top-k dense. On résout son meilleur chunk en Source
         # pour qu'il puisse remonter dans la fusion, au lieu d'être silencieusement jeté.
+        # On passe `dense_full` (avant plancher) : un doc plancher-écarté reste « couvert »
+        # et n'est donc PAS ressuscité par la voie sparse-only.
         extra_sources = await self._resolve_sparse_only(
-            sparse_results, dense_results, filter_metadata
+            sparse_results, dense_full, filter_metadata
         )
 
         fused = self._reciprocal_rank_fusion(dense_results, sparse_results, extra_sources)
@@ -96,13 +118,19 @@ class RAGEngine:
         query: str,
         doc_types: list[str],
         per_type: int = 2,
+        min_dense_score: Optional[float] = None,
     ) -> list[Source]:
         """
         Recherche par type de document en parallèle (plus rapide que séquentiel).
-        Fallback général si résultats insuffisants.
+
+        `min_dense_score` (levier ①) : plancher de similarité cosinus appliqué à CHAQUE type —
+        sans lui, le top-2 d'un type est renvoyé même hors-sujet (un AO Odoo remontait toujours
+        2 ABE Cisco/Fortinet). Le fallback ne se déclenche que si vraiment trop peu de résultats
+        et reste BORNÉ aux doc_types demandés ET au plancher (plus de bourrage hors-type/hors-sujet).
         """
         tasks = [
-            self.search(query=query, filter_metadata={"doc_type": dt}, top_k=per_type * 3)
+            self.search(query=query, filter_metadata={"doc_type": dt},
+                        top_k=per_type * 3, min_dense_score=min_dense_score)
             for dt in doc_types
         ]
         results_per_type = await asyncio.gather(*tasks, return_exceptions=True)
@@ -121,12 +149,13 @@ class RAGEngine:
                     seen_filenames.add(src.filename)
                     count += 1
 
-        # Fallback si trop peu de résultats
+        # Fallback si trop peu de résultats — RESTREINT aux types demandés et au même plancher,
+        # pour ne jamais réintroduire un document hors-domaine (ex. un CV ou une ABE réseau).
         if len(all_sources) < 3:
             try:
-                general = await self.search(query=query, top_k=10)
+                general = await self.search(query=query, top_k=10, min_dense_score=min_dense_score)
                 for src in general:
-                    if src.filename not in seen_filenames:
+                    if src.filename not in seen_filenames and src.doc_type.value in doc_types:
                         all_sources.append(src)
                         seen_filenames.add(src.filename)
             except Exception:

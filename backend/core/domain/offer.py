@@ -195,6 +195,69 @@ class FinancialData:
 
 
 @dataclass
+class CapabilityDeal:
+    """Une affaire Odoo retenue comme preuve de capacité (sans aucun montant)."""
+    client: str
+    title: str
+    year: str = ""
+    status: str = ""                 # Gagné / Perdu / En cours / …
+    source: str = "opportunité"      # opportunité / commande
+
+
+@dataclass
+class CapabilityMatch:
+    """Regroupement d'affaires Odoo prouvant une capacité demandée par l'AO.
+
+    Produit par l'enrichissement (couches sémantique + LLM + garde-fou). AUCUN montant.
+    """
+    theme: str                       # libellé émergent ("Développement / personnalisation Odoo")
+    confidence: str = "MOYENNE"      # FORTE / MOYENNE / FAIBLE
+    is_critical: bool = False        # couvre un terme éliminatoire/critique (ex: FNE)
+    won_count: int = 0               # nb d'affaires gagnées dans le groupe
+    clients: list[str] = field(default_factory=list)
+    deals: list[CapabilityDeal] = field(default_factory=list)
+
+
+@dataclass
+class ClientContext:
+    """Contexte du donneur d'ordre issu d'Odoo (miroir SQLite local).
+
+    Enrichissement du scoring. Règle stricte : AUCUN montant — uniquement des signaux
+    RELATIONNELS, d'EXPÉRIENCE et de FIABILITÉ opérationnelle.
+    """
+    matched: bool = False
+    odoo_client_name: str = ""
+    match_confidence: str = ""            # EXACT / FORTE / FAIBLE
+    # Identité
+    city: str = ""
+    country: str = ""
+    known_contact: str = ""               # email ou téléphone connu
+    # Relation
+    is_existing_client: bool = False
+    first_interaction: str = ""           # année de la 1re trace
+    last_interaction: str = ""            # année de la dernière trace
+    account_owner: str = ""               # commercial référent
+    # Track record commercial — COMPTEURS et TAUX, jamais de montants
+    opportunities_total: int = 0
+    opportunities_won: int = 0
+    opportunities_lost: int = 0
+    win_rate_pct: int = 0                 # gagné / (gagné+perdu)
+    open_opportunities: list[str] = field(default_factory=list)
+    # Expérience de livraison
+    orders_count: int = 0
+    deployed_technologies: list[str] = field(default_factory=list)
+    # Fiabilité opérationnelle (sans montants)
+    invoices_total: int = 0
+    invoices_paid: int = 0
+    invoices_overdue: int = 0
+    payment_reliability: str = ""         # BONNE / MOYENNE / À SURVEILLER / INCONNUE
+    # Signaux dérivés
+    relationship_signals: list[str] = field(default_factory=list)
+    relationship_risks: list[str] = field(default_factory=list)
+    notes: str = ""
+
+
+@dataclass
 class ScoringResult:
     """Résultat complet du pipeline de scoring AO en 5 étapes."""
     ao_filename: str
@@ -236,6 +299,10 @@ class ScoringResult:
     profils_demandes: list[RequiredProfile] = field(default_factory=list)
     seuils_eligibilite: list[EligibilityThreshold] = field(default_factory=list)
     donnees_financieres: FinancialData = field(default_factory=FinancialData)
+    # Enrichissement Odoo (étape 6, non-bloquante) — miroir SQLite, sans montants
+    client_context: ClientContext = field(default_factory=ClientContext)
+    capability_matches: list[CapabilityMatch] = field(default_factory=list)
+    capability_gaps: list[str] = field(default_factory=list)  # capacités exigées sans preuve Odoo
 
 
 @dataclass
