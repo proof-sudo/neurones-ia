@@ -230,8 +230,34 @@ class PresalesUseCase:
         self,
         scoring: ScoringResult,
         client_name: str = "",
+        selected_cvs: list[str] | None = None,
+        selected_abes: list[str] | None = None,
     ) -> OfferDraft:
-        return await self._generator.generate(scoring=scoring, client_name=client_name)
+        return await self._generator.generate(
+            scoring=scoring,
+            client_name=client_name,
+            selected_cvs=selected_cvs,
+            selected_abes=selected_abes,
+        )
+
+    async def build_offer_sections(
+        self,
+        scoring: ScoringResult,
+        client_name: str = "",
+    ) -> tuple[dict, str, str]:
+        """Étape 1 : sections éditables (LLM), sans .docx."""
+        return await self._generator.build_sections(scoring=scoring, client_name=client_name)
+
+    def render_offer(
+        self,
+        scoring: ScoringResult,
+        sections: dict,
+        client_name: str = "",
+        selected_cvs: list[str] | None = None,
+        selected_abes: list[str] | None = None,
+    ) -> OfferDraft:
+        """Étape 2 : .docx à partir des sections (éventuellement éditées)."""
+        return self._generator.render(scoring, sections, client_name, selected_cvs, selected_abes)
 
     async def generate_bid_strategy(
         self,
@@ -285,19 +311,19 @@ class PresalesUseCase:
             lines += phase_lines + [""]
 
         if scoring.criteres_selection:
-            lines += ["═══ CRITÈRES DE SÉLECTION (à surcoter) ═══"] + [f"  • {c}" for c in scoring.criteres_selection[:8]] + [""]
+            lines += ["═══ CRITÈRES DE SÉLECTION (à surcoter) ═══"] + [f"  • {c.texte}" for c in scoring.criteres_selection[:8]] + [""]
 
         if scoring.besoins:
-            lines += ["═══ BESOINS IDENTIFIÉS ═══"] + [f"  • {b}" for b in scoring.besoins[:8]] + [""]
+            lines += ["═══ BESOINS IDENTIFIÉS ═══"] + [f"  • {b.texte}" for b in scoring.besoins[:8]] + [""]
 
         if scoring.ressources_demandees:
-            lines += ["═══ PROFILS & RESSOURCES DEMANDÉS ═══"] + [f"  • {r}" for r in scoring.ressources_demandees[:8]] + [""]
+            lines += ["═══ PROFILS & RESSOURCES DEMANDÉS ═══"] + [f"  • {r.texte}" for r in scoring.ressources_demandees[:8]] + [""]
 
         if scoring.prerequis:
-            lines += ["═══ PRÉREQUIS (administratifs, techniques, certifications) ═══"] + [f"  • {p}" for p in scoring.prerequis[:8]] + [""]
+            lines += ["═══ PRÉREQUIS (administratifs, techniques, certifications) ═══"] + [f"  • {p.texte}" for p in scoring.prerequis[:8]] + [""]
 
         if scoring.points_vigilance:
-            lines += ["═══ POINTS DE VIGILANCE ═══"] + [f"  • {v}" for v in scoring.points_vigilance[:6]] + [""]
+            lines += ["═══ POINTS DE VIGILANCE ═══"] + [f"  • {v.texte}" for v in scoring.points_vigilance[:6]] + [""]
 
         if livrables and livrables != "non précisé":
             lines += [f"═══ LIVRABLES ATTENDUS ═══", livrables, ""]

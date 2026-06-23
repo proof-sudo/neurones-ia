@@ -18,8 +18,8 @@ import sys
 
 import tiktoken
 
-MAX_TOKENS = 5500          # cf. ScoringPipeline._step1_extract
-SAFETY_TARGET = 4400       # marge ~20% pour absorber l'écart tokenizer Claude/cl100k
+MAX_TOKENS = 8000          # cf. ScoringPipeline._step1_extract (relevé : items {texte, source_section})
+SAFETY_TARGET = 6400       # marge ~20% pour absorber l'écart tokenizer Claude/cl100k
 
 # Valeurs verbeuses représentatives d'un AO dense (FR avec accents) — cf. dump ABI réel.
 _VALUE = (
@@ -33,17 +33,26 @@ _ITEM = (
 )
 
 
+# Chaque item des 5 listes porte désormais {texte, source_section} (enrichissement
+# traçabilité) → on modélise le pire cas avec une référence source réaliste.
+_SOURCE = "Section III — Article 12.4 (page 8)"
+
+
+def _obj():
+    return {"texte": _ITEM, "source_section": _SOURCE}
+
+
 def build_worst_case() -> dict:
     return {
         "key_points": [
             {"label": f"Point critique numéro {i + 1}", "value": _VALUE}
             for i in range(10)   # haut de la fourchette 5-10
         ],
-        "criteres_selection": [_ITEM for _ in range(15)],
-        "besoins": [_ITEM for _ in range(15)],
-        "prerequis": [_ITEM for _ in range(15)],
-        "ressources_demandees": [_ITEM for _ in range(13)],
-        "points_vigilance": [_ITEM for _ in range(15)],
+        "criteres_selection": [_obj() for _ in range(15)],
+        "besoins": [_obj() for _ in range(15)],
+        "prerequis": [_obj() for _ in range(15)],
+        "ressources_demandees": [_obj() for _ in range(13)],
+        "points_vigilance": [_obj() for _ in range(15)],
         "date_remise": "15/06/2026 à 15h00 GMT",
     }
 

@@ -7,7 +7,7 @@ s'assemble correctement et résiste aux JSON malformés/partiels.
 import json
 from core.domain.offer import (
     ScoringResult, MarketIdentity, CalendarEvent, EvaluationModalities,
-    KeyElement, BidRecommendation,
+    KeyElement, BidRecommendation, Risk, ExtractedItem,
 )
 from modules.uc10_presales.scoring_pipeline import ScoringPipeline
 from modules.uc10_presales.schemas import ScoringResultSchema
@@ -151,12 +151,12 @@ def test_round_trip():
         matched_documents=[],
         gaps_analysis="",
         strengths=["Force 1"],
-        risks=["Risque 1"],
+        risks=[Risk(label="Risque 1")],
         score=75,
         recommendation=BidRecommendation.GO,
         justification="Justification test",
-        criteres_selection=["Critère X"],
-        besoins=["Besoin Y"],
+        criteres_selection=[ExtractedItem(texte="Critère X")],
+        besoins=[ExtractedItem(texte="Besoin Y", source_section="§3")],
         prerequis=[],
         ressources_demandees=[],
         points_vigilance=[],
@@ -193,6 +193,10 @@ def test_round_trip():
     assert restored.calendar[0].label == original.calendar[0].label
     assert restored.evaluation_modalities.ponderation_technique == 70
     assert restored.date_remise == original.date_remise  # rétrocompat
+    # Enrichissement C0 : le texte ET la référence source des exigences survivent au round-trip
+    assert restored.besoins[0].texte == "Besoin Y"
+    assert restored.besoins[0].source_section == "§3"
+    assert restored.risks[0].label == "Risque 1"
     print("  OK : round-trip Domain -> Schema -> JSON -> Schema -> Domain préservé")
 
 

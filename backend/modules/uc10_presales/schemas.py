@@ -1,6 +1,27 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 from enum import Enum
 from typing import Optional
+
+
+class ExtractedItemSchema(BaseModel):
+    """Exigence textuelle + référence source (besoins, critères, prérequis,
+    ressources, vigilance). Tolère l'ancien format `str` à l'entrée (caches/
+    payloads hérités, mocks frontend) → coercion vers {texte, source_section}."""
+    texte: str = ""
+    source_section: str = ""
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce(cls, v):
+        if isinstance(v, str):
+            return {"texte": v}
+        if isinstance(v, dict):
+            return v
+        # dataclass ExtractedItem (ou tout objet portant .texte)
+        texte = getattr(v, "texte", None)
+        if texte is not None:
+            return {"texte": texte, "source_section": getattr(v, "source_section", "")}
+        return v
 
 
 class BidRecommendationSchema(str, Enum):
@@ -137,11 +158,11 @@ class ScoringResultSchema(BaseModel):
     score_basis: str = "GRILLE"  # GRILLE | ESTIME | INDISPONIBLE
     recommendation: BidRecommendationSchema
     justification: str
-    criteres_selection: list[str] = []
-    besoins: list[str] = []
-    prerequis: list[str] = []
-    ressources_demandees: list[str] = []
-    points_vigilance: list[str] = []
+    criteres_selection: list[ExtractedItemSchema] = []
+    besoins: list[ExtractedItemSchema] = []
+    prerequis: list[ExtractedItemSchema] = []
+    ressources_demandees: list[ExtractedItemSchema] = []
+    points_vigilance: list[ExtractedItemSchema] = []
     date_remise: str = ""
     team_matches: list[MatchedDocumentSchema] = []
     similar_projects: list[MatchedDocumentSchema] = []
@@ -230,11 +251,92 @@ class OfferGenerationRequest(BaseModel):
     scoring_result: ScoringResultSchema
     client_name: Optional[str] = None
     additional_context: Optional[str] = None
+    # Documents GED choisis par l'utilisateur (noms de fichiers). Vide → repli sur le
+    # matching automatique (CV) / aucune section références (ABE).
+    selected_cvs: list[str] = []
+    selected_abes: list[str] = []
 
 
 class OfferGenerationResponse(BaseModel):
     filename: str
     message: str
+
+
+# ── Offre en 2 temps : sections éditables → rendu .docx ───────────────────────
+
+class OfferModuleSchema(BaseModel):
+    titre: str = ""
+    description: str = ""
+
+
+class OfferStackItemSchema(BaseModel):
+    composant: str = ""
+    version: str = ""
+
+
+class OfferPlanningItemSchema(BaseModel):
+    phase: str = ""
+    activite: str = ""
+    jh: str = ""
+
+    @field_validator("jh", mode="before")
+    @classmethod
+    def _coerce_jh(cls, v):
+        # le LLM peut renvoyer un entier ou null pour les J/H
+        return "" if v is None else str(v)
+
+
+class OfferRepartitionItemSchema(BaseModel):
+    """Une ligne du tableau « Répartition des fonctionnalités selon l'architecture » :
+    une fonctionnalité associée à sa couche / composant technique."""
+    fonctionnalite: str = ""
+    composant: str = ""
+
+
+class OfferSectionsSchema(BaseModel):
+    titre_projet: str = ""
+    expression_besoins: list[str] = []
+    objectifs_reponse: list[str] = []
+    presentation_reponse: list[str] = []
+    fonctionnalites: list[str] = []
+    modules: list[OfferModuleSchema] = []
+    stack_technique: list[OfferStackItemSchema] = []
+    planning: list[OfferPlanningItemSchema] = []
+    # Tableau Fonctionnalité → Composant inséré à {{Répartition des fonctionnalités}}.
+    repartition: list[OfferRepartitionItemSchema] = []
+
+
+class OfferSectionsResponse(BaseModel):
+    sections: OfferSectionsSchema
+    domain: str = ""
+    client_name: str = ""
+    filename: str = ""
+
+
+class OfferRenderRequest(BaseModel):
+    ao_filename: str
+    scoring_result: ScoringResultSchema
+    sections: OfferSectionsSchema
+    client_name: Optional[str] = None
+    # CV / ABE choisis dans le modal (noms de fichiers GED) à injecter dans le .docx.
+    selected_cvs: list[str] = []
+    selected_abes: list[str] = []
+
+
+class TemplateCheckSchema(BaseModel):
+    label: str
+    ok: bool
+    detail: str = ""
+    severity: str = "error"  # "error" (invalide le template) | "warning" (dégrade)
+
+
+class TemplateValidationSchema(BaseModel):
+    ok: bool
+    domain: str
+    template_path: Optional[str] = None
+    errors: int = 0
+    warnings: int = 0
+    checks: list[TemplateCheckSchema] = []
 
 
 class TeamMatchRequest(BaseModel):

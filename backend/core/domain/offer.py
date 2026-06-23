@@ -10,6 +10,38 @@ class BidRecommendation(str, Enum):
 
 
 @dataclass
+class ExtractedItem:
+    """Exigence textuelle extraite de l'AO, AVEC sa référence source.
+
+    Remplace les anciennes `list[str]` (besoins, critères, prérequis, ressources,
+    vigilance) : porter `source_section` permet de tracer chaque exigence jusqu'à
+    la matrice de conformité (cf. core.domain.requirements). Anti-hallucination :
+    `texte` et `source_section` sont repris verbatim de l'AO."""
+    texte: str
+    source_section: str = ""
+
+    @classmethod
+    def coerce(cls, value: object) -> "ExtractedItem":
+        """Construit un ExtractedItem depuis une str (ancien format), un dict
+        {texte, source_section} (LLM/JSON) ou tout objet portant `.texte`
+        (ex: schéma Pydantic). Jamais d'exception : repli sur str(value)."""
+        if isinstance(value, cls):
+            return value
+        if isinstance(value, str):
+            return cls(texte=value.strip())
+        if isinstance(value, dict):
+            return cls(
+                texte=str(value.get("texte", "") or "").strip(),
+                source_section=str(value.get("source_section", "") or "").strip(),
+            )
+        texte = getattr(value, "texte", None)
+        if texte is not None:
+            return cls(texte=str(texte or "").strip(),
+                       source_section=str(getattr(value, "source_section", "") or "").strip())
+        return cls(texte=str(value).strip())
+
+
+@dataclass
 class KeyElement:
     category: str
     value: str
@@ -178,12 +210,13 @@ class ScoringResult:
     # Base du score : "GRILLE" (somme normalisée d'un barème chiffré), "ESTIME" (jugement
     # global, AO sans barème), "INDISPONIBLE" (analyse cassée/tronquée → 50 neutre, pas un vrai score).
     score_basis: str = "GRILLE"
-    # Champs d'analyse détaillée (Phase 1 Bid Management)
-    criteres_selection: list[str] = field(default_factory=list)
-    besoins: list[str] = field(default_factory=list)
-    prerequis: list[str] = field(default_factory=list)
-    ressources_demandees: list[str] = field(default_factory=list)
-    points_vigilance: list[str] = field(default_factory=list)
+    # Champs d'analyse détaillée (Phase 1 Bid Management). Enrichis : chaque item
+    # porte sa référence source (ExtractedItem) → traçabilité jusqu'à la matrice.
+    criteres_selection: list[ExtractedItem] = field(default_factory=list)
+    besoins: list[ExtractedItem] = field(default_factory=list)
+    prerequis: list[ExtractedItem] = field(default_factory=list)
+    ressources_demandees: list[ExtractedItem] = field(default_factory=list)
+    points_vigilance: list[ExtractedItem] = field(default_factory=list)
     date_remise: str = ""
     # Matching GED automatique (Step 3 pipeline)
     team_matches: list[MatchedDocument] = field(default_factory=list)

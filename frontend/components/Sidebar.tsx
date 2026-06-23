@@ -134,7 +134,7 @@ export function Sidebar({ user, onClose }: { user?: AuthUser | null; onClose?: (
         )}
 
         {/* System status */}
-        <div className="rounded-lg px-3.5 py-3" style={{ border: "1px solid #ecedf0" }}>
+        {/* <div className="rounded-lg px-3.5 py-3" style={{ border: "1px solid #ecedf0" }}>
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-2">
               <span className="w-1.5 h-1.5 rounded-full" style={{ background: "#2e7d5b" }} />
@@ -152,7 +152,7 @@ export function Sidebar({ user, onClose }: { user?: AuthUser | null; onClose?: (
               <span className="text-[10px] text-slate-400">GPT embedding 3-small</span>
             </div>
           </div>
-        </div>
+        </div> */}
       </div>
     </aside>
   );

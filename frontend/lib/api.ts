@@ -153,6 +153,20 @@ export interface FinancialData {
   source_section: string;
 }
 
+/** Exigence textuelle extraite de l'AO, avec sa référence source (besoins,
+ *  critères, prérequis, ressources, vigilance). */
+export interface ExtractedItem {
+  texte: string;
+  source_section?: string;
+}
+
+/** Texte d'une exigence — tolère l'ancien format `string` (résultats mis en
+ *  cache avant l'enrichissement) comme le nouveau `{texte, source_section}`. */
+export function itemText(x: string | ExtractedItem | null | undefined): string {
+  if (x == null) return "";
+  return typeof x === "string" ? x : (x.texte ?? "");
+}
+
 export interface ScoringResult {
   ao_filename: string;
   summary: string;
@@ -165,11 +179,11 @@ export interface ScoringResult {
   score_basis?: "GRILLE" | "ESTIME" | "INDISPONIBLE";
   recommendation: "GO" | "NO_BID" | "CONDITIONAL";
   justification: string;
-  criteres_selection?: string[];
-  besoins?: string[];
-  prerequis?: string[];
-  ressources_demandees?: string[];
-  points_vigilance?: string[];
+  criteres_selection?: ExtractedItem[];
+  besoins?: ExtractedItem[];
+  prerequis?: ExtractedItem[];
+  ressources_demandees?: ExtractedItem[];
+  points_vigilance?: ExtractedItem[];
   date_remise?: string;
   team_matches?: { doc_id: string; filename: string; doc_type: string; relevance_score: number; excerpt: string }[];
   similar_projects?: { doc_id: string; filename: string; doc_type: string; relevance_score: number; excerpt: string }[];
@@ -497,6 +511,16 @@ export async function exportAnalysis(scoringResult: ScoringResult, clientName?: 
   return response.blob();
 }
 
+export async function exportMatrix(scoringResult: ScoringResult, clientName?: string): Promise<Blob> {
+  const response = await apiFetch(`${API_BASE}/presales/export-matrix`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scoring_result: scoringResult, client_name: clientName }),
+  }, 60_000);
+  if (!response.ok) throw new Error(`Export matrix error: ${response.status}`);
+  return response.blob();
+}
+
 export async function exportScoring(scoringResult: ScoringResult, clientName?: string): Promise<Blob> {
   const response = await apiFetch(`${API_BASE}/presales/export-scoring`, {
     method: "POST",
@@ -538,6 +562,109 @@ export async function generateOffer(scoringResult: ScoringResult, clientName?: s
     }),
   }, 180_000);
   if (!response.ok) throw new Error(`Generate error: ${response.status}`);
+  return response.blob();
+}
+
+export interface TemplateCheck {
+  label: string;
+  ok: boolean;
+  detail: string;
+  severity: "error" | "warning";
+}
+
+export interface TemplateValidation {
+  ok: boolean;
+  domain: string;
+  template_path: string | null;
+  errors: number;
+  warnings: number;
+  checks: TemplateCheck[];
+}
+
+/**
+ * Vérifie qu'un modèle d'offre .docx respecte le contrat attendu par le générateur.
+ * Sans `file` : valide le modèle présent dans la GED pour `domain`.
+ * Avec `file` : valide un .docx uploadé (préflight avant dépôt en GED).
+ */
+export async function validateTemplate(domain?: string, file?: File): Promise<TemplateValidation> {
+  const qs = domain ? `?domain=${encodeURIComponent(domain)}` : "";
+  let body: BodyInit | undefined;
+  if (file) {
+    const form = new FormData();
+    form.append("file", file);
+    body = form; // pas de Content-Type manuel : le navigateur fixe la frontière multipart
+  }
+  const response = await apiFetch(`${API_BASE}/presales/template/validate${qs}`, {
+    method: "POST",
+    body,
+  });
+  if (!response.ok) throw new Error(`Template validate error: ${response.status}`);
+  return response.json();
+}
+
+export interface OfferModule { titre: string; description: string; }
+export interface OfferStackItem { composant: string; version: string; }
+export interface OfferPlanningItem { phase: string; activite: string; jh: string; }
+export interface OfferRepartitionItem { fonctionnalite: string; composant: string; }
+
+export interface OfferSections {
+  titre_projet: string;
+  expression_besoins: string[];
+  objectifs_reponse: string[];
+  presentation_reponse: string[];
+  fonctionnalites: string[];
+  modules: OfferModule[];
+  stack_technique: OfferStackItem[];
+  planning: OfferPlanningItem[];
+  // Tableau Fonctionnalité → Composant (inséré à {{Répartition des fonctionnalités}}).
+  repartition?: OfferRepartitionItem[];
+}
+
+export interface OfferSectionsResponse {
+  sections: OfferSections;
+  domain: string;
+  client_name: string;
+  filename: string;
+}
+
+/** Étape 1 : génère (IA) les sections éditables de l'offre, sans produire le .docx. */
+export async function buildOfferSections(scoringResult: ScoringResult, clientName?: string): Promise<OfferSectionsResponse> {
+  const response = await apiFetch(`${API_BASE}/presales/offer/sections`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ao_filename: scoringResult.ao_filename,
+      scoring_result: scoringResult,
+      client_name: clientName,
+    }),
+  }, 180_000);
+  if (!response.ok) throw new Error(`Offer sections error: ${response.status}`);
+  return response.json();
+}
+
+/** Étape 2 : produit le .docx à partir des sections (éventuellement éditées).
+ *  `selectedCvs` / `selectedAbes` : noms de fichiers GED choisis dans le modal —
+ *  les CV alimentent le tableau équipe, les ABE une section « Références ». */
+export async function renderOffer(
+  scoringResult: ScoringResult,
+  sections: OfferSections,
+  clientName?: string,
+  selectedCvs: string[] = [],
+  selectedAbes: string[] = [],
+): Promise<Blob> {
+  const response = await apiFetch(`${API_BASE}/presales/offer/render`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      ao_filename: scoringResult.ao_filename,
+      scoring_result: scoringResult,
+      sections,
+      client_name: clientName,
+      selected_cvs: selectedCvs,
+      selected_abes: selectedAbes,
+    }),
+  }, 180_000);  // marge : l'intégration en annexe des pages PDF des CV/ABE prend du temps
+  if (!response.ok) throw new Error(`Offer render error: ${response.status}`);
   return response.blob();
 }
 

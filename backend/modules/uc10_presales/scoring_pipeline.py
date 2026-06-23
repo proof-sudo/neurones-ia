@@ -14,6 +14,7 @@ from core.ports.llm_gateway import LLMGateway, OutputTruncatedError
 from core.services.rag_engine import RAGEngine
 from core.domain.offer import (
     ScoringResult,
+    ExtractedItem,
     KeyElement,
     MatchedDocument,
     BidRecommendation,
@@ -109,11 +110,11 @@ Retourne UN JSON valide :
   "key_points": [
     {"label": "Nom court du point", "value": "valeur ou description concise"}
   ],
-  "criteres_selection": ["critère d'évaluation/sélection, avec ses spécificités et chiffres"],
-  "besoins": ["besoin fonctionnel ou technique exprimé, détaillé"],
-  "prerequis": ["prérequis ou qualification obligatoire, avec niveau/durée/nombre exacts"],
-  "ressources_demandees": ["profil RH demandé avec intitulé exact, spécialité, niveau, expérience"],
-  "points_vigilance": ["risque, contrainte ou point d'attention concret"],
+  "criteres_selection": [{"texte": "critère d'évaluation/sélection, avec ses spécificités et chiffres", "source_section": "section/article/page d'où vient l'exigence ou ''"}],
+  "besoins": [{"texte": "besoin fonctionnel ou technique exprimé, détaillé", "source_section": "section/article/page ou ''"}],
+  "prerequis": [{"texte": "prérequis ou qualification obligatoire, avec niveau/durée/nombre exacts", "source_section": "section/article/page ou ''"}],
+  "ressources_demandees": [{"texte": "profil RH demandé avec intitulé exact, spécialité, niveau, expérience", "source_section": "section/article/page ou ''"}],
+  "points_vigilance": [{"texte": "risque, contrainte ou point d'attention concret", "source_section": "section/article/page ou ''"}],
   "date_remise": "date limite de remise ou chaîne vide"
 }
 
@@ -123,6 +124,11 @@ périmètre géographique, volume, certification requise, type de marché, claus
 
 Pour ressources_demandees : un item PAR profil distinct, avec son intitulé exact (ex: "Ingénieur étude",
 "Spécialiste GLPI"), jamais un terme collectif comme "les ingénieurs" ou "l'équipe technique".
+
+RÈGLE source_section (TRAÇABILITÉ) : pour CHAQUE item des 5 listes ci-dessus (criteres_selection, besoins,
+prerequis, ressources_demandees, points_vigilance), renseigne `source_section` = D'OÙ vient l'exigence dans
+l'AO (n° de section/article/page tel qu'écrit : "Section III Art. 12", "§4.2", "page 8"). Localisation non
+identifiable → "" (n'invente JAMAIS une référence). Chaque item = un objet {texte, source_section}.
 
 Réponds UNIQUEMENT avec le JSON valide, sans balises markdown."""
 
@@ -641,10 +647,11 @@ class ScoringPipeline:
 
     async def _step1_extract(self, ao_text: str) -> tuple[list[KeyElement], dict]:
         snippet = _truncate_by_tokens(ao_text, self._llm, _EXTRACT_INPUT_BUDGET_TOKENS, step="extract")
-        # 5500 tokens : 10 key_points (valeurs longues) + 5 listes thématiques (jusqu'à ~15 items
-        # chacune sur AO dense type ABI) + date_remise. Gate : test_extract_output_budget.py.
+        # 8000 tokens (était 5500) : chaque item des 5 listes thématiques porte désormais
+        # {texte, source_section} → le pire cas (73 items + réfs) ~6000 tok (cf. gate), 8000
+        # garde ~20% de marge. Gate : test_extract_output_budget.py.
         raw = await self._llm.extract(
-            prompt=_EXTRACT_SYSTEM, text=snippet, max_tokens=5500,
+            prompt=_EXTRACT_SYSTEM, text=snippet, max_tokens=8000,
             temperature=_TEMP_DETERMINISTIC,
         )
         empty_extra: dict = {
@@ -652,9 +659,19 @@ class ScoringPipeline:
             "ressources_demandees": [], "points_vigilance": [], "date_remise": "",
         }
 
-        def _list(d: dict, key: str) -> list[str]:
+        def _items(d: dict, key: str) -> list[ExtractedItem]:
+            """Parse une liste d'exigences en ExtractedItem. Tolère le nouveau format
+            [{texte, source_section}] ET l'ancien [str] (robustesse si le LLM régresse) :
+            ExtractedItem.coerce gère les deux. Les items au texte vide sont écartés."""
             val = d.get(key, [])
-            return [str(v).strip() for v in (val if isinstance(val, list) else []) if str(v).strip()]
+            if not isinstance(val, list):
+                return []
+            out: list[ExtractedItem] = []
+            for v in val:
+                item = ExtractedItem.coerce(v)
+                if item.texte:
+                    out.append(item)
+            return out
 
         try:
             cleaned = _clean_json(raw)
@@ -680,11 +697,11 @@ class ScoringPipeline:
                         elements.append(KeyElement(category=label, value=value))
 
         extra = {
-            "criteres_selection": _list(data, "criteres_selection"),
-            "besoins": _list(data, "besoins"),
-            "prerequis": _list(data, "prerequis"),
-            "ressources_demandees": _list(data, "ressources_demandees"),
-            "points_vigilance": _list(data, "points_vigilance"),
+            "criteres_selection": _items(data, "criteres_selection"),
+            "besoins": _items(data, "besoins"),
+            "prerequis": _items(data, "prerequis"),
+            "ressources_demandees": _items(data, "ressources_demandees"),
+            "points_vigilance": _items(data, "points_vigilance"),
             "date_remise": str(data.get("date_remise", "")).strip(),
         }
         return elements, extra

@@ -23,8 +23,17 @@ from modules.uc10_presales.schemas import (
     ScoringCriterionSchema, RiskSchema, PreconditionSchema, AppendixSchema,
     PartnerSchema, PhaseActionSchema, StrategyPhaseSchema,
     RequiredProfileSchema, EligibilityThresholdSchema, FinancialDataSchema,
+    TemplateValidationSchema, TemplateCheckSchema,
+    OfferSectionsSchema, OfferSectionsResponse, OfferRenderRequest,
 )
 from modules.uc10_presales.use_case import PresalesUseCase
+from modules.uc10_presales.template_validator import (
+    TemplateValidation, validate_template, validate_domain_template, make_validation,
+)
+from modules.uc10_presales.template_contract import DEFAULT_DOMAIN
+from modules.uc10_presales.offer_generator import OfferGenerator
+from modules.uc10_presales.requirements_builder import build_matrice
+from modules.uc10_presales.matrix_export import render_matrix_xlsx
 from core.domain.offer import ScoringResult, BidStrategy, Partner, Appendix
 
 # Checklist générique inférée (CI / marchés publics) — utilisée quand l'AO ne liste
@@ -47,6 +56,7 @@ router = APIRouter(prefix="/presales", tags=["UC10 - Pre-Sales"])
 
 _ALLOWED_TYPES = {"application/pdf", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}
 _DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
 def _attachment_headers(filename: str) -> dict[str, str]:
@@ -142,12 +152,99 @@ async def generate_offer(body: OfferGenerationRequest, request: Request):
     draft = await use_case.generate_offer(
         scoring=scoring,
         client_name=body.client_name or "",
+        selected_cvs=body.selected_cvs,
+        selected_abes=body.selected_abes,
     )
     return Response(
         content=draft.content_docx,
         media_type=_DOCX_MIME,
         headers=_attachment_headers(draft.filename),
     )
+
+
+@router.post("/offer/sections", response_model=OfferSectionsResponse)
+async def offer_sections(body: OfferGenerationRequest, request: Request):
+    """Étape 1 : génère (IA) les sections éditables de l'offre, sans produire le .docx."""
+    use_case = _get_use_case(request)
+    scoring = _from_schema(body.scoring_result)
+    try:
+        sections, domain, client = await use_case.build_offer_sections(scoring, body.client_name or "")
+    except Exception as e:
+        logger.exception("Génération des sections d'offre échouée")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+    return OfferSectionsResponse(
+        sections=OfferSectionsSchema(**sections),
+        domain=domain,
+        client_name=client,
+        filename=OfferGenerator.build_filename(scoring, client),
+    )
+
+
+@router.post("/offer/render")
+async def offer_render(body: OfferRenderRequest, request: Request):
+    """Étape 2 : produit le .docx Word à partir des sections (éventuellement éditées)."""
+    use_case = _get_use_case(request)
+    scoring = _from_schema(body.scoring_result)
+    logger.info(
+        "Offer render — CV sélectionnés=%s | ABE sélectionnés=%s",
+        body.selected_cvs, body.selected_abes,
+    )
+    try:
+        draft = use_case.render_offer(
+            scoring, body.sections.model_dump(), body.client_name or "",
+            selected_cvs=body.selected_cvs, selected_abes=body.selected_abes,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        logger.exception("Rendu de l'offre échoué")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+    return Response(
+        content=draft.content_docx,
+        media_type=_DOCX_MIME,
+        headers=_attachment_headers(draft.filename),
+    )
+
+
+def _validation_to_schema(v: TemplateValidation) -> TemplateValidationSchema:
+    return TemplateValidationSchema(
+        ok=v.ok, domain=v.domain, template_path=v.template_path,
+        errors=v.errors, warnings=v.warnings,
+        checks=[
+            TemplateCheckSchema(label=c.label, ok=c.ok, detail=c.detail, severity=c.severity)
+            for c in v.checks
+        ],
+    )
+
+
+@router.post("/template/validate", response_model=TemplateValidationSchema)
+async def validate_offer_template(
+    domain: str = DEFAULT_DOMAIN,
+    file: UploadFile | None = File(None),
+):
+    """Vérifie qu'un template .docx d'offre respecte le contrat attendu par le générateur.
+
+    - **Sans fichier** : valide le template présent dans la GED pour `domain`.
+    - **Avec fichier .docx** : valide le fichier uploadé (préflight, avant dépôt en GED).
+
+    Renvoie un rapport ✅/❌ par exigence (ancres de titres, noms legacy, tableaux,
+    phases du planning) + le détail de ce qu'il faut corriger dans le .docx. `ok=false`
+    dès qu'une exigence de sévérité « error » échoue (les « warning » n'invalident pas).
+    """
+    if file is not None:
+        if not (file.filename or "").lower().endswith(".docx"):
+            raise HTTPException(status_code=400, detail="Le template doit être un fichier .docx.")
+        data = await file.read()
+        if len(data) > 10 * 1024 * 1024:
+            raise HTTPException(status_code=400, detail="Fichier trop volumineux (max 10 MB).")
+        try:
+            checks = validate_template(BytesIO(data))
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f".docx illisible : {type(exc).__name__}: {exc}")
+        result = make_validation(domain=domain, template_path=file.filename, checks=checks)
+    else:
+        result = validate_domain_template(domain)
+    return _validation_to_schema(result)
 
 
 @router.post("/bid-strategy", response_model=BidStrategySchema)
@@ -677,7 +774,9 @@ async def export_analysis(body: AnalysisExportRequest, request: Request):
         if items:
             h["section_title"](title, color=color, num=_next_num())
             for item in items:
-                h["bullet"](item, color)
+                # items = list[ExtractedItem] : on affiche le texte + la réf source si connue
+                txt = item.texte + (f"  ·  réf. {item.source_section}" if item.source_section else "")
+                h["bullet"](txt, color)
             doc.add_paragraph("")
 
     h["footer_line"]()
@@ -687,6 +786,31 @@ async def export_analysis(body: AnalysisExportRequest, request: Request):
     return Response(
         content=buffer.getvalue(), media_type=_DOCX_MIME,
         headers=_attachment_headers(f"Analyse-AO_{safe_name}.docx"),
+    )
+
+
+@router.post("/export-matrix")
+async def export_matrix(body: AnalysisExportRequest, request: Request):
+    """Exporte la MATRICE DE CONFORMITÉ (toutes les exigences de l'AO) en Excel.
+
+    Vue générée depuis le ScoringResult : consolidation exhaustive des exigences
+    (besoins, critères, prérequis, profils, seuils, annexes…), classées par domaine,
+    avec leur référence source. Aucun appel LLM — pur calcul déterministe."""
+    scoring = _from_schema(body.scoring_result)
+    matrice = build_matrice(scoring, generated_at=datetime.now().isoformat(timespec="seconds"))
+    logger.info(
+        "Export matrice — %s : %d exigences (exhaustif=%s)",
+        scoring.ao_filename, matrice.total, matrice.is_exhaustive,
+    )
+    try:
+        xlsx = render_matrix_xlsx(matrice)
+    except Exception as e:
+        logger.exception("Rendu de la matrice de conformité échoué")
+        raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
+    safe_name = re.sub(r"\.(pdf|docx)$", "", scoring.ao_filename, flags=re.IGNORECASE).replace(" ", "-")
+    return Response(
+        content=xlsx, media_type=_XLSX_MIME,
+        headers=_attachment_headers(f"Matrice-Conformite_{safe_name}.xlsx"),
     )
 
 
@@ -1392,7 +1516,7 @@ def _from_schema(schema: ScoringResultSchema) -> ScoringResult:
         KeyElement, MatchedDocument, BidRecommendation,
         MarketIdentity, CalendarEvent, EvaluationModalities,
         ScoringCriterion, Risk, Precondition, Appendix,
-        RequiredProfile, EligibilityThreshold, FinancialData,
+        RequiredProfile, EligibilityThreshold, FinancialData, ExtractedItem,
     )
     return ScoringResult(
         ao_filename=schema.ao_filename,
@@ -1412,11 +1536,11 @@ def _from_schema(schema: ScoringResultSchema) -> ScoringResult:
         score_basis=schema.score_basis,
         recommendation=BidRecommendation(schema.recommendation.value),
         justification=schema.justification,
-        criteres_selection=schema.criteres_selection,
-        besoins=schema.besoins,
-        prerequis=schema.prerequis,
-        ressources_demandees=schema.ressources_demandees,
-        points_vigilance=schema.points_vigilance,
+        criteres_selection=[ExtractedItem.coerce(i) for i in schema.criteres_selection],
+        besoins=[ExtractedItem.coerce(i) for i in schema.besoins],
+        prerequis=[ExtractedItem.coerce(i) for i in schema.prerequis],
+        ressources_demandees=[ExtractedItem.coerce(i) for i in schema.ressources_demandees],
+        points_vigilance=[ExtractedItem.coerce(i) for i in schema.points_vigilance],
         date_remise=schema.date_remise,
         team_matches=[
             MatchedDocument(

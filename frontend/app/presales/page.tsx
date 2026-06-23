@@ -6,13 +6,14 @@ import {
   Download, Loader2, Trash2, Sparkles, ArrowRight, Shield, Target,
   Users, Eye, ClipboardList, BarChart2, Layers, Lock, Plus, Send,
   CalendarDays, Trophy, ThumbsDown, Clock, LayoutGrid, List,
-  Briefcase, Scale, Coins,
+  Briefcase, Scale, Coins, X, Search, ChevronDown, FileCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   scoreAO, generateBidStrategy, exportAnalysis, exportScoring, exportStrategy,
-  generateOffer, exportChecklist,
-  type ScoringResult, type BidStrategy,
+  exportMatrix, exportChecklist, validateTemplate, buildOfferSections, renderOffer,
+  fetchGEDFiles, uploadGEDFile, itemText, type GEDFile, type ExtractedItem,
+  type ScoringResult, type BidStrategy, type TemplateValidation, type OfferSections,
   type MarketIdentity, type CalendarEvent, type EvaluationModalities,
   type ScoringCriterion, type Risk, type Precondition,
   type StrategyPhase, type Appendix,
@@ -194,7 +195,7 @@ function generateChecklist(r: ScoringResult): ChecklistItem[] {
   items.push({ id: uid(), category: "Technique", label: "Offre technique rédigée et validée en interne", required: true, checked: false, note: "" });
   items.push({ id: uid(), category: "Technique", label: "CV des intervenants clés joints au dossier", required: true, checked: false, note: "" });
   (r.ressources_demandees ?? []).slice(0, 6).forEach(res => {
-    items.push({ id: uid(), category: "Technique", label: `CV — ${res}`, required: true, checked: false, note: "" });
+    items.push({ id: uid(), category: "Technique", label: `CV — ${itemText(res)}`, required: true, checked: false, note: "" });
   });
   items.push({ id: uid(), category: "Technique", label: "Références de projets similaires (fiches projet ou PV de recette)", required: true, checked: false, note: "" });
   items.push({ id: uid(), category: "Technique", label: "Planning de réalisation détaillé", required: false, checked: false, note: "" });
@@ -207,9 +208,10 @@ function generateChecklist(r: ScoringResult): ChecklistItem[] {
   items.push({ id: uid(), category: "Administratif", label: "Bilans financiers des 3 derniers exercices", required: false, checked: false, note: "" });
   const docKeywords = ["certif", "assur", "agré", "habilit", "attestation", "autorisation", "label", "norme", "iso", "bilan", "capacité financ"];
   (r.prerequis ?? []).forEach(p => {
-    const lp = p.toLowerCase();
+    const txt = itemText(p);
+    const lp = txt.toLowerCase();
     if (docKeywords.some(k => lp.includes(k))) {
-      items.push({ id: uid(), category: "Administratif", label: p, required: true, checked: false, note: "" });
+      items.push({ id: uid(), category: "Administratif", label: txt, required: true, checked: false, note: "" });
     }
   });
 
@@ -267,11 +269,11 @@ const MOCK_RESULT: ScoringResult = {
   ],
   preconditions: [],
   preconditions_incomplete: false,
-  criteres_selection: ["Expérience cloud hybride > 5 ans", "Certifications VMware + Azure/AWS requises", "Références bancaires CI obligatoires"],
-  besoins: ["Virtualisation infrastructure (50+ serveurs)", "Solution Disaster Recovery multi-site", "Formation équipes IT BSIC"],
-  prerequis: ["Présence locale CI obligatoire", "Capacité financière justifiée (bilan 3 ans)", "Assurance décennale active"],
-  ressources_demandees: ["Chef de projet PMP/Prince2", "Expert VMware VCP", "Architecte cloud Azure/AWS certifié", "Formateur certifié"],
-  points_vigilance: ["Clause pénalité 0.5%/semaine de retard", "Délai très court pour périmètre large", "Transfert de compétences obligatoire"],
+  criteres_selection: ["Expérience cloud hybride > 5 ans", "Certifications VMware + Azure/AWS requises", "Références bancaires CI obligatoires"].map(t => ({ texte: t })),
+  besoins: ["Virtualisation infrastructure (50+ serveurs)", "Solution Disaster Recovery multi-site", "Formation équipes IT BSIC"].map(t => ({ texte: t })),
+  prerequis: ["Présence locale CI obligatoire", "Capacité financière justifiée (bilan 3 ans)", "Assurance décennale active"].map(t => ({ texte: t })),
+  ressources_demandees: ["Chef de projet PMP/Prince2", "Expert VMware VCP", "Architecte cloud Azure/AWS certifié", "Formateur certifié"].map(t => ({ texte: t })),
+  points_vigilance: ["Clause pénalité 0.5%/semaine de retard", "Délai très court pour périmètre large", "Transfert de compétences obligatoire"].map(t => ({ texte: t })),
   date_remise: "15 juin 2026",
   profils_demandes: [
     {
@@ -327,29 +329,35 @@ function SectionCard({ title, icon, children, className }: {
 }
 
 function BulletList({ items, bulletColor = "text-[#0a2a43]" }: {
-  items?: string[]; bulletColor?: string;
+  items?: (string | ExtractedItem)[]; bulletColor?: string;
 }) {
   if (!items?.length) return <p className="text-sm text-gray-400 italic">Non précisé</p>;
   return (
     <ul className="space-y-1.5">
-      {items.map((item, i) => (
-        <li key={i} className="flex items-start gap-2 text-sm text-slate-600">
-          <span className={cn("mt-1 text-xs shrink-0", bulletColor)}>●</span>
-          <span>{item}</span>
-        </li>
-      ))}
+      {items.map((item, i) => {
+        const ref = typeof item === "string" ? "" : (item.source_section ?? "");
+        return (
+          <li key={i} className="flex items-start gap-2 text-sm text-slate-600">
+            <span className={cn("mt-1 text-xs shrink-0", bulletColor)}>●</span>
+            <span>
+              {itemText(item)}
+              {ref && <span className="ml-1 text-[11px] text-slate-400">· réf. {ref}</span>}
+            </span>
+          </li>
+        );
+      })}
     </ul>
   );
 }
 
-function WarningList({ items }: { items?: string[] }) {
+function WarningList({ items }: { items?: (string | ExtractedItem)[] }) {
   if (!items?.length) return <p className="text-sm text-gray-400 italic">Aucun point identifié</p>;
   return (
     <ul className="space-y-1.5">
       {items.map((item, i) => (
         <li key={i} className="flex items-start gap-2 text-sm text-amber-800 bg-amber-50 rounded-lg px-3 py-2 border border-amber-100">
           <AlertTriangle size={13} className="shrink-0 mt-0.5 text-amber-500" />
-          <span>{item}</span>
+          <span>{itemText(item)}</span>
         </li>
       ))}
     </ul>
@@ -1068,8 +1076,9 @@ function StepperBar({ ao, viewStep, onStepClick, steps }: {
 
 // ── Step content ──────────────────────────────────────────────────────────────
 
-function Step1({ ao, onExport, exporting, onNext }: {
-  ao: AOEntry; onExport: () => void; exporting: boolean; onNext: () => void;
+function Step1({ ao, onExport, exporting, onExportMatrix, exportingMatrix, onNext }: {
+  ao: AOEntry; onExport: () => void; exporting: boolean;
+  onExportMatrix: () => void; exportingMatrix: boolean; onNext: () => void;
 }) {
   const r = ao.scoringResult!;
   return (
@@ -1138,14 +1147,25 @@ function Step1({ ao, onExport, exporting, onNext }: {
       )}
 
       <div className="flex items-center justify-between pt-1">
-        <button
-          onClick={onExport}
-          disabled={exporting}
-          className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 rounded-lg text-sm font-medium border border-slate-200 hover:border-slate-300 disabled:opacity-50 transition-colors"
-        >
-          {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-          Exporter en Word
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onExport}
+            disabled={exporting}
+            className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-slate-700 rounded-lg text-sm font-medium border border-slate-200 hover:border-slate-300 disabled:opacity-50 transition-colors"
+          >
+            {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            Exporter en Word
+          </button>
+          <button
+            onClick={onExportMatrix}
+            disabled={exportingMatrix}
+            title="Matrice de conformité exhaustive (toutes les exigences, classées par domaine, avec leur référence source) — Excel"
+            className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-slate-50 text-emerald-700 rounded-lg text-sm font-medium border border-emerald-200 hover:border-emerald-300 disabled:opacity-50 transition-colors"
+          >
+            {exportingMatrix ? <Loader2 size={14} className="animate-spin" /> : <FileCheck size={14} />}
+            Matrice de conformité
+          </button>
+        </div>
         <button
           onClick={onNext}
           className="flex items-center gap-2 px-5 py-2 bg-[#f26a21] hover:brightness-95 text-white rounded-lg text-sm font-medium transition-colors"
@@ -1223,7 +1243,7 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
           <div className="space-y-2">
             {(r.ressources_demandees?.length ?? 0) > 0 && (
               <p className="text-[11px] text-slate-400 italic mb-2">
-                Profils demandés : {r.ressources_demandees!.slice(0, 4).join(" · ")}
+                Profils demandés : {r.ressources_demandees!.slice(0, 4).map(itemText).join(" · ")}
               </p>
             )}
             {teamMatches.map((doc, i) => {
@@ -1536,24 +1556,418 @@ function Step4({ ao, onPlanChange, onValidate, onStartPhase2 }: {
   );
 }
 
+// ── État du modèle d'offre (.docx) — pré-check avant génération ───────────────
+
+function TemplateStatus({ val, loading, error, onRecheck }: {
+  val: TemplateValidation | null;
+  loading: boolean;
+  error: string | null;
+  onRecheck: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const fileName = val?.template_path ? val.template_path.split(/[\\/]/).pop() : null;
+  const failed = val ? val.checks.filter(c => !c.ok) : [];
+
+  const pill = !val
+    ? null
+    : val.errors > 0
+    ? { cls: "bg-amber-50 text-amber-700 border-amber-200", icon: <AlertTriangle size={13} />, label: "Incomplet" }
+    : val.warnings > 0
+    ? { cls: "bg-amber-50 text-amber-700 border-amber-200", icon: <AlertTriangle size={13} />, label: "Avertissements" }
+    : { cls: "bg-green-50 text-green-700 border-green-200", icon: <CheckCircle size={13} />, label: "Compatible" };
+
+  return (
+    <SectionCard title="Modèle d'offre (.docx)" icon={<ClipboardList size={15} />}>
+      <div className="flex items-center gap-2 mb-3">
+        {loading ? (
+          <span className="flex items-center gap-1.5 text-xs text-slate-400">
+            <Loader2 size={13} className="animate-spin" /> Vérification du modèle…
+          </span>
+        ) : pill ? (
+          <span className={cn("flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium", pill.cls)}>
+            {pill.icon} {pill.label}
+          </span>
+        ) : null}
+        {val && !loading && (
+          <span className="text-xs text-slate-400">
+            {val.errors} erreur(s) · {val.warnings} avertissement(s)
+          </span>
+        )}
+        <button
+          onClick={onRecheck}
+          disabled={loading}
+          className="ml-auto text-xs text-slate-500 hover:text-slate-700 disabled:opacity-50"
+        >
+          Revérifier
+        </button>
+      </div>
+
+      {fileName && (
+        <p className="text-xs text-slate-400 mb-2 truncate">
+          Fichier : <span className="text-slate-600">{fileName}</span>
+        </p>
+      )}
+
+      {error && (
+        <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+          <AlertCircle size={14} className="shrink-0 mt-0.5" /> {error}
+        </div>
+      )}
+
+      {val && val.errors > 0 && (
+        <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+          <span>Le modèle est <strong>incomplet</strong>, mais la génération reste possible : les éléments manquants seront marqués <strong>« À COMPLÉTER »</strong> dans le document (bannière en page de garde + annexe de fin reprenant le contenu généré). Corriger le .docx (voir le détail) reste recommandé.</span>
+        </div>
+      )}
+      {val && val.errors === 0 && val.warnings > 0 && (
+        <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700">
+          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
+          <span>Le modèle fonctionne ; les éléments non remplis seront signalés <strong>« À COMPLÉTER »</strong> dans le document généré (voir le détail).</span>
+        </div>
+      )}
+      {val && val.ok && val.warnings === 0 && (
+        <div className="flex items-start gap-2 p-3 bg-green-50 border border-green-200 rounded-lg text-xs text-green-700">
+          <CheckCircle size={14} className="shrink-0 mt-0.5" /> Modèle pleinement compatible.
+        </div>
+      )}
+
+      {val && failed.length > 0 && (
+        <button
+          onClick={() => setOpen(o => !o)}
+          className="mt-2 text-xs text-[#0a2a43] font-medium hover:underline"
+        >
+          {open ? "Masquer le détail" : `Voir le détail (${failed.length} point(s) à corriger)`}
+        </button>
+      )}
+      {val && open && (
+        <ul className="mt-2 space-y-1.5">
+          {val.checks.map((c, i) => (
+            <li key={i} className="flex items-start gap-2 text-xs">
+              {c.ok ? (
+                <CheckCircle size={13} className="shrink-0 mt-0.5 text-green-500" />
+              ) : c.severity === "error" ? (
+                <XCircle size={13} className="shrink-0 mt-0.5 text-red-500" />
+              ) : (
+                <AlertTriangle size={13} className="shrink-0 mt-0.5 text-amber-500" />
+              )}
+              <span className={cn(c.ok ? "text-slate-500" : "text-slate-700")}>
+                <span className="font-medium">{c.label}</span>
+                {!c.ok && c.detail ? <span className="text-slate-400"> — {c.detail}</span> : null}
+              </span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </SectionCard>
+  );
+}
+
+// ── Modal de sélection des documents (CV / ABE) avant génération de l'offre ─────
+
+function DocPicker({ label, icon, folder, accentClass, selected, onToggle }: {
+  label: string;
+  icon: React.ReactNode;
+  folder: "cvs" | "abe";
+  accentClass: string;
+  selected: string[];
+  onToggle: (filename: string) => void;
+}) {
+  const [open, setOpen] = useState(true);
+  const [files, setFiles] = useState<GEDFile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState("");
+  const [uploading, setUploading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const load = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetchGEDFiles(folder);
+      setFiles(res.files);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Chargement impossible");
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => { load(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, []);
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    setError(null);
+    try {
+      const res = await uploadGEDFile(file, folder);
+      await load();
+      if (!selected.includes(res.filename)) onToggle(res.filename);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Téléversement impossible");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  const filtered = files.filter(f => f.filename.toLowerCase().includes(query.toLowerCase()));
+
+  return (
+    <div className="border border-slate-200 rounded-xl overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2.5 px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors"
+      >
+        <span className="text-slate-400 shrink-0">{icon}</span>
+        <span className="text-sm font-semibold text-slate-700">{label}</span>
+        {selected.length > 0 && (
+          <span className={cn("text-[11px] font-bold px-2 py-0.5 rounded-full", accentClass)}>
+            {selected.length} sélectionné{selected.length > 1 ? "s" : ""}
+          </span>
+        )}
+        <ChevronDown size={16} className={cn("ml-auto text-slate-400 transition-transform", open && "rotate-180")} />
+      </button>
+
+      {open && (
+        <div className="p-3 space-y-3">
+          <div className="flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                placeholder="Rechercher un document…"
+                className="w-full pl-8 pr-3 py-1.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#0a2a43]/20"
+              />
+            </div>
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-[#0a2a43] bg-white border border-slate-200 rounded-lg hover:bg-slate-50 disabled:opacity-50 shrink-0"
+            >
+              {uploading ? <Loader2 size={13} className="animate-spin" /> : <Upload size={13} />}
+              Téléverser
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".pdf,.docx,.doc"
+              onChange={handleUpload}
+              className="hidden"
+            />
+          </div>
+
+          {error && (
+            <div className="flex items-start gap-2 p-2 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+              <AlertCircle size={13} className="shrink-0 mt-0.5" />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <div className="max-h-44 overflow-y-auto space-y-1 pr-1">
+            {loading ? (
+              <div className="flex items-center justify-center gap-2 text-xs text-slate-400 py-4">
+                <Loader2 size={14} className="animate-spin" /> Chargement…
+              </div>
+            ) : filtered.length === 0 ? (
+              <p className="text-xs text-slate-400 italic py-4 text-center">
+                {files.length === 0
+                  ? "Aucun document dans la GED — téléversez-en un."
+                  : "Aucun résultat pour cette recherche."}
+              </p>
+            ) : (
+              filtered.map(f => {
+                const isSel = selected.includes(f.filename);
+                return (
+                  <button
+                    key={f.file_path || f.filename}
+                    type="button"
+                    onClick={() => onToggle(f.filename)}
+                    className={cn(
+                      "w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-left transition-colors",
+                      isSel ? "bg-[#eef2f7] border border-[#0a2a43]/20" : "hover:bg-slate-50 border border-transparent"
+                    )}
+                  >
+                    <span className={cn(
+                      "w-4 h-4 rounded border flex items-center justify-center shrink-0",
+                      isSel ? "bg-[#0a2a43] border-[#0a2a43]" : "bg-white border-slate-300"
+                    )}>
+                      {isSel && <CheckCircle size={12} className="text-white" />}
+                    </span>
+                    <FileText size={14} className="text-slate-400 shrink-0" />
+                    <span className="text-sm text-slate-700 truncate">{f.filename}</span>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function OfferDocsModal({ selectedCvs, selectedAbes, onToggleCv, onToggleAbe, onClose, onConfirm }: {
+  selectedCvs: string[];
+  selectedAbes: string[];
+  onToggleCv: (f: string) => void;
+  onToggleAbe: (f: string) => void;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const total = selectedCvs.length + selectedAbes.length;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4" onClick={onClose}>
+      <div
+        className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[88vh] flex flex-col"
+        onClick={e => e.stopPropagation()}
+      >
+        <div className="flex items-start justify-between px-5 py-4 border-b border-slate-100">
+          <div>
+            <h2 className="text-base font-semibold text-slate-800">Documents à intégrer à l&apos;offre</h2>
+            <p className="text-xs text-slate-500 mt-0.5 max-w-md">
+              Sélectionnez les CV et les attestations de bonne exécution (ABE) à inclure, ou téléversez-en de nouveaux.
+            </p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 shrink-0" aria-label="Fermer">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="px-5 py-4 space-y-3 overflow-y-auto">
+          <DocPicker
+            label="CV des intervenants"
+            icon={<Users size={15} />}
+            folder="cvs"
+            accentClass="bg-[#0a2a43] text-white"
+            selected={selectedCvs}
+            onToggle={onToggleCv}
+          />
+          <DocPicker
+            label="ABE — Attestations de bonne exécution"
+            icon={<FileCheck size={15} />}
+            folder="abe"
+            accentClass="bg-amber-500 text-white"
+            selected={selectedAbes}
+            onToggle={onToggleAbe}
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-3 px-5 py-4 border-t border-slate-100">
+          <span className="text-xs text-slate-400 max-w-[45%]">
+            {total === 0
+              ? "Aucune sélection — l'offre utilisera le matching automatique des CV."
+              : `${total} document${total > 1 ? "s" : ""} sélectionné${total > 1 ? "s" : ""}.`}
+          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-sm font-medium text-slate-600 bg-white border border-slate-200 rounded-lg hover:bg-slate-50"
+            >
+              Annuler
+            </button>
+            <button
+              onClick={onConfirm}
+              className="flex items-center gap-2 px-5 py-2 bg-[#f26a21] hover:brightness-95 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              <Sparkles size={15} /> Générer l&apos;offre
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Step 5 — Offre technique ──────────────────────────────────────────────────
 
-function Step5({ ao, onGenerate, onDownload, onValidate, generating }: {
+function Step5({ ao, onValidate, triggerDownload, onOfferReady }: {
   ao: AOEntry;
-  onGenerate: () => void;
-  onDownload: () => void;
   onValidate: () => void;
-  generating: boolean;
+  triggerDownload: (blob: Blob, filename: string) => void;
+  onOfferReady: (filename: string) => void;
 }) {
-  if (generating) {
+  const [tpl, setTpl] = useState<TemplateValidation | null>(null);
+  const [tplLoading, setTplLoading] = useState(false);
+  const [tplError, setTplError] = useState<string | null>(null);
+
+  const [sections, setSections] = useState<OfferSections | null>(null);
+  const [filename, setFilename] = useState("");
+  const [building, setBuilding] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
+  const [lastBlob, setLastBlob] = useState<Blob | null>(null);
+
+  // Documents choisis dans le modal — injectés dans le .docx (CV → équipe, ABE → références).
+  const [showDocsModal, setShowDocsModal] = useState(false);
+  const [selectedCvs, setSelectedCvs] = useState<string[]>([]);
+  const [selectedAbes, setSelectedAbes] = useState<string[]>([]);
+  const toggle = (setter: React.Dispatch<React.SetStateAction<string[]>>) => (f: string) =>
+    setter(prev => (prev.includes(f) ? prev.filter(x => x !== f) : [...prev, f]));
+
+  const checkTpl = async () => {
+    setTplLoading(true);
+    setTplError(null);
+    try {
+      setTpl(await validateTemplate());
+    } catch (e) {
+      setTplError(e instanceof Error ? e.message : "Vérification impossible");
+    } finally {
+      setTplLoading(false);
+    }
+  };
+
+  useEffect(() => { checkTpl(); }, []);
+
+  // Génération JAMAIS bloquante, en une seule action : sections IA (étape 1) PUIS
+  // rendu du .docx (étape 2) PUIS téléchargement automatique. Les éléments que le
+  // modèle ne permet pas de remplir sont marqués « À COMPLÉTER » dans le document
+  // (bannière en page de garde + annexe de fin reprenant le contenu généré).
+  const generateOffer = async () => {
+    if (!ao.scoringResult) return;
+    setBuilding(true);
+    setGenError(null);
+    try {
+      const res = await buildOfferSections(ao.scoringResult, ao.clientName || undefined);
+      setSections(res.sections);
+      setFilename(res.filename);
+      const name = res.filename || "Offre-Technique.docx";
+      const blob = await renderOffer(
+        ao.scoringResult, res.sections, ao.clientName || undefined, selectedCvs, selectedAbes,
+      );
+      setLastBlob(blob);
+      triggerDownload(blob, name);
+      onOfferReady(name);
+    } catch (e) {
+      setGenError(e instanceof Error ? e.message : "Échec de la génération de l'offre");
+    } finally {
+      setBuilding(false);
+    }
+  };
+  // Le bouton « Générer » ouvre d'abord le modal de sélection des CV / ABE.
+  const requestGenerate = () => { setShowDocsModal(true); };
+  const confirmGenerate = () => { setShowDocsModal(false); generateOffer(); };
+
+  // Re-téléchargement du dernier .docx produit. Sans blob en mémoire (ex. après
+  // rechargement de page), on repasse par le modal pour ne pas régénérer sans CV/ABE.
+  const redownload = () => {
+    if (lastBlob) triggerDownload(lastBlob, filename || "Offre-Technique.docx");
+    else requestGenerate();
+  };
+
+  if (building) {
     return (
       <div className="flex flex-col items-center justify-center py-20 gap-5">
         <div className="w-16 h-16 rounded-xl bg-[#eef2f7] flex items-center justify-center">
           <Sparkles size={32} className="text-[#0a2a43] animate-pulse" />
         </div>
         <div className="text-center">
-          <p className="font-semibold text-slate-700">Génération de l'offre technique...</p>
-          <p className="text-sm text-slate-400 mt-1.5">Notre IA rédige les sections de l'offre à partir de votre GED</p>
+          <p className="font-semibold text-slate-700">Génération des sections de l'offre...</p>
+          <p className="text-sm text-slate-400 mt-1.5">Notre IA rédige les sections à partir de votre AO et de votre GED</p>
         </div>
         <div className="flex gap-1.5">
           {[0, 1, 2].map(i => (
@@ -1566,6 +1980,17 @@ function Step5({ ao, onGenerate, onDownload, onValidate, generating }: {
 
   return (
     <div className="space-y-4">
+      {showDocsModal && (
+        <OfferDocsModal
+          selectedCvs={selectedCvs}
+          selectedAbes={selectedAbes}
+          onToggleCv={toggle(setSelectedCvs)}
+          onToggleAbe={toggle(setSelectedAbes)}
+          onClose={() => setShowDocsModal(false)}
+          onConfirm={confirmGenerate}
+        />
+      )}
+      <TemplateStatus val={tpl} loading={tplLoading} error={tplError} onRecheck={checkTpl} />
       <SectionCard title="Génération de l'offre technique" icon={<FileText size={15} />}>
         <p className="text-sm text-slate-500 leading-relaxed mb-3">
           L'offre technique est générée automatiquement par IA à partir de votre AO et de vos références GED.
@@ -1586,7 +2011,7 @@ function Step5({ ao, onGenerate, onDownload, onValidate, generating }: {
               <p className="text-xs text-slate-400 mt-1">Durée estimée : 20-30 secondes</p>
             </div>
             <button
-              onClick={onGenerate}
+              onClick={requestGenerate}
               className="flex items-center gap-2 px-5 py-2.5 bg-[#f26a21] hover:brightness-95 text-white rounded-xl text-sm font-medium transition-colors"
             >
               <Sparkles size={15} />
@@ -1602,12 +2027,27 @@ function Step5({ ao, onGenerate, onDownload, onValidate, generating }: {
               <p className="text-sm font-semibold text-slate-700">Offre générée avec succès</p>
               <p className="text-xs text-slate-500 truncate mt-0.5">{ao.offerFilename}</p>
             </div>
-            <button
-              onClick={onDownload}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-600 transition-colors shrink-0"
-            >
-              <Download size={12} /> Télécharger
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                onClick={requestGenerate}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-[#0a2a43] transition-colors"
+              >
+                <Sparkles size={12} /> Choisir CV/ABE & régénérer
+              </button>
+              <button
+                onClick={redownload}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white hover:bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-600 transition-colors"
+              >
+                <Download size={12} /> Télécharger
+              </button>
+            </div>
+          </div>
+        )}
+
+        {genError && (
+          <div className="flex items-start gap-2 mt-3 p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+            <AlertCircle size={14} className="shrink-0 mt-0.5" />
+            <span>{genError}</span>
           </div>
         )}
       </SectionCard>
@@ -2004,6 +2444,7 @@ export default function PresalesPage() {
   const [generatingStrategy, setGeneratingStrategy] = useState(false);
   const [validatingDecision, setValidatingDecision] = useState(false);
   const [exportingAnalysis, setExportingAnalysis] = useState(false);
+  const [exportingMatrix, setExportingMatrix] = useState(false);
   const [exportingScoring, setExportingScoring] = useState(false);
   const [exportingStrategy, setExportingStrategy] = useState(false);
   const [exportingChecklist, setExportingChecklist] = useState(false);
@@ -2011,7 +2452,6 @@ export default function PresalesPage() {
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const demoLoaded = useRef(false);
-  const offerBlobRef = useRef<{ id: string; blob: Blob; filename: string } | null>(null);
 
   const selectedAO = aos.find(a => a.id === selectedId) ?? null;
 
@@ -2167,6 +2607,26 @@ export default function PresalesPage() {
     }
   }
 
+  async function handleExportMatrix(aoId: string) {
+    const ao = aos.find(a => a.id === aoId);
+    if (!ao?.scoringResult) {
+      console.warn("handleExportMatrix: scoringResult manquant pour", aoId);
+      return;
+    }
+    setExportError(null);
+    setExportingMatrix(true);
+    try {
+      const blob = await exportMatrix(ao.scoringResult, ao.clientName || undefined);
+      triggerDownload(blob, `Matrice-Conformite_${ao.filename.replace(/\.(pdf|docx)$/i, "")}.xlsx`);
+      setExportSuccess("Téléchargement lancé — vérifiez votre dossier Téléchargements.");
+      window.setTimeout(() => setExportSuccess(null), 4000);
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setExportingMatrix(false);
+    }
+  }
+
   async function handleExportScoring(aoId: string) {
     const ao = aos.find(a => a.id === aoId);
     if (!ao?.scoringResult) return;
@@ -2214,36 +2674,6 @@ export default function PresalesPage() {
       setExportError(msg);
     } finally {
       setExportingStrategy(false);
-    }
-  }
-
-  async function handleGenerateOffer(aoId: string) {
-    const ao = aos.find(a => a.id === aoId);
-    if (!ao?.scoringResult) return;
-    updateAO(aoId, { offerGenerating: true });
-    setExportError(null);
-    try {
-      const blob = await generateOffer(ao.scoringResult, ao.clientName || undefined);
-      const filename = `Offre-Technique_${ao.clientName ? ao.clientName + "_" : ""}${ao.filename.replace(/\.(pdf|docx)$/i, "")}.docx`;
-      offerBlobRef.current = { id: aoId, blob, filename };
-      triggerDownload(blob, filename);
-      updateAO(aoId, { offerGenerating: false, offerGenerated: true, offerFilename: filename });
-      setExportSuccess("Offre générée — téléchargement lancé.");
-      window.setTimeout(() => setExportSuccess(null), 4000);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      setExportError(msg);
-      updateAO(aoId, { offerGenerating: false });
-    }
-  }
-
-  function handleDownloadOffer(aoId: string) {
-    const ao = aos.find(a => a.id === aoId);
-    if (!ao) return;
-    if (offerBlobRef.current?.id === aoId) {
-      triggerDownload(offerBlobRef.current.blob, offerBlobRef.current.filename);
-    } else {
-      handleGenerateOffer(aoId);
     }
   }
 
@@ -2666,6 +3096,8 @@ export default function PresalesPage() {
                       ao={selectedAO}
                       onExport={() => handleExportAnalysis(selectedAO.id)}
                       exporting={exportingAnalysis}
+                      onExportMatrix={() => handleExportMatrix(selectedAO.id)}
+                      exportingMatrix={exportingMatrix}
                       onNext={() => setViewStep(2)}
                     />
                   )}
@@ -2703,8 +3135,6 @@ export default function PresalesPage() {
                   {viewStep === 5 && (
                     <Step5
                       ao={selectedAO}
-                      onGenerate={() => handleGenerateOffer(selectedAO.id)}
-                      onDownload={() => handleDownloadOffer(selectedAO.id)}
                       onValidate={() => {
                         const items = selectedAO.checklist.length === 0 && selectedAO.scoringResult
                           ? generateChecklist(selectedAO.scoringResult)
@@ -2712,7 +3142,8 @@ export default function PresalesPage() {
                         updateAO(selectedAO.id, { offerValidated: true, checklist: items });
                         setViewStep(6);
                       }}
-                      generating={selectedAO.offerGenerating}
+                      triggerDownload={triggerDownload}
+                      onOfferReady={(filename) => updateAO(selectedAO.id, { offerGenerated: true, offerFilename: filename })}
                     />
                   )}
                   {viewStep === 6 && (
