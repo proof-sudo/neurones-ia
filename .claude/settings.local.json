@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(ls -la \"C:/Users/Soro Landry/Downloads/TR_ DOC\")",
-      "Read(//c/Users/Soro Landry/Downloads/TR_ DOC/**)"
-    ]
-  }
-}

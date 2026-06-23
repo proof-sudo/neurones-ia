@@ -23,8 +23,16 @@ from modules.uc10_presales.schemas import (
     ScoringCriterionSchema, RiskSchema, PreconditionSchema, AppendixSchema,
     PartnerSchema, PhaseActionSchema, StrategyPhaseSchema,
     RequiredProfileSchema, EligibilityThresholdSchema, FinancialDataSchema,
+    CapabilityDealSchema, CapabilityMatchSchema, ClientContextSchema,
+    OfferSectionsSchema, OfferSectionsResponse, OfferRenderRequest,
+    TemplateCheckSchema, TemplateValidationSchema,
 )
 from modules.uc10_presales.use_case import PresalesUseCase
+from modules.uc10_presales.offer_generator import OfferGenerator
+from modules.uc10_presales.template_validator import (
+    TemplateValidation, validate_template, make_validation, validate_domain_template,
+)
+from modules.uc10_presales.template_contract import DEFAULT_DOMAIN
 from core.domain.offer import ScoringResult, BidStrategy, Partner, Appendix
 
 # Checklist générique inférée (CI / marchés publics) — utilisée quand l'AO ne liste
@@ -1522,6 +1530,7 @@ def _from_schema(schema: ScoringResultSchema) -> ScoringResult:
         MarketIdentity, CalendarEvent, EvaluationModalities,
         ScoringCriterion, Risk, Precondition, Appendix,
         RequiredProfile, EligibilityThreshold, FinancialData, ExtractedItem,
+        ClientContext, CapabilityMatch, CapabilityDeal,
     )
     return ScoringResult(
         ao_filename=schema.ao_filename,
