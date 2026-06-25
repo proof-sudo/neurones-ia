@@ -3,13 +3,17 @@ import { useState, useEffect, useRef, useCallback, DragEvent } from "react";
 import {
   FolderOpen, Folder, FileText, Upload, Trash2, Plus, RefreshCw,
   ChevronRight, ChevronDown, File, Search, X, AlertCircle, CheckCircle2,
-  FilePlus, AlertTriangle,
+  FilePlus, AlertTriangle, ShieldAlert, RotateCcw,
+  Layers, Tag, Boxes,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   fetchGEDTree, fetchGEDFiles, fetchGEDStatus, uploadGEDFile,
   deleteGEDFile, createGEDFolder, reindexGED, deleteGEDFolder,
-  type GEDCategory, type GEDFile, type GEDFolder, type GEDStatus,
+  fetchGEDQuarantine, retryGEDQuarantine, deleteGEDQuarantine,
+  fetchGEDDocumentChunks, fetchGEDIndexHealth, searchGEDDebug, searchGEDProd,
+  type GEDCategory, type GEDFile, type GEDFolder, type GEDStatus, type GEDQuarantineEntry,
+  type GEDDocumentChunks, type GEDChunk, type GEDIndexHealth, type GEDSearchHit, type GEDProdHit,
 } from "@/lib/api";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -147,14 +151,19 @@ function FolderNode({ path, name, label, fileCount, subfolders, selected, onSele
 
 // ── FileCard ──────────────────────────────────────────────────────────────────
 
-function FileCard({ file, onDelete }: { file: GEDFile; onDelete: (id: string) => void }) {
+function FileCard({ file, onDelete, onInspect }: { file: GEDFile; onDelete: (id: string) => void; onInspect: (file: GEDFile) => void }) {
   const [confirming, setConfirming] = useState(false);
   const badge = DOC_TYPE_LABELS[file.doc_type] ?? DOC_TYPE_LABELS.unknown;
   const ext = file.filename.split(".").pop()?.toLowerCase() ?? "";
+  const inspectable = file.is_indexed && !!file.doc_id;
 
   return (
     <div
-      className="flex items-center gap-3 px-4 py-3 rounded-xl transition-all group hover:-translate-y-px"
+      onClick={() => inspectable && onInspect(file)}
+      className={cn(
+        "flex items-center gap-3 px-4 py-3 rounded-xl transition-all group hover:-translate-y-px",
+        inspectable && "cursor-pointer hover:ring-2 hover:ring-blue-200",
+      )}
       style={GLASS}
     >
       <div className={cn("shrink-0", EXT_COLORS[ext] ?? "text-slate-400")}>
@@ -187,13 +196,13 @@ function FileCard({ file, onDelete }: { file: GEDFile; onDelete: (id: string) =>
           confirming ? (
             <div className="flex items-center gap-1">
               <button
-                onClick={() => { onDelete(file.doc_id!); setConfirming(false); }}
+                onClick={(e) => { e.stopPropagation(); onDelete(file.doc_id!); setConfirming(false); }}
                 className="text-xs text-red-600 font-semibold px-2 py-1 rounded-lg hover:bg-red-50 transition-colors"
               >
                 Confirmer
               </button>
               <button
-                onClick={() => setConfirming(false)}
+                onClick={(e) => { e.stopPropagation(); setConfirming(false); }}
                 className="text-xs text-slate-500 px-2 py-1 rounded-lg hover:bg-slate-100 transition-colors"
               >
                 Annuler
@@ -201,7 +210,7 @@ function FileCard({ file, onDelete }: { file: GEDFile; onDelete: (id: string) =>
             </div>
           ) : (
             <button
-              onClick={() => setConfirming(true)}
+              onClick={(e) => { e.stopPropagation(); setConfirming(true); }}
               className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 rounded-lg hover:bg-red-50 text-slate-400 hover:text-red-500"
               title="Supprimer"
             >
@@ -386,6 +395,628 @@ function CreateFolderModal({ categories, initialParent, onClose, onCreated }: {
   );
 }
 
+// ── QuarantinePanel ───────────────────────────────────────────────────────────
+
+function QuarantineRow({ e, retentionDays, onRetry, onDelete }: {
+  e: GEDQuarantineEntry; retentionDays: number;
+  onRetry: (e: GEDQuarantineEntry, forceIndex?: boolean) => Promise<void>;
+  onDelete: (e: GEDQuarantineEntry) => Promise<void>;
+}) {
+  const [retrying, setRetrying] = useState(false);
+  const [forcing, setForcing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [confirmForce, setConfirmForce] = useState(false);
+
+  // Jours restants avant auto-suppression (depuis la dernière tentative)
+  const daysLeft = retentionDays > 0
+    ? Math.max(0, retentionDays - Math.floor((Date.now() - new Date(e.quarantined_at).getTime()) / 86400000))
+    : null;
+
+  return (
+    <div className="flex items-start gap-3 px-4 py-3">
+      <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" />
+      <div className="flex-1 min-w-0">
+        <p className="text-sm font-medium text-slate-800 truncate">{e.filename}</p>
+        <p className="text-xs text-amber-700 mt-0.5 leading-relaxed">{e.reason}</p>
+        <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-400">
+          <span>{new Date(e.quarantined_at).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" })}</span>
+          {e.retry_count > 0 && <span>{e.retry_count} tentative{e.retry_count > 1 ? "s" : ""}</span>}
+          {e.text_length > 0 && <span>{e.text_length} chars extraits</span>}
+          {e.file_size_bytes > 0 && <span>{(e.file_size_bytes / 1024).toFixed(0)} Ko</span>}
+          {daysLeft !== null && (
+            <span className={cn(daysLeft <= 1 ? "text-red-500 font-medium" : "text-slate-400")}>
+              suppr. auto dans {daysLeft} j
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-1.5 shrink-0">
+        <button
+          onClick={async () => { setRetrying(true); try { await onRetry(e); } finally { setRetrying(false); } }}
+          disabled={retrying || forcing || deleting}
+          className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border border-amber-300 text-amber-700 hover:bg-amber-100 transition-colors font-medium disabled:opacity-50"
+        >
+          {retrying ? <RefreshCw className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+          Réessayer
+        </button>
+        {confirmForce ? (
+          <>
+            <button
+              onClick={async () => { setForcing(true); try { await onRetry(e, true); } finally { setForcing(false); setConfirmForce(false); } }}
+              disabled={forcing}
+              className="text-xs px-2 py-1.5 rounded-lg bg-amber-600 text-white hover:bg-amber-700 transition-colors font-medium disabled:opacity-50"
+            >
+              {forcing ? <RefreshCw className="w-3 h-3 animate-spin" /> : "Indexer quand même"}
+            </button>
+            <button onClick={() => setConfirmForce(false)} className="text-xs px-2 py-1.5 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors">
+              Annuler
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => setConfirmForce(true)}
+            disabled={retrying || forcing || deleting}
+            className="text-xs px-2.5 py-1.5 rounded-lg border border-slate-200 text-slate-500 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200 transition-colors font-medium disabled:opacity-50"
+            title="Accepter et indexer malgré la validation qualité (document court mais légitime, ex. certification scannée)"
+          >
+            Forcer
+          </button>
+        )}
+        {confirming ? (
+          <>
+            <button
+              onClick={async () => { setDeleting(true); try { await onDelete(e); } finally { setDeleting(false); setConfirming(false); } }}
+              disabled={deleting}
+              className="text-xs px-2 py-1.5 rounded-lg bg-red-600 text-white hover:bg-red-700 transition-colors font-medium disabled:opacity-50"
+            >
+              {deleting ? <RefreshCw className="w-3 h-3 animate-spin" /> : "Confirmer"}
+            </button>
+            <button onClick={() => setConfirming(false)} className="text-xs px-2 py-1.5 rounded-lg text-slate-500 hover:bg-slate-100 transition-colors">
+              Annuler
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => setConfirming(true)}
+            className="p-1.5 rounded-lg text-amber-400 hover:text-red-500 hover:bg-red-50 transition-colors"
+            title="Supprimer le fichier (non indexable)"
+          >
+            <Trash2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function QuarantinePanel({ entries, retentionDays, onRetry, onDelete }: {
+  entries: GEDQuarantineEntry[]; retentionDays: number;
+  onRetry: (e: GEDQuarantineEntry, forceIndex?: boolean) => Promise<void>;
+  onDelete: (e: GEDQuarantineEntry) => Promise<void>;
+}) {
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="rounded-2xl overflow-hidden border border-amber-200" style={{ background: "rgba(255,251,235,0.9)" }}>
+      <div className="flex items-center gap-2 px-4 py-3 border-b border-amber-200">
+        <ShieldAlert className="w-4 h-4 text-amber-500 shrink-0" />
+        <span className="text-sm font-semibold text-amber-800">
+          {entries.length} fichier{entries.length > 1 ? "s" : ""} en quarantaine
+        </span>
+        <span className="text-xs text-amber-500 ml-1">— rejetés par le validateur qualité</span>
+        {retentionDays > 0 && (
+          <span className="text-[11px] text-amber-500 ml-auto">auto-suppression après {retentionDays} j d&apos;inactivité</span>
+        )}
+      </div>
+      <div className="flex flex-col divide-y divide-amber-100">
+        {entries.map((e) => (
+          <QuarantineRow key={e.id} e={e} retentionDays={retentionDays} onRetry={onRetry} onDelete={onDelete} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── IndexHealthPanel ──────────────────────────────────────────────────────────
+
+function Stat({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div className="flex flex-col px-3 py-2 rounded-xl bg-white/70 border border-slate-100">
+      <span className="text-base font-bold text-slate-800 tabular-nums leading-none">{value}</span>
+      <span className="text-[10px] text-slate-400 mt-1 uppercase tracking-wide">{label}</span>
+    </div>
+  );
+}
+
+function IndexHealthPanel({ refreshKey }: { refreshKey: number }) {
+  const [data, setData] = useState<GEDIndexHealth | null>(null);
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetchGEDIndexHealth()
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch(() => { if (!cancelled) setData(null); });
+    return () => { cancelled = true; };
+  }, [refreshKey]);
+
+  if (!data) return null;
+  const anomalies = data.anomalies.in_registry_without_chunks.length + data.anomalies.in_vector_without_registry.length;
+
+  return (
+    <div className="rounded-2xl overflow-hidden" style={GLASS}>
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 px-4 py-3 hover:bg-white/40 transition-colors">
+        <Boxes className="w-4 h-4 text-blue-500 shrink-0" />
+        <span className="text-sm font-semibold text-slate-700">Santé de l&apos;index</span>
+        <span className="text-xs text-slate-400">{data.total_chunks} chunks · {data.total_documents} documents</span>
+        {anomalies > 0 && (
+          <span className="flex items-center gap-1 text-[11px] font-semibold text-amber-600">
+            <AlertTriangle className="w-3 h-3" /> {anomalies} anomalie{anomalies > 1 ? "s" : ""}
+          </span>
+        )}
+        <span className="ml-auto">{open ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />}</span>
+      </button>
+      {open && (
+        <div className="px-4 pb-4 flex flex-col gap-4 border-t border-slate-100 pt-4">
+          <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+            <Stat label="Chunks" value={data.total_chunks} />
+            <Stat label="Documents" value={data.total_documents} />
+            <Stat label="Chunks/doc" value={data.avg_chunks_per_doc} />
+            <Stat label="Mots/chunk" value={data.avg_words_per_chunk} />
+            <Stat label="Parents" value={data.parent_chunks} />
+            <Stat label="Enfants" value={data.child_chunks} />
+          </div>
+
+          {/* Répartition par type */}
+          <div className="flex flex-col gap-1.5">
+            <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Par type de document</p>
+            {Object.entries(data.by_doc_type).map(([type, v]) => {
+              const badge = DOC_TYPE_LABELS[type] ?? DOC_TYPE_LABELS.unknown;
+              return (
+                <div key={type} className="flex items-center gap-2 text-xs">
+                  <span className={cn("font-semibold px-1.5 py-0.5 rounded-md border w-20 text-center shrink-0", badge.color)}>{badge.label}</span>
+                  <span className="text-slate-500">{v.documents} doc · {v.chunks} chunks</span>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Anomalies */}
+          {anomalies > 0 && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50/70 px-3 py-2.5">
+              <p className="text-[11px] font-semibold text-amber-700 uppercase tracking-wide mb-1.5">Anomalies</p>
+              {data.anomalies.in_registry_without_chunks.map((o) => (
+                <p key={o.doc_id} className="text-xs text-amber-800 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3 h-3 shrink-0" /> {o.filename} — indexé au registre mais 0 chunk vectoriel
+                </p>
+              ))}
+              {data.anomalies.in_vector_without_registry.map((id) => (
+                <p key={id} className="text-xs text-amber-800 flex items-center gap-1.5">
+                  <AlertTriangle className="w-3 h-3 shrink-0" /> doc_id {id.slice(0, 8)}… — chunks vectoriels sans entrée registre
+                </p>
+              ))}
+            </div>
+          )}
+
+          {/* Documents avec le moins de chunks (détection découpage anormal) */}
+          {data.per_document.length > 0 && (
+            <div className="flex flex-col gap-1">
+              <p className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Découpage par document (croissant)</p>
+              <div className="rounded-xl border border-slate-200 overflow-hidden divide-y divide-slate-100">
+                {data.per_document.slice(0, 8).map((d) => (
+                  <div key={d.doc_id} className="flex items-center gap-2 px-3 py-1.5 text-xs even:bg-slate-50/50">
+                    <span className="text-slate-700 truncate flex-1">{d.filename}</span>
+                    <span className="text-slate-400 shrink-0 tabular-nums">{d.chunk_count} chunk{d.chunk_count > 1 ? "s" : ""} · {d.avg_words} mots/ch.</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── ChunkInspectorDrawer ──────────────────────────────────────────────────────
+
+function fmtFieldValue(value: unknown): string {
+  if (value === null || value === undefined || value === "null") return "—";
+  if (Array.isArray(value)) return value.length ? value.map(String).join(", ") : "—";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function ChunkRow({ chunk }: { chunk: GEDChunk }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white/70 overflow-hidden">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 transition-colors"
+      >
+        {open ? <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+        <span className="text-xs font-mono text-slate-400 shrink-0">#{chunk.chunk_index}</span>
+        {chunk.is_parent ? (
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-violet-50 text-violet-600 border border-violet-100 shrink-0">parent</span>
+        ) : chunk.parent_chunk_id ? (
+          <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-sky-50 text-sky-600 border border-sky-100 shrink-0">enfant</span>
+        ) : null}
+        <span className="text-xs text-slate-500 truncate flex-1">
+          {chunk.content.slice(0, 90)}
+        </span>
+        <span className="text-[10px] text-slate-400 shrink-0 tabular-nums">{chunk.word_count} mots</span>
+      </button>
+      {open && (
+        <pre className="text-xs text-slate-700 whitespace-pre-wrap break-words px-3 py-2.5 border-t border-slate-100 bg-slate-50/60 max-h-72 overflow-y-auto font-mono leading-relaxed">
+          {chunk.content}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function ChunkInspectorDrawer({ file, onClose }: { file: GEDFile; onClose: () => void }) {
+  const [tab, setTab] = useState<"chunks" | "meta">("chunks");
+  const [data, setData] = useState<GEDDocumentChunks | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    setError("");
+    fetchGEDDocumentChunks(file.doc_id!)
+      .then((d) => { if (!cancelled) setData(d); })
+      .catch((e: unknown) => { if (!cancelled) setError(e instanceof Error ? e.message : "Erreur de chargement"); })
+      .finally(() => { if (!cancelled) setLoading(false); });
+    return () => { cancelled = true; };
+  }, [file.doc_id]);
+
+  const badge = DOC_TYPE_LABELS[file.doc_type] ?? DOC_TYPE_LABELS.unknown;
+  const metaEntries = data ? Object.entries(data.extracted_fields) : [];
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-xl h-full bg-white shadow-2xl flex flex-col animate-in slide-in-from-right">
+        {/* Header */}
+        <div className="shrink-0 px-5 py-4 border-b border-slate-100">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-slate-900 truncate">{file.filename}</p>
+              <div className="flex items-center gap-2 mt-1.5">
+                <span className={cn("text-[11px] font-semibold px-1.5 py-0.5 rounded-md border", badge.color)}>{badge.label}</span>
+                {data && <span className="text-xs text-slate-400">{data.chunk_count} chunk{data.chunk_count > 1 ? "s" : ""}</span>}
+                {data?.contains_pii && (
+                  <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-md bg-red-50 text-red-600 border border-red-100">PII</span>
+                )}
+              </div>
+            </div>
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors shrink-0">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+          {/* Tabs */}
+          <div className="flex gap-1 mt-3">
+            <button
+              onClick={() => setTab("chunks")}
+              className={cn("flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors",
+                tab === "chunks" ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-100")}
+            >
+              <Layers className="w-3.5 h-3.5" /> Découpage
+            </button>
+            <button
+              onClick={() => setTab("meta")}
+              className={cn("flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg transition-colors",
+                tab === "meta" ? "bg-blue-600 text-white" : "text-slate-500 hover:bg-slate-100")}
+            >
+              <Tag className="w-3.5 h-3.5" /> Métadonnées
+            </button>
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5">
+          {loading ? (
+            <div className="flex items-center justify-center py-16 text-slate-400 gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin" /> <span className="text-sm">Chargement…</span>
+            </div>
+          ) : error ? (
+            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+              <AlertCircle className="w-4 h-4 shrink-0" /> {error}
+            </div>
+          ) : tab === "chunks" ? (
+            <div className="flex flex-col gap-2">
+              {data!.chunks.map((c) => <ChunkRow key={c.chunk_id} chunk={c} />)}
+            </div>
+          ) : (
+            metaEntries.length === 0 ? (
+              <p className="text-sm text-slate-400 italic text-center py-10">Aucune métadonnée extraite</p>
+            ) : (
+              <div className="rounded-xl border border-slate-200 overflow-hidden divide-y divide-slate-100">
+                {metaEntries.map(([key, value]) => (
+                  <div key={key} className="flex gap-3 px-4 py-2.5 even:bg-slate-50/50">
+                    <span className="text-xs font-semibold text-slate-500 w-36 shrink-0 capitalize">{key.replace(/_/g, " ")}</span>
+                    <span className="text-xs text-slate-700 break-words">{fmtFieldValue(value)}</span>
+                  </div>
+                ))}
+              </div>
+            )
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── SearchPlaygroundDrawer ────────────────────────────────────────────────────
+
+function ScoreCell({ label, rank, score, color }: { label: string; rank: number | null; score: number | null; color: string }) {
+  return (
+    <div className="flex flex-col items-center px-2 py-1 rounded-lg border border-slate-100 bg-white/70 min-w-[64px]">
+      <span className="text-[9px] uppercase tracking-wide text-slate-400">{label}</span>
+      {rank === null ? (
+        <span className="text-xs text-slate-300">—</span>
+      ) : (
+        <>
+          <span className={cn("text-xs font-bold tabular-nums", color)}>#{rank}</span>
+          <span className="text-[10px] text-slate-400 tabular-nums">{score}</span>
+        </>
+      )}
+    </div>
+  );
+}
+
+function HitRow({ hit, rrfRank }: { hit: GEDSearchHit; rrfRank: number }) {
+  const badge = DOC_TYPE_LABELS[hit.doc_type ?? "unknown"] ?? DOC_TYPE_LABELS.unknown;
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white/70 p-3 flex flex-col gap-2">
+      <div className="flex items-center gap-2">
+        <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded-md border shrink-0", badge.color)}>{badge.label}</span>
+        <span className="text-xs font-medium text-slate-700 truncate flex-1">{hit.filename ?? hit.chunk_id}</span>
+        <span className="text-[10px] text-slate-400 shrink-0">{hit.word_count} mots</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <ScoreCell label="RRF" rank={rrfRank} score={hit.rrf_score} color="text-blue-600" />
+        <ScoreCell label="Dense" rank={hit.dense_rank} score={hit.dense_score} color="text-violet-600" />
+        <ScoreCell label="BM25" rank={hit.sparse_rank} score={hit.sparse_score} color="text-emerald-600" />
+        <p className="text-[11px] text-slate-500 leading-snug line-clamp-3 flex-1">{hit.excerpt}</p>
+      </div>
+    </div>
+  );
+}
+
+function ProdHitRow({ hit, rank, scoreLabel }: { hit: GEDProdHit; rank: number; scoreLabel: string }) {
+  const [open, setOpen] = useState(false);
+  const badge = DOC_TYPE_LABELS[hit.doc_type ?? "unknown"] ?? DOC_TYPE_LABELS.unknown;
+  return (
+    <div className="rounded-xl border border-slate-200 bg-white/70 overflow-hidden">
+      <button onClick={() => setOpen((o) => !o)} className="w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-slate-50 transition-colors">
+        <span className="text-xs font-bold text-blue-600 tabular-nums shrink-0">#{rank}</span>
+        <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded-md border shrink-0", badge.color)}>{badge.label}</span>
+        <span className="text-xs font-medium text-slate-700 truncate flex-1">{hit.filename}</span>
+        {hit.expanded_from_parent && (
+          <span
+            className="text-[10px] font-semibold px-1.5 py-0.5 rounded-md bg-violet-50 text-violet-600 border border-violet-100 shrink-0"
+            title="Contexte remonté au chunk parent (small-to-big)"
+          >
+            via parent
+          </span>
+        )}
+        <span className="text-[10px] text-slate-500 shrink-0 tabular-nums" title={`Score ${scoreLabel}`}>
+          {scoreLabel} {hit.relevance_score.toFixed(scoreLabel === "rerank" ? 2 : 4)}
+        </span>
+        <span className="text-[10px] text-slate-400 shrink-0 tabular-nums">{hit.context_words} mots · {hit.context_tokens} tok</span>
+        {open ? <ChevronDown className="w-3.5 h-3.5 text-slate-400 shrink-0" /> : <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />}
+      </button>
+      {open && (
+        <div className="border-t border-slate-100 px-3 py-2.5 flex flex-col gap-2 bg-slate-50/40">
+          <div>
+            <p className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">Extrait (citation)</p>
+            <p className="text-[11px] text-slate-600 leading-snug">{hit.excerpt}</p>
+          </div>
+          <div>
+            <p className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">
+              Contexte injecté au LLM — {hit.context_chars} c.{hit.expanded_from_parent ? " (parent)" : ""}
+            </p>
+            <pre className="text-[11px] text-slate-700 whitespace-pre-wrap break-words max-h-56 overflow-y-auto font-mono leading-relaxed">
+              {hit.context_preview}{hit.context_chars > hit.context_preview.length ? " …" : ""}
+            </pre>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SearchPlaygroundDrawer({ onClose }: { onClose: () => void }) {
+  const [mode, setMode] = useState<"prod" | "debug">("prod");
+  const [query, setQuery] = useState("");
+  const [docType, setDocType] = useState("");
+  const [topK, setTopK] = useState(10);
+  const [rerank, setRerank] = useState(false);
+  const [hits, setHits] = useState<GEDSearchHit[]>([]);
+  const [prodHits, setProdHits] = useState<GEDProdHit[]>([]);
+  const [prodMeta, setProdMeta] = useState<{ scoreLabel: string; rerankApplied: boolean; rerankerAvailable: boolean } | null>(null);
+  const [meta, setMeta] = useState<{ dense: number; sparse: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [searched, setSearched] = useState(false);
+
+  const switchMode = (m: "prod" | "debug") => {
+    setMode(m);
+    setSearched(false);
+    setHits([]);
+    setProdHits([]);
+    setMeta(null);
+    setProdMeta(null);
+    setError("");
+  };
+
+  const run = async () => {
+    if (!query.trim()) return;
+    setLoading(true);
+    setError("");
+    try {
+      if (mode === "debug") {
+        const res = await searchGEDDebug(query, topK, docType || undefined);
+        setHits(res.results);
+        setMeta({ dense: res.dense_hits, sparse: res.sparse_hits });
+      } else {
+        const res = await searchGEDProd(query, topK, docType || undefined, rerank);
+        setProdHits(res.results);
+        setProdMeta({ scoreLabel: res.score_label, rerankApplied: res.rerank_applied, rerankerAvailable: res.reranker_available });
+        setMeta(null);
+      }
+      setSearched(true);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Erreur de recherche");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end">
+      <div className="absolute inset-0 bg-black/30 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative w-full max-w-2xl h-full bg-white shadow-2xl flex flex-col animate-in slide-in-from-right">
+        {/* Header */}
+        <div className="shrink-0 px-5 py-4 border-b border-slate-100">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Search className="w-4 h-4 text-blue-500" />
+              <h3 className="text-sm font-semibold text-slate-900">Playground de recherche</h3>
+            </div>
+            <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+
+          {/* Bascule de mode */}
+          <div className="flex gap-1 mb-3 p-0.5 rounded-xl bg-slate-100 w-fit">
+            <button
+              onClick={() => switchMode("prod")}
+              className={cn("text-xs font-medium px-3 py-1.5 rounded-lg transition-colors",
+                mode === "prod" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700")}
+            >
+              Production
+            </button>
+            <button
+              onClick={() => switchMode("debug")}
+              className={cn("text-xs font-medium px-3 py-1.5 rounded-lg transition-colors",
+                mode === "debug" ? "bg-white text-slate-900 shadow-sm" : "text-slate-500 hover:text-slate-700")}
+            >
+              Diagnostic
+            </button>
+            <span className="text-[11px] text-slate-400 self-center pl-2">
+              {mode === "prod"
+                ? "ce que le chat reçoit : fusion chunk + expansion parent + dédup"
+                : "fusion brute : scores dense / BM25 / RRF par chunk"}
+            </span>
+          </div>
+
+          <div className="flex gap-2">
+            <input
+              value={query} autoFocus
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && run()}
+              placeholder="Saisir une requête de test…"
+              className="flex-1 border border-slate-200 rounded-xl px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-400"
+            />
+            <button
+              onClick={run} disabled={loading || !query.trim()}
+              className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-medium flex items-center gap-1.5 transition-colors"
+            >
+              {loading ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
+              Chercher
+            </button>
+          </div>
+          <div className="flex items-center gap-2 mt-2">
+            <select
+              value={docType} onChange={(e) => setDocType(e.target.value)}
+              className="border border-slate-200 rounded-lg px-2 py-1 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-blue-400"
+            >
+              <option value="">Tous les types</option>
+              {Object.entries(DOC_TYPE_LABELS).filter(([k]) => k !== "unknown").map(([k, v]) => (
+                <option key={k} value={k}>{v.label}</option>
+              ))}
+            </select>
+            <label className="text-xs text-slate-400 flex items-center gap-1.5">
+              top_k
+              <input
+                type="number" min={1} max={50} value={topK}
+                onChange={(e) => setTopK(Math.max(1, Math.min(50, Number(e.target.value) || 10)))}
+                className="w-14 border border-slate-200 rounded-lg px-2 py-1 text-xs focus:outline-none focus:ring-2 focus:ring-blue-400"
+              />
+            </label>
+            {mode === "prod" && (
+              <label className="text-xs text-slate-500 flex items-center gap-1.5 cursor-pointer">
+                <input
+                  type="checkbox" checked={rerank} onChange={(e) => setRerank(e.target.checked)}
+                  className="w-3.5 h-3.5 rounded border-slate-300 accent-blue-600"
+                />
+                Reranker
+              </label>
+            )}
+            {meta && (
+              <span className="text-xs text-slate-400 ml-auto">{meta.dense} dense · {meta.sparse} BM25</span>
+            )}
+          </div>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-2">
+          {error ? (
+            <div className="flex items-center gap-2 text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
+              <AlertCircle className="w-4 h-4 shrink-0" /> {error}
+            </div>
+          ) : loading ? (
+            <div className="flex items-center justify-center py-16 text-slate-400 gap-2">
+              <RefreshCw className="w-4 h-4 animate-spin" /> <span className="text-sm">Recherche…</span>
+            </div>
+          ) : !searched ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center text-slate-400">
+              <Search className="w-8 h-8 mb-2 text-slate-300" />
+              <p className="text-sm">
+                {mode === "prod"
+                  ? "Lancez une requête pour voir les blocs envoyés au LLM"
+                  : "Lancez une requête pour voir les chunks remontés"}
+              </p>
+            </div>
+          ) : mode === "prod" ? (
+            prodHits.length === 0 ? (
+              <p className="text-sm text-slate-400 italic text-center py-10">Aucun résultat</p>
+            ) : (
+              <>
+                {rerank && prodMeta && !prodMeta.rerankerAvailable && (
+                  <div className="flex items-center gap-2 text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    <AlertTriangle className="w-3.5 h-3.5 shrink-0" />
+                    Reranker non disponible côté serveur — résultats classés par RRF.
+                  </div>
+                )}
+                {prodMeta?.rerankApplied && (
+                  <div className="text-[11px] text-violet-600 font-medium px-1">
+                    Re-classement cross-encoder appliqué (scores « rerank »).
+                  </div>
+                )}
+                {prodHits.map((h, i) => (
+                  <ProdHitRow key={h.chunk_id} hit={h} rank={i + 1} scoreLabel={prodMeta?.scoreLabel ?? "RRF"} />
+                ))}
+              </>
+            )
+          ) : (
+            hits.length === 0
+              ? <p className="text-sm text-slate-400 italic text-center py-10">Aucun résultat</p>
+              : hits.map((h, i) => <HitRow key={h.chunk_id} hit={h} rrfRank={i + 1} />)
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Main Page ─────────────────────────────────────────────────────────────────
 
 const PAGE_BG = "#f7f8fa";
@@ -403,6 +1034,8 @@ export default function GEDPage() {
   const [categories, setCategories] = useState<GEDCategory[]>([]);
   const [files, setFiles] = useState<GEDFile[]>([]);
   const [status, setStatus] = useState<GEDStatus | null>(null);
+  const [quarantine, setQuarantine] = useState<GEDQuarantineEntry[]>([]);
+  const [quarantineRetention, setQuarantineRetention] = useState(0);
   const [selectedFolder, setSelectedFolder] = useState("cvs");
   const [search, setSearch] = useState("");
   const [dragging, setDragging] = useState(false);
@@ -410,6 +1043,10 @@ export default function GEDPage() {
   const [uploadMsg, setUploadMsg] = useState<{ type: "ok" | "err"; text: string } | null>(null);
   const [showFolderModal, setShowFolderModal] = useState(false);
   const [deletingFolder, setDeletingFolder] = useState<{ path: string; name: string } | null>(null);
+  const [inspectingFile, setInspectingFile] = useState<GEDFile | null>(null);
+  const [showSearch, setShowSearch] = useState(false);
+  const [healthKey, setHealthKey] = useState(0);
+  const [forceConfirm, setForceConfirm] = useState(false);
   const [loadingFiles, setLoadingFiles] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -417,9 +1054,16 @@ export default function GEDPage() {
 
   const loadTree = useCallback(async () => {
     try {
-      const [treeData, statusData] = await Promise.all([fetchGEDTree(), fetchGEDStatus()]);
+      const [treeData, statusData, quarantineData] = await Promise.all([
+        fetchGEDTree(),
+        fetchGEDStatus(),
+        fetchGEDQuarantine().catch(() => ({ quarantine: [], total: 0, retention_days: 0 })),
+      ]);
       setCategories(treeData.categories);
       setStatus(statusData);
+      setQuarantine(quarantineData.quarantine);
+      setQuarantineRetention(quarantineData.retention_days ?? 0);
+      setHealthKey((k) => k + 1);
     } catch { /* backend may be offline */ }
   }, []);
 
@@ -502,6 +1146,35 @@ export default function GEDPage() {
     setDeletingFolder(null);
   };
 
+  const handleRetryQuarantine = async (entry: GEDQuarantineEntry, forceIndex = false) => {
+    try {
+      await retryGEDQuarantine(entry.file_path, forceIndex);
+      setUploadMsg({
+        type: "ok",
+        text: forceIndex
+          ? `Indexation forcée lancée pour ${entry.filename}…`
+          : `Réindexation lancée pour ${entry.filename}…`,
+      });
+      startPolling(selectedFolder, search);
+    } catch (e: unknown) {
+      setUploadMsg({ type: "err", text: e instanceof Error ? e.message : "Erreur réessai" });
+    }
+    setTimeout(() => setUploadMsg(null), 5000);
+  };
+
+  const handleDeleteQuarantine = async (entry: GEDQuarantineEntry) => {
+    try {
+      await deleteGEDQuarantine(entry.file_path);
+      setQuarantine((prev) => prev.filter((q) => q.id !== entry.id));
+      setUploadMsg({ type: "ok", text: `${entry.filename} supprimé` });
+      await loadTree();
+      await loadFiles(selectedFolder, search);
+    } catch (e: unknown) {
+      setUploadMsg({ type: "err", text: e instanceof Error ? e.message : "Erreur suppression" });
+    }
+    setTimeout(() => setUploadMsg(null), 5000);
+  };
+
   const selectedLabel = categories.find((c) => selectedFolder.startsWith(c.name))?.label ?? selectedFolder;
   const filteredFiles = files.filter((f) => !search || f.filename.toLowerCase().includes(search.toLowerCase()));
 
@@ -515,9 +1188,23 @@ export default function GEDPage() {
             {status
               ? `${status.total_indexed} indexé${status.total_indexed !== 1 ? "s" : ""} · ${status.total_on_disk} sur disque · ${fmtDate(status.last_indexed_at)}`
               : "Chargement…"}
+            {quarantine.length > 0 && (
+              <span className="ml-2 inline-flex items-center gap-1 text-amber-600 font-semibold">
+                <ShieldAlert className="w-3 h-3" />
+                {quarantine.length} en quarantaine
+              </span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setShowSearch(true)}
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors font-medium"
+            title="Tester le retrieval (dense / BM25 / RRF)"
+          >
+            <Search className="w-3.5 h-3.5" />
+            Recherche
+          </button>
           <button
             onClick={async () => {
               try {
@@ -534,6 +1221,38 @@ export default function GEDPage() {
             <RefreshCw className={cn("w-3.5 h-3.5", refreshing && "animate-spin")} />
             {refreshing ? "Indexation…" : "Réindexer"}
           </button>
+          {forceConfirm ? (
+            <div className="flex items-center gap-1 px-2 py-1 rounded-lg border border-amber-300 bg-amber-50">
+              <span className="text-[11px] text-amber-700 font-medium">Re-découper TOUT ?</span>
+              <button
+                onClick={async () => {
+                  setForceConfirm(false);
+                  try {
+                    const res = await reindexGED(true);
+                    setUploadMsg({ type: "ok", text: res.message });
+                    if (res.queued > 0) startPolling(selectedFolder, search);
+                  } catch (e: unknown) {
+                    setUploadMsg({ type: "err", text: e instanceof Error ? e.message : "Erreur réindexation" });
+                  }
+                }}
+                className="text-[11px] font-semibold text-amber-700 px-1.5 py-0.5 rounded hover:bg-amber-100"
+              >
+                Confirmer
+              </button>
+              <button onClick={() => setForceConfirm(false)} className="text-[11px] text-slate-500 px-1.5 py-0.5 rounded hover:bg-slate-100">
+                Annuler
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setForceConfirm(true)}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200 transition-colors font-medium"
+              title="Ré-indexer TOUS les documents (re-découpage complet, ex. après changement de chunking). Consomme le LLM."
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Tout ré-indexer
+            </button>
+          )}
           <button
             onClick={() => { loadTree(); loadFiles(selectedFolder, search); }}
             className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors font-medium"
@@ -667,6 +1386,12 @@ export default function GEDPage() {
               </p>
             </div>
 
+            {/* Index health panel */}
+            <IndexHealthPanel refreshKey={healthKey} />
+
+            {/* Quarantine panel */}
+            <QuarantinePanel entries={quarantine} retentionDays={quarantineRetention} onRetry={handleRetryQuarantine} onDelete={handleDeleteQuarantine} />
+
             {/* File list */}
             {loadingFiles ? (
               <div className="flex items-center justify-center py-10 text-slate-400 gap-2">
@@ -687,7 +1412,7 @@ export default function GEDPage() {
                   {filteredFiles.length} fichier{filteredFiles.length !== 1 ? "s" : ""}
                 </p>
                 {filteredFiles.map((f) => (
-                  <FileCard key={f.doc_id ?? f.file_path} file={f} onDelete={handleDelete} />
+                  <FileCard key={f.doc_id ?? f.file_path} file={f} onDelete={handleDelete} onInspect={setInspectingFile} />
                 ))}
               </div>
             )}
@@ -708,6 +1433,12 @@ export default function GEDPage() {
           folderPath={deletingFolder.path} folderName={deletingFolder.name}
           onClose={() => setDeletingFolder(null)} onDeleted={handleDeleteFolder}
         />
+      )}
+      {inspectingFile && (
+        <ChunkInspectorDrawer file={inspectingFile} onClose={() => setInspectingFile(null)} />
+      )}
+      {showSearch && (
+        <SearchPlaygroundDrawer onClose={() => setShowSearch(false)} />
       )}
     </div>
   );

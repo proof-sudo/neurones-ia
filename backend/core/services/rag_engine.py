@@ -7,15 +7,17 @@ from core.ports.vector_store import VectorStore
 from core.ports.sparse_search import SparseSearch
 from core.ports.embedder import Embedder
 from core.ports.llm_gateway import LLMGateway
-from core.domain.document import Source
+from core.ports.reranker import Reranker
+from core.domain.document import Source, DocumentType
 
 logger = logging.getLogger(__name__)
 
 
 class RAGEngine:
     """
-    Recherche hybride : Dense (ChromaDB) + Sparse (BM25) → RRF fusion.
-    Dense et sparse lancés en parallèle. Pas de reranker LLM (trop lent, RRF suffit).
+    Recherche hybride : Dense (ChromaDB) + Sparse (BM25) → RRF fusion → (optionnel)
+    rerank cross-encoder. Fusion au niveau chunk, expansion parent (small-to-big),
+    budget de contexte compté en tokens réels.
     """
 
     def __init__(
@@ -26,6 +28,11 @@ class RAGEngine:
         llm: LLMGateway,
         top_k: int = 10,
         rerank_top_k: int = 5,
+        max_per_doc: int = 2,
+        token_budget=None,
+        reranker: Optional[Reranker] = None,
+        rerank_default: bool = False,
+        rerank_candidates: int = 20,
     ):
         self._vector_store = vector_store
         self._sparse_search = sparse_search
@@ -33,6 +40,21 @@ class RAGEngine:
         self._llm = llm
         self._top_k = top_k
         self._rerank_top_k = rerank_top_k
+        self._max_per_doc = max_per_doc
+        self._token_budget = token_budget
+        self._reranker = reranker
+        self._rerank_default = rerank_default
+        self._rerank_candidates = rerank_candidates
+
+    def _count_tokens(self, text: str) -> int:
+        """Compte en tokens réels via le TokenBudgetManager (tiktoken) si dispo,
+        sinon retombe sur un comptage par mots."""
+        if self._token_budget is not None:
+            try:
+                return self._token_budget.estimate_tokens(text)
+            except Exception:
+                pass
+        return len(text.split())
 
     async def search(
         self,
@@ -40,19 +62,24 @@ class RAGEngine:
         filter_metadata: Optional[dict] = None,
         top_k: Optional[int] = None,
         min_dense_score: Optional[float] = None,
+        rerank: Optional[bool] = None,
     ) -> list[Source]:
         """
-        Pipeline hybride parallèle :
-        1. embed_query (OpenAI) en parallèle avec sparse search (BM25, synchrone)
+        Pipeline hybride parallèle, fusionné AU NIVEAU CHUNK :
+        1. embed_query en parallèle avec sparse search (BM25, synchrone)
         2. Dense search (ChromaDB) sur le résultat de l'embedding
-        3. RRF fusion + dédoublonnage par filename
-        → retourne max rerank_top_k sources uniques
+        3. (levier ①) plancher cosinus min_dense_score sur les candidats denses
+        4. RRF fusion par chunk_id (dense + BM25), enrichissement des chunks BM25-only
+        5. (optionnel) rerank cross-encoder des meilleurs candidats RRF
+        6. Classement + diversité par parent (small-to-big), expansion du parent
+        → retourne max rerank_top_k chunks, chacun avec son contenu complet
 
         `min_dense_score` (levier ①) : plancher de similarité cosinus. Les candidats denses
         sous ce seuil sont écartés AVANT la fusion — on ne garde que les documents
-        sémantiquement proches au lieu de remplir le quota avec les plus proches voisins,
-        même lointains. Le score RRF étant purement rangé (≈0.016–0.05), il ne peut pas
-        servir de plancher : c'est bien le cosinus dense (1.0 − distance) qui filtre.
+        sémantiquement proches au lieu de remplir le quota avec des voisins lointains.
+        Le score RRF étant purement rangé (≈0.016–0.05), il ne peut pas servir de plancher :
+        c'est bien le cosinus dense (1.0 − distance) qui filtre.
+        rerank : None → valeur par défaut (settings) ; True/False force par appel.
         """
         effective_top_k = top_k or self._top_k
 
@@ -70,9 +97,10 @@ class RAGEngine:
         )
 
         # Levier ① — plancher de pertinence : un plus proche voisin lointain (cosinus faible)
-        # n'est PAS une vraie correspondance. On le retire ici, tant que le cosinus est encore
-        # porté par relevance_score (la fusion RRF l'écrasera ensuite par un score de rang).
-        dense_full = dense_results  # avant plancher — sert à la couverture sparse-only
+        # n'est PAS une vraie correspondance. On l'écarte AVANT la fusion, tant que le cosinus
+        # est encore porté par relevance_score (le RRF l'écrasera ensuite par un score de rang).
+        # Les chunks BM25-only restent éligibles (enrichis plus bas) : un match lexical exact
+        # (ex. "Commvault") absent du top-k dense remonte tout de même via la voie sparse.
         if min_dense_score is not None:
             kept = [s for s in dense_results if s.relevance_score >= min_dense_score]
             if len(kept) < len(dense_results):
@@ -82,30 +110,107 @@ class RAGEngine:
                 )
             dense_results = kept
 
-        # Vrai hybride : un document trouvé UNIQUEMENT par BM25 (match lexical exact, ex.
-        # "Commvault") n'est pas dans le top-k dense. On résout son meilleur chunk en Source
-        # pour qu'il puisse remonter dans la fusion, au lieu d'être silencieusement jeté.
-        # On passe `dense_full` (avant plancher) : un doc plancher-écarté reste « couvert »
-        # et n'est donc PAS ressuscité par la voie sparse-only.
-        extra_sources = await self._resolve_sparse_only(
-            sparse_results, dense_full, filter_metadata
+        # ── Fusion RRF par chunk_id (dense et BM25 partagent la même clé) ──────
+        k = 60
+        scores: dict[str, float] = {}
+        by_chunk: dict[str, Source] = {}
+        for rank, src in enumerate(dense_results):
+            cid = src.chunk_id or src.doc_id
+            scores[cid] = scores.get(cid, 0.0) + 1 / (k + rank + 1)
+            by_chunk[cid] = src
+        for rank, (cid, _score) in enumerate(sparse_results):
+            scores[cid] = scores.get(cid, 0.0) + 1 / (k + rank + 1)
+
+        # Enrichir les chunks remontés UNIQUEMENT par BM25 (absents du dense).
+        # Sans filtre dense : le filtre metadata ne s'applique pas à BM25, donc on
+        # respecte tout de même filter_metadata en écartant les types non voulus.
+        missing = [cid for cid in scores if cid not in by_chunk]
+        if missing:
+            enriched = await self._vector_store.get_by_chunk_ids(missing)
+            wanted_type = (filter_metadata or {}).get("doc_type")
+            for cid, data in enriched.items():
+                meta = data["metadata"]
+                if wanted_type and meta.get("doc_type") != wanted_type:
+                    continue
+                content = data["content"] or ""
+                by_chunk[cid] = Source(
+                    doc_id=meta.get("doc_id", ""),
+                    filename=meta.get("filename", "?"),
+                    doc_type=DocumentType(meta.get("doc_type", "unknown")),
+                    excerpt=content[:300],
+                    relevance_score=0.0,
+                    chunk_id=cid,
+                    content=content,
+                    parent_chunk_id=meta.get("parent_chunk_id") or None,
+                )
+
+        ranked_ids = sorted(
+            (cid for cid in scores if cid in by_chunk),
+            key=lambda c: scores[c],
+            reverse=True,
         )
 
-        fused = self._reciprocal_rank_fusion(dense_results, sparse_results, extra_sources)
+        # ── (optionnel) Rerank cross-encoder des meilleurs candidats RRF ──────
+        rerank_on = (rerank if rerank is not None else self._rerank_default) and self._reranker is not None
+        rerank_scores: dict[str, float] = {}
+        if rerank_on and ranked_ids:
+            cand = ranked_ids[: self._rerank_candidates]
+            try:
+                docs = [(by_chunk[c].content or by_chunk[c].excerpt or "") for c in cand]
+                rr = await self._reranker.rerank(query, docs)
+                rerank_scores = {cand[i]: rr[i] for i in range(min(len(cand), len(rr)))}
+                cand_sorted = sorted(cand, key=lambda c: rerank_scores.get(c, float("-inf")), reverse=True)
+                ranked_ids = cand_sorted + ranked_ids[self._rerank_candidates:]
+            except Exception as e:
+                logger.warning("Reranker indisponible, fallback RRF : %s", e)
+                rerank_scores = {}
 
-        # Dédoublonnage par filename — on garde jusqu'à rag_max_chunks_per_file chunks par
-        # fichier (et non 1 seul) : un CV multi-pages doit pouvoir remonter son intro ET sa
-        # page de certifications, sinon le chunk le mieux classé masque les autres.
-        per_file: dict[str, int] = {}
-        unique: list[Source] = []
-        for src in fused:
-            if per_file.get(src.filename, 0) < settings.rag_max_chunks_per_file:
-                unique.append(src)
-                per_file[src.filename] = per_file.get(src.filename, 0) + 1
+        # ── Classement + diversité, dédoublonné par PARENT (small-to-big) ─────
+        # Plusieurs enfants d'un même parent → un seul bloc de contexte.
+        per_doc: dict[str, int] = {}
+        seen_ctx: set[str] = set()
+        selected: list[Source] = []
+        for cid in ranked_ids:
+            src = by_chunk[cid]
+            ctx_key = src.parent_chunk_id or cid  # le parent porte le contexte
+            if ctx_key in seen_ctx:
+                continue
+            if per_doc.get(src.doc_id, 0) >= self._max_per_doc:
+                continue
+            seen_ctx.add(ctx_key)
+            per_doc[src.doc_id] = per_doc.get(src.doc_id, 0) + 1
+            # score affiché : rerank si appliqué, sinon RRF (pas le cosinus dense brut)
+            src.relevance_score = rerank_scores.get(cid, scores[cid])
+            selected.append(src)
+            if len(selected) >= self._rerank_top_k:
+                break
 
-        top = unique[: self._rerank_top_k]
-        logger.debug("RAG: %d sources uniques pour '%s'", len(top), query[:50])
-        return top
+        # ── Expansion parent : remonter le contenu complet du parent ──────────
+        parent_ids = [s.parent_chunk_id for s in selected if s.parent_chunk_id]
+        parents = await self._vector_store.get_by_chunk_ids(parent_ids) if parent_ids else {}
+
+        result: list[Source] = []
+        for src in selected:
+            parent = parents.get(src.parent_chunk_id) if src.parent_chunk_id else None
+            # content = parent (contexte large) si dispo, sinon le chunk lui-même.
+            # excerpt = l'enfant (passage précis) pour la citation.
+            context_text = (parent["content"] if parent else src.content) or src.content
+            result.append(Source(
+                doc_id=src.doc_id,
+                filename=src.filename,
+                doc_type=src.doc_type,
+                excerpt=src.excerpt,
+                relevance_score=src.relevance_score,
+                chunk_id=src.chunk_id,
+                content=context_text,
+                parent_chunk_id=src.parent_chunk_id,
+            ))
+
+        logger.debug(
+            "RAG: %d blocs (%d docs, %d via parent) pour '%s'",
+            len(result), len(per_doc), len(parent_ids), query[:50],
+        )
+        return result
 
     async def inventory(self) -> dict:
         """Inventaire exhaustif de la GED (total documents/chunks + répartition par type).
@@ -165,107 +270,111 @@ class RAGEngine:
         return all_sources
 
     async def build_context(self, sources: list[Source], max_tokens: int = 3000) -> str:
+        """Assemble le contexte LLM à partir du CONTENU COMPLET des chunks, borné
+        par max_tokens comptés en TOKENS RÉELS (tiktoken via TokenBudgetManager).
+        La dernière entrée est tronquée plutôt qu'écartée pour remplir le budget."""
         if not sources:
             return ""
-        parts = []
+        parts: list[str] = []
         total = 0
         for src in sources:
-            # On garde l'excerpt quasi entier (un chunk ~600 mots) : le couper à 600 chars
-            # ne laissait au LLM que ~8% d'un CV/offre → notation sur des bribes.
-            excerpt = src.excerpt[: settings.excerpt_chars]
-            entry = f"[{src.filename} | {src.doc_type.value}]\n{excerpt}"
-            entry_tokens = len(entry.split())
+            # content = contenu complet du chunk (parent si small-to-big), excerpt = repli.
+            # Le budget est borné en tokens réels (tiktoken) plus bas.
+            body = src.content or src.excerpt
+            header = f"[{src.filename} | {src.doc_type.value}]\n"
+            entry = header + body
+            entry_tokens = self._count_tokens(entry)
             if total + entry_tokens > max_tokens:
+                remaining = max_tokens - total
+                if remaining > 60:
+                    # tronque le corps pour tenir dans le budget (≈ 1 mot ≤ 1 token)
+                    parts.append(header + " ".join(body.split()[:remaining]))
                 break
             parts.append(entry)
             total += entry_tokens
         return "\n\n---\n\n".join(parts)
 
-    @staticmethod
-    def _doc_id_of(chunk_id: str) -> str:
-        """Extrait le doc_id d'un chunk_id de la forme '<doc_id>_chunk_<n>'."""
-        parts = chunk_id.rsplit("_chunk_", 1)
-        return parts[0] if len(parts) == 2 else chunk_id
-
-    async def _resolve_sparse_only(
+    async def search_debug(
         self,
-        sparse: list[tuple[str, float]],
-        dense: list[Source],
-        filter_metadata: Optional[dict],
-    ) -> list[Source]:
-        """Résout en Source les documents trouvés UNIQUEMENT par BM25 (absents du dense).
-
-        BM25 n'applique aucun filtre de métadonnée : on récupère le meilleur chunk de chaque
-        doc sparse-only via le vector store puis on filtre par doc_type (si demandé), pour ne
-        pas faire entrer des documents du mauvais type dans une recherche filtrée.
+        query: str,
+        top_k: int = 10,
+        doc_type: Optional[str] = None,
+        rrf_k: int = 60,
+    ) -> dict:
         """
-        if not sparse:
-            return []
-        dense_doc_ids = {s.doc_id for s in dense}
-        # Meilleur chunk_id par doc_id côté sparse
-        best_chunk: dict[str, tuple[str, float]] = {}
-        for cid, score in sparse:
-            doc_id = self._doc_id_of(cid)
-            if doc_id in dense_doc_ids:
-                continue  # déjà couvert par le dense
-            cur = best_chunk.get(doc_id)
-            if cur is None or score > cur[1]:
-                best_chunk[doc_id] = (cid, score)
-        if not best_chunk:
-            return []
+        Variante d'inspection (non utilisée en prod) : retourne le détail chunk par
+        chunk avec les scores dense, sparse (BM25) et RRF séparés, SANS dédoublonnage
+        par filename. Sert le playground de la page GED pour visualiser ce que le
+        retrieval remonte réellement.
+        """
+        embed_task = asyncio.create_task(self._embedder.embed_query(query))
+        sparse_task = asyncio.create_task(
+            asyncio.to_thread(self._sparse_search.search, query, top_k)
+        )
+        query_embedding, sparse_results = await asyncio.gather(embed_task, sparse_task)
 
-        try:
-            resolved = await self._vector_store.get_by_chunk_ids(
-                [cid for cid, _ in best_chunk.values()]
-            )
-        except Exception as exc:
-            logger.debug("Résolution sparse-only échouée (%s) — hybride dégradé sur cette requête", exc)
-            return []
+        dense_results = await self._vector_store.search_dense_debug(
+            query_embedding=query_embedding,
+            top_k=top_k,
+            doc_type=doc_type,
+        )
 
-        wanted_type = (filter_metadata or {}).get("doc_type")
-        if wanted_type:
-            resolved = [s for s in resolved if s.doc_type.value == wanted_type]
-        if resolved:
-            logger.debug("Hybride : %d doc(s) BM25-only réintégré(s)", len(resolved))
-        return resolved
+        # Agrégation par chunk_id
+        chunks: dict[str, dict] = {}
+        for rank, d in enumerate(dense_results):
+            chunks[d["chunk_id"]] = {
+                **d,
+                "dense_rank": rank + 1,
+                "dense_score": d["score"],
+                "sparse_rank": None,
+                "sparse_score": None,
+                "rrf_score": 1 / (rrf_k + rank + 1),
+            }
 
-    def _reciprocal_rank_fusion(
-        self,
-        dense: list[Source],
-        sparse: list[tuple[str, float]],
-        extra: Optional[list[Source]] = None,
-        k: int = 60,
-    ) -> list[Source]:
-        scores: dict[str, float] = {}
-        doc_map: dict[str, Source] = {}
+        for rank, (cid, score) in enumerate(sparse_results):
+            entry = chunks.get(cid)
+            if entry is None:
+                entry = {
+                    "chunk_id": cid, "doc_id": None, "filename": None,
+                    "doc_type": None, "content": None,
+                    "dense_rank": None, "dense_score": None,
+                    "rrf_score": 0.0,
+                }
+                chunks[cid] = entry
+            entry["sparse_rank"] = rank + 1
+            entry["sparse_score"] = round(float(score), 4)
+            entry["rrf_score"] += 1 / (rrf_k + rank + 1)
 
-        for rank, src in enumerate(dense):
-            scores[src.doc_id] = scores.get(src.doc_id, 0) + 1 / (k + rank + 1)
-            doc_map[src.doc_id] = src
+        # Enrichir les chunks trouvés uniquement par BM25 (contenu absent du dense)
+        missing = [cid for cid, c in chunks.items() if c["content"] is None]
+        if missing:
+            enriched = await self._vector_store.get_by_chunk_ids(missing)
+            for cid, data in enriched.items():
+                meta = data["metadata"]
+                chunks[cid].update({
+                    "doc_id": meta.get("doc_id"),
+                    "filename": meta.get("filename"),
+                    "doc_type": meta.get("doc_type", "unknown"),
+                    "content": data["content"],
+                })
 
-        # Documents trouvés uniquement par BM25, déjà résolus en Source : on les enregistre
-        # dans doc_map pour qu'ils soient éligibles au résultat final (ne pas les écraser).
-        for src in (extra or []):
-            doc_map.setdefault(src.doc_id, src)
+        ranked = sorted(chunks.values(), key=lambda c: c["rrf_score"], reverse=True)
+        for c in ranked:
+            c["rrf_score"] = round(c["rrf_score"], 6)
+            if c.get("content"):
+                c["excerpt"] = c["content"][:500]
+                c["word_count"] = len(c["content"].split())
+            else:
+                c["excerpt"] = ""
+                c["word_count"] = 0
+            c.pop("content", None)
+            c.pop("score", None)
 
-        sparse_map: dict[str, float] = {}
-        for cid, score in sparse:
-            doc_id = self._doc_id_of(cid)
-            sparse_map[doc_id] = max(sparse_map.get(doc_id, 0), score)
-
-        for rank, (doc_id, _) in enumerate(sorted(sparse_map.items(), key=lambda x: -x[1])):
-            scores[doc_id] = scores.get(doc_id, 0) + 1 / (k + rank + 1)
-
-        sorted_ids = sorted(scores, key=lambda x: -scores[x])
-        result = []
-        for doc_id in sorted_ids:
-            if doc_id in doc_map:
-                src = doc_map[doc_id]
-                result.append(Source(
-                    doc_id=src.doc_id,
-                    filename=src.filename,
-                    doc_type=src.doc_type,
-                    excerpt=src.excerpt,
-                    relevance_score=scores[doc_id],
-                ))
-        return result
+        return {
+            "query": query,
+            "doc_type": doc_type,
+            "top_k": top_k,
+            "dense_hits": len(dense_results),
+            "sparse_hits": len(sparse_results),
+            "results": ranked[:top_k],
+        }

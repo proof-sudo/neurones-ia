@@ -65,9 +65,21 @@ def build_scheduler(
         max_instances=1,
     )
 
+    scheduler.add_job(
+        _quarantine_purge_job,
+        trigger=CronTrigger(hour=3, minute=30),
+        id="quarantine_purge",
+        name="Purge quarantaine (fichiers non indexables)",
+        replace_existing=True,
+        misfire_grace_time=600,
+        coalesce=True,
+        max_instances=1,
+    )
+
     logger.info(
-        "Scheduler configuré : sync Odoo toutes les %d min (coalesce, max 1), scan GED à 2h00, veille AO toutes les 6h",
-        sync_interval,
+        "Scheduler configuré : sync Odoo toutes les %d min (coalesce, max 1), scan GED à 2h00, "
+        "veille AO toutes les 6h, purge quarantaine à 3h30 (rétention %d j)",
+        sync_interval, settings.quarantine_retention_days,
     )
     return scheduler
 
@@ -89,3 +101,23 @@ async def _reset_monthly_budget():
 async def _veille_scan_job():
     from modules.uc_veille.router import _run_scan
     await _run_scan()
+
+
+async def _quarantine_purge_job():
+    """Supprime les fichiers en quarantaine depuis trop longtemps (non indexables)."""
+    from pathlib import Path
+    from config.settings import settings
+    from adapters.registry.quarantine_adapter import QuarantineAdapter
+
+    paths = await QuarantineAdapter().purge_expired(settings.quarantine_retention_days)
+    removed = 0
+    for p in paths:
+        try:
+            fp = Path(p)
+            if fp.exists():
+                fp.unlink()
+                removed += 1
+        except OSError as e:
+            logger.warning("Purge quarantaine — suppression %s impossible : %s", p, e)
+    if paths:
+        logger.info("Purge quarantaine : %d entrée(s) périmée(s), %d fichier(s) supprimé(s)", len(paths), removed)

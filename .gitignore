@@ -56,3 +56,7 @@ Thumbs.db
 desktop.ini
 
 .claude/
+# logs runtime (non versionnés)
+*.log
+backend/run_std*.log
+frontend/run_std*.log

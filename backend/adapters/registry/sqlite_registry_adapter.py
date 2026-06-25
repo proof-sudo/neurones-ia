@@ -53,6 +53,14 @@ class SQLiteRegistryAdapter(DocumentRegistry):
             )
             await session.commit()
 
+    async def hard_delete(self, file_path: str) -> None:
+        """Suppression physique du registre — utilisé pour le droit à l'oubli RGPD (CV)."""
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(GEDEntryModel).where(GEDEntryModel.file_path == file_path)
+            )
+            await session.commit()
+
     async def list_active_entries(self, doc_type: Optional[DocumentType] = None) -> list[GEDEntry]:
         async with AsyncSessionLocal() as session:
             query = select(GEDEntryModel).where(GEDEntryModel.is_active == True)

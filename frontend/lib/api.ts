@@ -465,8 +465,9 @@ export async function createGEDFolder(path: string): Promise<void> {
   }
 }
 
-export async function reindexGED(): Promise<{ queued: number; message: string }> {
-  const r = await apiFetch(`${API_BASE}/ged/reindex`, { method: "POST" });
+export async function reindexGED(force = false): Promise<{ queued: number; message: string }> {
+  const url = `${API_BASE}/ged/reindex${force ? "?force=true" : ""}`;
+  const r = await apiFetch(url, { method: "POST" });
   if (!r.ok) throw new Error(`Reindex error: ${r.status}`);
   return r.json();
 }
@@ -477,6 +478,181 @@ export async function deleteGEDFolder(path: string): Promise<void> {
     const err = await r.json().catch(() => ({}));
     throw new Error(err.detail ?? `Delete folder error: ${r.status}`);
   }
+}
+
+export interface GEDQuarantineEntry {
+  id: number;
+  filename: string;
+  file_path: string;
+  doc_type: string;
+  reason: string;
+  quarantined_at: string;
+  retry_count: number;
+  file_size_bytes: number;
+  text_length: number;
+}
+
+export async function fetchGEDQuarantine(): Promise<{ quarantine: GEDQuarantineEntry[]; total: number; retention_days: number }> {
+  const r = await apiFetch(`${API_BASE}/ged/quarantine`);
+  if (!r.ok) throw new Error(`Quarantine error: ${r.status}`);
+  return r.json();
+}
+
+export async function retryGEDQuarantine(filePath: string, forceIndex = false): Promise<void> {
+  // forceIndex : trappe d'acceptation manuelle — ignore la validation qualité
+  // (texte trop court, ratio PDF) pour accepter un document court mais légitime.
+  const r = await apiFetch(`${API_BASE}/ged/quarantine/retry`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ file_path: filePath, force_index: forceIndex }),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Retry error: ${r.status}`);
+  }
+}
+
+export async function deleteGEDQuarantine(filePath: string): Promise<void> {
+  const r = await apiFetch(`${API_BASE}/ged/quarantine?file_path=${encodeURIComponent(filePath)}`, { method: "DELETE" });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Delete error: ${r.status}`);
+  }
+}
+
+// ── GED — Inspection (chunks, métadonnées, recherche, santé) ──────────────────
+
+export interface GEDChunk {
+  chunk_id: string;
+  chunk_index: number;
+  is_parent: boolean;
+  parent_chunk_id: string | null;
+  word_count: number;
+  char_count: number;
+  content: string;
+}
+
+export interface GEDDocumentChunks {
+  doc_id: string;
+  filename: string;
+  doc_type: string;
+  contains_pii: boolean;
+  chunk_count: number;
+  extracted_fields: Record<string, unknown>;
+  chunks: GEDChunk[];
+}
+
+export async function fetchGEDDocumentChunks(docId: string): Promise<GEDDocumentChunks> {
+  const r = await apiFetch(`${API_BASE}/ged/documents/${docId}/chunks`);
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Chunks error: ${r.status}`);
+  }
+  return r.json();
+}
+
+export interface GEDSearchHit {
+  chunk_id: string;
+  doc_id: string | null;
+  filename: string | null;
+  doc_type: string | null;
+  dense_rank: number | null;
+  dense_score: number | null;
+  sparse_rank: number | null;
+  sparse_score: number | null;
+  rrf_score: number;
+  excerpt: string;
+  word_count: number;
+}
+
+export interface GEDSearchDebug {
+  query: string;
+  doc_type: string | null;
+  top_k: number;
+  dense_hits: number;
+  sparse_hits: number;
+  results: GEDSearchHit[];
+}
+
+export async function searchGEDDebug(query: string, topK = 10, docType?: string): Promise<GEDSearchDebug> {
+  const r = await apiFetch(`${API_BASE}/ged/search-debug`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, top_k: topK, doc_type: docType ?? null }),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Search error: ${r.status}`);
+  }
+  return r.json();
+}
+
+export interface GEDProdHit {
+  chunk_id: string;
+  doc_id: string;
+  filename: string;
+  doc_type: string;
+  relevance_score: number;
+  expanded_from_parent: boolean;
+  parent_chunk_id: string | null;
+  excerpt: string;
+  context_words: number;
+  context_tokens: number;
+  context_chars: number;
+  context_preview: string;
+}
+
+export interface GEDSearchProd {
+  query: string;
+  doc_type: string | null;
+  count: number;
+  rerank_requested: boolean;
+  reranker_available: boolean;
+  rerank_applied: boolean;
+  score_label: string;
+  results: GEDProdHit[];
+}
+
+export async function searchGEDProd(query: string, topK = 10, docType?: string, rerank = false): Promise<GEDSearchProd> {
+  const r = await apiFetch(`${API_BASE}/ged/search-prod`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ query, top_k: topK, doc_type: docType ?? null, rerank }),
+  });
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    throw new Error(err.detail ?? `Search error: ${r.status}`);
+  }
+  return r.json();
+}
+
+export interface GEDIndexHealth {
+  total_chunks: number;
+  total_documents: number;
+  parent_chunks: number;
+  child_chunks: number;
+  avg_chunks_per_doc: number;
+  avg_words_per_chunk: number;
+  by_doc_type: Record<string, { documents: number; chunks: number }>;
+  per_document: {
+    doc_id: string;
+    filename: string;
+    doc_type: string;
+    chunk_count: number;
+    parent_count: number;
+    avg_words: number;
+  }[];
+  registry_documents: number;
+  anomalies: {
+    in_registry_without_chunks: { doc_id: string; filename: string }[];
+    in_vector_without_registry: string[];
+  };
+}
+
+export async function fetchGEDIndexHealth(): Promise<GEDIndexHealth> {
+  const r = await apiFetch(`${API_BASE}/ged/index-health`);
+  if (!r.ok) throw new Error(`Index health error: ${r.status}`);
+  return r.json();
 }
 
 export async function generateBidStrategy(

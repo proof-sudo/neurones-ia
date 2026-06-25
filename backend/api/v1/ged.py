@@ -196,6 +196,169 @@ async def list_files(
     return {"files": result, "total": len(result)}
 
 
+# ── GET /ged/documents/{doc_id}/chunks ────────────────────────────────────────
+
+def _extracted_fields_from_meta(meta: dict) -> dict:
+    """Reconstruit extracted_fields depuis les clés aplaties ef_* (JSON décodé si besoin)."""
+    import json
+    fields: dict = {}
+    for key, value in meta.items():
+        if not key.startswith("ef_"):
+            continue
+        name = key[3:]
+        if isinstance(value, str) and value[:1] in ("[", "{"):
+            try:
+                fields[name] = json.loads(value)
+                continue
+            except (ValueError, TypeError):
+                pass
+        fields[name] = value
+    return fields
+
+
+@router.get("/ged/documents/{doc_id}/chunks")
+async def get_document_chunks(doc_id: str, request: Request):
+    """Détail du découpage d'un document : liste de ses chunks + métadonnées extraites."""
+    vector_store = _container(request).vector_store
+    items = await vector_store.get_chunks_by_doc_id(doc_id)
+    if not items:
+        raise HTTPException(status_code=404, detail="Aucun chunk trouvé pour ce document")
+
+    first_meta = items[0]["metadata"]
+    chunks = []
+    for it in items:
+        meta = it["metadata"]
+        content = it["content"] or ""
+        chunks.append({
+            "chunk_id": it["chunk_id"],
+            "chunk_index": meta.get("chunk_index", 0),
+            "is_parent": bool(meta.get("is_parent", False)),
+            "parent_chunk_id": meta.get("parent_chunk_id") or None,
+            "word_count": len(content.split()),
+            "char_count": len(content),
+            "content": content,
+        })
+
+    return {
+        "doc_id": doc_id,
+        "filename": first_meta.get("filename", "?"),
+        "doc_type": first_meta.get("doc_type", "unknown"),
+        "contains_pii": bool(first_meta.get("contains_pii", False)),
+        "chunk_count": len(chunks),
+        "extracted_fields": _extracted_fields_from_meta(first_meta),
+        "chunks": chunks,
+    }
+
+
+# ── POST /ged/search-debug ────────────────────────────────────────────────────
+
+class SearchDebugRequest(BaseModel):
+    query: str
+    top_k: int = 10
+    doc_type: Optional[str] = None
+    rerank: Optional[bool] = None
+
+
+@router.post("/ged/search-debug")
+async def search_debug(body: SearchDebugRequest, request: Request):
+    """Playground d'inspection du retrieval : scores dense / BM25 / RRF par chunk, sans dédup."""
+    if not body.query.strip():
+        raise HTTPException(status_code=400, detail="Requête vide")
+    rag_engine = _container(request).rag_engine
+    return await rag_engine.search_debug(
+        query=body.query,
+        top_k=max(1, min(body.top_k, 50)),
+        doc_type=body.doc_type,
+    )
+
+
+@router.post("/ged/search-prod")
+async def search_prod(body: SearchDebugRequest, request: Request):
+    """Recherche de PRODUCTION (telle que le chat la consomme) : fusion chunk-level,
+    expansion parent (small-to-big) et dédup par parent. Montre les blocs réellement
+    injectés au LLM — contrairement à /search-debug qui montre la fusion brute."""
+    if not body.query.strip():
+        raise HTTPException(status_code=400, detail="Requête vide")
+    container = _container(request)
+    rag_engine = container.rag_engine
+    token_budget = container.token_budget
+    filt = {"doc_type": body.doc_type} if body.doc_type else None
+
+    rerank_requested = bool(body.rerank)
+    reranker_available = container.reranker is not None
+    rerank_applied = rerank_requested and reranker_available
+
+    sources = await rag_engine.search(
+        query=body.query,
+        filter_metadata=filt,
+        top_k=max(1, min(body.top_k, 50)),
+        rerank=body.rerank,
+    )
+
+    def _tokens(text: str) -> int:
+        try:
+            return token_budget.estimate_tokens(text)
+        except Exception:
+            return len((text or "").split())
+
+    return {
+        "query": body.query,
+        "doc_type": body.doc_type,
+        "count": len(sources),
+        "rerank_requested": rerank_requested,
+        "reranker_available": reranker_available,
+        "rerank_applied": rerank_applied,
+        "score_label": "rerank" if rerank_applied else "RRF",
+        "results": [
+            {
+                "chunk_id": s.chunk_id,
+                "doc_id": s.doc_id,
+                "filename": s.filename,
+                "doc_type": s.doc_type.value,
+                "relevance_score": round(s.relevance_score, 6),
+                "expanded_from_parent": s.parent_chunk_id is not None,
+                "parent_chunk_id": s.parent_chunk_id,
+                "excerpt": s.excerpt,
+                "context_words": len((s.content or "").split()),
+                "context_tokens": _tokens(s.content or ""),
+                "context_chars": len(s.content or ""),
+                "context_preview": (s.content or "")[:700],
+            }
+            for s in sources
+        ],
+    }
+
+
+# ── GET /ged/index-health ─────────────────────────────────────────────────────
+
+@router.get("/ged/index-health")
+async def index_health(request: Request):
+    """Métriques de santé de l'index vectoriel + détection d'anomalies (orphelins)."""
+    vector_store = _container(request).vector_store
+    registry = _container(request).doc_registry
+
+    stats = await vector_store.get_index_stats()
+    entries = await registry.list_active_entries()
+
+    registry_ids = {e.doc_id for e in entries}
+    indexed_ids = set(stats.pop("indexed_doc_ids", []))
+
+    # Anomalies : présent au registre mais 0 chunk vectoriel (et inversement)
+    filename_by_id = {e.doc_id: Path(e.file_path).name for e in entries}
+    orphans_registry = [
+        {"doc_id": did, "filename": filename_by_id.get(did, "?")}
+        for did in (registry_ids - indexed_ids)
+    ]
+    orphans_vector = list(indexed_ids - registry_ids)
+
+    stats["registry_documents"] = len(registry_ids)
+    stats["anomalies"] = {
+        "in_registry_without_chunks": orphans_registry,
+        "in_vector_without_registry": orphans_vector,
+    }
+    return stats
+
+
 # ── POST /ged/upload ──────────────────────────────────────────────────────────
 
 @router.post("/ged/upload", status_code=201)
@@ -238,12 +401,109 @@ async def upload_file(
     }
 
 
-async def _index_file(ged_indexer, file_path: Path, doc_type: DocumentType, force: bool = False):
+async def _index_file(
+    ged_indexer,
+    file_path: Path,
+    doc_type: DocumentType,
+    force: bool = False,
+    bypass_validation: bool = False,
+):
     try:
-        indexed = await ged_indexer.process(file_path, doc_type, force=force)
+        indexed = await ged_indexer.process(
+            file_path, doc_type, force=force, bypass_validation=bypass_validation
+        )
         logger.info("Indexation %s : %s", file_path.name, "OK" if indexed else "ignoré (inchangé)")
     except Exception as e:
         logger.error("Erreur indexation %s : %s", file_path.name, e)
+
+
+# ── GET /ged/quarantine ───────────────────────────────────────────────────────
+
+@router.get("/ged/quarantine")
+async def list_quarantine(request: Request):
+    """Fichiers rejetés par le validateur qualité — en attente de correction."""
+    quarantine = _container(request).quarantine
+    entries = await quarantine.list_all()
+    return {
+        "quarantine": [
+            {
+                "id": e.id,
+                "filename": Path(e.file_path).name,
+                "file_path": e.file_path,
+                "doc_type": e.doc_type,
+                "reason": e.reason,
+                "quarantined_at": e.quarantined_at.isoformat(),
+                "retry_count": e.retry_count,
+                "file_size_bytes": e.file_size_bytes,
+                "text_length": e.text_length,
+            }
+            for e in entries
+        ],
+        "total": len(entries),
+        "retention_days": settings.quarantine_retention_days,
+    }
+
+
+# ── DELETE /ged/quarantine ─────────────────────────────────────────────────────
+
+@router.delete("/ged/quarantine")
+async def delete_quarantine(file_path: str, request: Request):
+    """Supprime un fichier en quarantaine : le fichier sur disque + son enregistrement.
+    Utile pour les documents non indexables (ex. PDF scannés sans texte)."""
+    path = Path(file_path)
+    # Sécurité : le fichier doit rester dans la GED
+    try:
+        path.resolve().relative_to(_GED_ROOT.resolve())
+    except (ValueError, RuntimeError):
+        raise HTTPException(status_code=400, detail="Chemin invalide ou hors de la GED")
+
+    quarantine = _container(request).quarantine
+    deleted_file = False
+    if path.exists():
+        try:
+            path.unlink()
+            deleted_file = True
+        except OSError as e:
+            raise HTTPException(status_code=500, detail=f"Suppression impossible : {e}")
+    removed = await quarantine.remove_resolved(file_path)
+    logger.info("Quarantaine supprimée : %s (fichier supprimé=%s, %d entrée(s))", path.name, deleted_file, removed)
+    return {"deleted": True, "file_path": file_path, "file_removed": deleted_file, "entries_removed": removed}
+
+
+# ── POST /ged/quarantine/retry ─────────────────────────────────────────────────
+
+class RetryRequest(BaseModel):
+    file_path: str
+    # Trappe d'acceptation manuelle : accepte le document malgré l'échec de validation
+    # qualité (texte trop court, ratio PDF). À n'activer qu'après revue humaine — ex.
+    # une certification scannée légitimement courte. Les seuils restent inchangés pour
+    # l'ingestion automatique.
+    force_index: bool = False
+
+
+@router.post("/ged/quarantine/retry")
+async def retry_quarantine(
+    body: RetryRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    """Retente l'indexation d'un fichier en quarantaine.
+
+    Avec force_index=True, la validation qualité est ignorée (acceptation manuelle).
+    """
+    path = Path(body.file_path)
+    if not path.exists():
+        raise HTTPException(status_code=404, detail="Fichier introuvable sur le disque")
+
+    parts = path.parts
+    folder_name = next((p for p in parts if p in _TYPE_MAP), None)
+    doc_type = _TYPE_MAP.get(folder_name, {}).get("doc_type", DocumentType.UNKNOWN) if folder_name else DocumentType.UNKNOWN
+    ged_indexer = _container(request).ged_indexer
+    background_tasks.add_task(
+        _index_file, ged_indexer, path, doc_type,
+        force=body.force_index, bypass_validation=body.force_index,
+    )
+    return {"status": "retrying", "file_path": body.file_path, "force_index": body.force_index}
 
 
 # ── DELETE /ged/files/{doc_id} ────────────────────────────────────────────────
@@ -260,12 +520,14 @@ async def delete_file(doc_id: str, request: Request):
         raise HTTPException(status_code=404, detail="Document introuvable")
 
     file_path = Path(entry.file_path)
-    await ged_indexer.remove(file_path)
+    # RGPD : hard delete pour les CV (purge complète du registre, pas soft-delete)
+    hard_delete = entry.doc_type.value == "cv"
+    await ged_indexer.remove(file_path, hard_delete=hard_delete)
 
     if file_path.exists():
         file_path.unlink()
 
-    logger.info("Fichier supprimé de la GED : %s", file_path.name)
+    logger.info("Fichier supprimé de la GED : %s (hard_delete=%s)", file_path.name, hard_delete)
     return {"deleted": True, "doc_id": doc_id, "filename": file_path.name}
 
 
@@ -379,10 +641,11 @@ async def reindex_all(
     for file_path, doc_type in pending:
         background_tasks.add_task(_index_file, ged_indexer, file_path, doc_type, force)
 
+    verb = "ré-indexation complète" if force else "indexation"
     return {
         "queued": len(pending),
         "force": force,
-        "message": f"{len(pending)} fichier(s) mis en file d'indexation",
+        "message": f"{len(pending)} fichier(s) en file de {verb}",
     }
 
 

@@ -25,8 +25,12 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1"           # ollama pull llama3.1 (ou mistral-nemo, qwen2.5)
     ollama_timeout_seconds: float = 120.0    # modèles locaux peuvent être lents au premier appel
+    # Backend d'embedding : "local" (sentence-transformers, indépendant du quota OpenAI)
+    # ou "openai" (text-embedding-3-small). "local" = UN SEUL modèle indexation + requête
+    # → évite tout mélange de dimensions (Cause A).
+    embedding_backend: str = "local"
     embed_fallback_enabled: bool = True      # bascule sur sentence-transformers si OpenAI indisponible
-    embed_fallback_model: str = "all-MiniLM-L6-v2"   # modèle local sentence-transformers
+    embed_fallback_model: str = "paraphrase-multilingual-MiniLM-L12-v2"   # local multilingue (FR), 384d
 
     # Odoo (serveur distant)
     odoo_url: str = ""
@@ -50,7 +54,7 @@ class Settings(BaseSettings):
     chunk_overlap: int = 60
     retrieval_top_k: int = 10
     rerank_top_k: int = 5
-    max_context_tokens: int = 3000
+    max_context_tokens: int = 10000   # budget contexte RAG (tokens réels) ; Haiku gère 200k, 3000 tronquait les parents
     # Chunks max conservés par fichier après fusion (dédoublonnage). 1 = un seul chunk/doc
     # (max de diversité) mais un CV multi-pages ne remonte alors que sa page la mieux classée
     # → ses certifs (autre page) sont perdues. 2 = recall des docs multi-pages sans noyer le top-k.
@@ -94,12 +98,32 @@ class Settings(BaseSettings):
     ocr_image_area_ratio: float = 0.06   # image couvrant ≥ 6 % de la page = significative
                                          # (sépare nettement logos ~1 % des scans de certifs ~9 %+)
 
+    # Extraction structurée (couche kb_*) — Phase 1
+    extraction_confidence_threshold: float = 0.6   # sous ce score → revue_humaine=True
+    structured_extract_text_limit: int = 8000       # nb de caractères envoyés au LLM
+
+    # Résolution d'entités (Phase 2)
+    entity_match_auto_threshold: float = 0.90       # ≥ → lien automatique
+    entity_match_review_threshold: float = 0.75      # [review, auto[ → revue humaine
+
+    # Text-to-SQL lecture seule (Phase 3)
+    sql_query_timeout_seconds: float = 8.0           # timeout applicatif d'une requête générée
+
+    # Reranker (P6) — cross-encoder local optionnel après la fusion RRF
+    rerank_enabled: bool = False     # si True, le chat re-classe par défaut
+    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    rerank_candidates: int = 20      # nb de candidats RRF re-scorés par le cross-encoder
+
     # Chat
     max_history_turns: int = 6
 
     # Budget tokens
     token_budget_monthly_fcfa: int = 130_000
     token_alert_threshold_pct: int = 80
+
+    # Quarantaine — auto-suppression des fichiers non indexables (ex. PDF scannés
+    # sans texte) après N jours d'inactivité. 0 = désactivé.
+    quarantine_retention_days: int = 7
 
     # Cache
     redis_url: str = "redis://localhost:6379"

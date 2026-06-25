@@ -13,6 +13,7 @@ class DocumentType(str, Enum):
     FICHE_TECHNIQUE = "fiche_technique"
     COMPTE_RENDU = "compte_rendu"
     AO = "ao"
+    CERTIFICATION = "certification"
     TEMPLATE = "template"
     MARCHES_SIMILAIRES = "marches_similaires"
     UNKNOWN = "unknown"
@@ -30,6 +31,9 @@ class DocumentMetadata:
     version: Optional[str] = None
     source_path: Optional[str] = None
     tags: list[str] = field(default_factory=list)
+    extracted_fields: dict = field(default_factory=dict)
+    contains_pii: bool = False
+    pii_categories: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -40,6 +44,8 @@ class Chunk:
     token_count: int
     chunk_index: int
     metadata: DocumentMetadata
+    parent_chunk_id: Optional[str] = None
+    is_parent: bool = False
 
 
 @dataclass
@@ -72,3 +78,6 @@ class Source:
     excerpt: str
     relevance_score: float
     page: Optional[int] = None
+    chunk_id: Optional[str] = None
+    content: Optional[str] = None  # Contenu complet du chunk (pour le contexte LLM) ; excerpt reste court (citations)
+    parent_chunk_id: Optional[str] = None  # Si défini, le contexte LLM remonte le parent (small-to-big)

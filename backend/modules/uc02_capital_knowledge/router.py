@@ -18,6 +18,8 @@ from core.services.query_dispatcher import _classify_intent_rules
 from config.settings import settings
 from db.database import AsyncSessionLocal
 from db.models import ConversationModel
+from core.services.sql_guard import SqlGuardError
+from core.services.sql_schema import KB_DDL, KB_TABLES, ODOO_TABLES
 
 # ── Patterns pour pre-fetch CRM sans appel LLM ────────────────────────────────
 _RE_ORDER_REF = re.compile(r'\bFP/\d{4}/\d+\b', re.IGNORECASE)
@@ -58,6 +60,20 @@ _RE_CLIENT_QUERY = re.compile(
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/chat", tags=["UC02 - Capital Knowledge"])
+
+
+def _dedup_sources_for_display(sources: list) -> list:
+    """Citations utilisateur : un seul extrait par fichier (le mieux classé).
+    La recherche peut remonter plusieurs chunks d'un même document — utile pour
+    le contexte LLM, mais redondant à l'affichage."""
+    seen: set[str] = set()
+    out = []
+    for s in sources:
+        if s.filename in seen:
+            continue
+        seen.add(s.filename)
+        out.append(s)
+    return out
 
 
 async def _parse_uploaded_files(
@@ -134,6 +150,13 @@ def _get_system_prompt() -> str:
         "   • Délai moyen entre deux événements (invoice_date → payment_date) → SQL AVG()\n"
         "   • Classements croisés (ex: top clients d'un secteur sur une période) → SQL GROUP BY + ORDER BY\n"
         "   • Toute question analytique inédite → écris le SQL adapté\n"
+        "2bis. DEUX bases SQL distinctes — choisis le bon outil :\n"
+        "   • executer_analyse_sql → données COMMERCIALES Odoo (ventes, factures, bons de commande, dossiers, CA, marges).\n"
+        "   • interroger_documents → données DOCUMENTAIRES GED (kb_*) : compter/filtrer/CROISER CV, appels d'offres, "
+        "attestations de bonne exécution, certifications, PV de recette, comptes rendus "
+        "(ex. 'attestations > 200M sur 3 ans', 'consultants PMP ayant fait du bancaire', 'certifs expirant en 2026'). "
+        "Cite alors les documents sources (doc_id + fichier_source) renvoyés par la requête.\n"
+        "   • Tu peux combiner les deux (hybride) pour une question mêlant commercial et documents.\n"
         "3. Tu peux enchaîner plusieurs outils : d'abord SQL pour les données brutes, puis synthèse.\n"
         "4. Spécifie TOUJOURS la période couverte dans chaque réponse chiffrée.\n"
         "5. Si des données CRM sont déjà dans le message (section '## Données CRM'), utilise-les sans appeler d'outil.\n\n"
@@ -253,18 +276,44 @@ _CRM_TOOLS = [
     {
         "name": "rechercher_documents_ged",
         "description": (
-            "Recherche SÉMANTIQUE dans la base documentaire GED (Gestion Électronique de Documents) "
-            "de Neurones Technologies. Contient : CVs des ingénieurs, offres techniques soumises, "
-            "procédures internes, PV de réunion, fiches techniques produits, appels d'offres. "
-            "Utilise cet outil pour : contenu d'un document, compétences d'un ingénieur, "
-            "spécifications d'un appel d'offres, texte d'une procédure, références de projets passés. "
-            "ATTENTION : ne retourne QUE les quelques documents les plus pertinents, PAS la liste "
-            "complète. Pour 'combien de documents', 'quels fichiers', 'liste/inventaire de la GED', "
-            "utilise plutôt l'outil 'inventaire_ged'."
+            "Recherche sémantique dans la GED (base documentaire interne) de Neurones Technologies.\n\n"
+
+            "QUAND UTILISER :\n"
+            "- Compétences, certifications ou expérience d'un ingénieur précis\n"
+            "- Texte ou contenu d'une procédure interne (inclure son code si connu, ex: P-001)\n"
+            "- Contenu d'une offre technique passée ou références d'un projet similaire\n"
+            "- Critères ou spécifications d'un appel d'offres\n"
+            "- Décisions ou actions consignées dans un PV de réunion\n"
+            "- Caractéristiques techniques d'un produit (fiche technique)\n\n"
+
+            "NE PAS UTILISER pour :\n"
+            "- Données financières (CA, factures, commandes) → outils CRM\n"
+            "- Compter ou lister les documents GED → utilise inventaire_ged\n"
+            "- Informations non documentées (salaires, effectifs, organigramme)\n\n"
+
+            "RÉSULTATS : passages les plus pertinents (plusieurs par document possible) avec score de pertinence (0-100). "
+            "Score < 50 = résultat peu fiable, à mentionner. "
+            "Si l'information cherchée n'apparaît pas dans les extraits, dis-le explicitement — "
+            "ne jamais déduire ni compléter. "
+            "Cite toujours le fichier source (champ 'fichier') dans ta réponse."
         ),
         "input_schema": {
             "type": "object",
-            "properties": {"query": {"type": "string", "description": "Recherche dans les documents"}},
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": (
+                        "Mots-clés de recherche précis. "
+                        "REFORMULE toujours en mots-clés — ne copie jamais la question de l'utilisateur. "
+                        "Exemples par type de document :\n"
+                        "• CV : 'Jean Dupont certifications AWS DevOps' ou 'ingénieur Kubernetes 5 ans expérience'\n"
+                        "• Procédure : 'procédure onboarding nouveau client' ou 'procédure gestion incident réseau'\n"
+                        "• Offre : 'offre technique SONABEL infrastructure réseau 2024 gagnée'\n"
+                        "• PV : 'décision budget projet Cloud novembre 2024'\n"
+                        "• Fiche : 'fiche technique switch Cisco référence SG-350'"
+                    ),
+                }
+            },
             "required": ["query"],
         },
     },
@@ -587,6 +636,41 @@ _CRM_TOOLS = [
             "required": ["produit_possede"],
         },
     },
+    {
+        "name": "interroger_documents",
+        "description": (
+            "Interroge la base DOCUMENTAIRE structurée (kb_*) en SQL SELECT (LECTURE SEULE). "
+            "UTILISE CET OUTIL pour COMPTER / FILTRER / COMPARER / CROISER les documents de la GED : "
+            "CV, appels d'offres (AO), attestations de bonne exécution, certifications, PV de recette, comptes rendus. "
+            "À distinguer de executer_analyse_sql qui interroge les données commerciales Odoo (ventes/factures/dossiers).\n\n"
+            "EXEMPLES :\n"
+            "• 'combien d'attestations > 200M FCFA ces 3 dernières années' → "
+            "SELECT COUNT(*) FROM kb_attestation WHERE montant_valeur>200000000 AND date_fin>=date('now','-3 years')\n"
+            "• 'certifications expirant en 2026, par titulaire' → "
+            "SELECT titulaire, intitule, date_expiration, doc_id, fichier_source FROM kb_certification "
+            "WHERE strftime('%Y',date_expiration)='2026' ORDER BY titulaire\n"
+            "• 'consultants avec la certif PMP ET une expérience secteur bancaire' → "
+            "SELECT DISTINCT cv.nom_complet, cv.doc_id, cv.fichier_source FROM kb_cv cv "
+            "JOIN kb_cv_certifications c ON c.doc_id=cv.doc_id "
+            "JOIN kb_cv_experiences e ON e.doc_id=cv.doc_id "
+            "WHERE c.intitule LIKE '%PMP%' AND e.secteur LIKE '%banc%'\n"
+            "• 'pour l'AO réf X, ai-je ≥3 références conformes au montant minimum' → croiser "
+            "kb_ao_references_demandees (montant_min_valeur) et kb_attestation (montant_valeur).\n\n"
+            "MONTANTS : filtre sur les colonnes *_valeur (numériques). DATES : strftime('%Y',col) / date('now','-N years').\n"
+            "OBLIGATOIRE : sélectionne TOUJOURS doc_id ET fichier_source pour pouvoir citer les documents sources.\n"
+            "Faits fiables : possible de filtrer score_confiance ou de joindre kb_aliases (status IN ('confirmed','auto')).\n\n"
+            "SCHÉMA (tables kb_* uniquement) :\n" + KB_DDL +
+            "\nRÈGLES : SELECT/WITH uniquement — aucune écriture ; tables kb_* uniquement ; max 200 lignes."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "sql": {"type": "string", "description": "Requête SQL SELECT sur les tables kb_* (lecture seule, SQLite)"},
+                "description": {"type": "string", "description": "Ce que cette requête calcule (pour le log)"},
+            },
+            "required": ["sql"],
+        },
+    },
 ]
 
 # Labels lisibles pour les événements SSE progress
@@ -625,6 +709,7 @@ _TOOL_LABELS = {
     "analyser_pipeline_commercial": "Analyse du pipeline commercial…",
     "analyser_evolution_clients": "Analyse de l'évolution du portefeuille clients…",
     "executer_analyse_sql": "Analyse SQL sur mesure…",
+    "interroger_documents": "Analyse SQL des documents (GED)…",
 }
 
 
@@ -674,11 +759,12 @@ async def _cleanup_old_sessions():
 
 # ─── Exécution des outils ─────────────────────────────────────────────────────
 
-async def _execute_tool(tool_name: str, tool_input: dict, crm_repo, rag_engine) -> tuple[str, bool]:
+async def _execute_tool(tool_name: str, tool_input: dict, crm_repo, rag_engine, doc_registry=None, ro_sql=None) -> tuple[str, bool]:
     """
     Exécute un outil CRM ou GED.
     Retourne (résultat_json, is_error).
     is_error=True → Claude sait que l'outil a échoué et adapte sa stratégie.
+    ro_sql : adapter SQL LECTURE SEULE (text-to-SQL Odoo + documents kb_*).
     """
     try:
         if tool_name == "rechercher_clients":
@@ -940,48 +1026,32 @@ async def _execute_tool(tool_name: str, tool_input: dict, crm_repo, rag_engine) 
                 "répartition_sectorielle": data,
             }, ensure_ascii=False), False
 
-        elif tool_name == "executer_analyse_sql":
-            raw_sql = tool_input.get("sql", "").strip().rstrip(";")
+        elif tool_name in ("executer_analyse_sql", "interroger_documents"):
+            # text-to-SQL borné, LECTURE SEULE (mode=ro + query_only) avec garde-fou
+            # applicatif (SELECT-only, liste blanche de tables, anti-injection).
+            if ro_sql is None:
+                return json.dumps({"erreur": "Moteur SQL en lecture seule indisponible."}), True
+            raw_sql = tool_input.get("sql", "")
             desc = tool_input.get("description", "requête SQL")
-
-            # ── Guardrails sécurité : lecture seule uniquement ──────────────
-            sql_upper = raw_sql.upper()
-            _FORBIDDEN = ["INSERT", "UPDATE", "DELETE", "DROP", "ALTER",
-                          "CREATE", "TRUNCATE", "RENAME", "REPLACE",
-                          "ATTACH", "DETACH", "PRAGMA", "VACUUM"]
-            for kw in _FORBIDDEN:
-                if re.search(rf'\b{kw}\b', sql_upper):
-                    return json.dumps({
-                        "erreur": f"Opération '{kw}' interdite. Seules les requêtes SELECT sont autorisées."
-                    }), True
-            # Bloquer les requêtes multiples (plusieurs statements séparés par ;)
-            if ";" in raw_sql:
-                return json.dumps({"erreur": "Une seule requête à la fois. Supprimez le point-virgule interne."}), True
-            if not sql_upper.lstrip().startswith("SELECT") and not sql_upper.lstrip().startswith("WITH"):
-                return json.dumps({"erreur": "Seules les requêtes SELECT (ou WITH … SELECT) sont autorisées."}), True
-
-            # Ajouter LIMIT si absent pour éviter les full scans
-            if "LIMIT" not in sql_upper:
-                raw_sql += " LIMIT 200"
-
-            # ── Exécution ───────────────────────────────────────────────────
-            from db.database import AsyncSessionLocal
-            from sqlalchemy import text as sa_text
+            allowed = KB_TABLES if tool_name == "interroger_documents" else ODOO_TABLES
+            note = ("Max 200 lignes. Cite doc_id + fichier_source dans ta réponse."
+                    if tool_name == "interroger_documents"
+                    else "Max 200 lignes. Affine avec WHERE ou LIMIT si nécessaire.")
             try:
-                async with AsyncSessionLocal() as db_s:
-                    result = await db_s.execute(sa_text(raw_sql))
-                    columns = list(result.keys())
-                    rows = result.fetchmany(200)
-                data = [dict(zip(columns, [str(v) if v is not None else None for v in row])) for row in rows]
-                return json.dumps({
-                    "description": desc,
-                    "colonnes": columns,
-                    "nb_lignes_retournees": len(data),
-                    "resultats": data,
-                    "note": "Max 200 lignes. Affine avec WHERE ou LIMIT si nécessaire.",
-                }, ensure_ascii=False), False
+                res = await ro_sql.query(raw_sql, allowed)
+            except SqlGuardError as guard_err:
+                return json.dumps({"erreur": f"Requête refusée (garde-fou) : {guard_err}"}), True
+            except asyncio.TimeoutError:
+                return json.dumps({"erreur": "Requête trop longue (timeout). Ajoute des filtres ou un LIMIT."}), True
             except Exception as sql_err:
                 return json.dumps({"erreur": f"Erreur SQL : {sql_err}. Corrige la requête et réessaie."}), True
+            return json.dumps({
+                "description": desc,
+                "colonnes": res["colonnes"],
+                "nb_lignes_retournees": res["nb_lignes"],
+                "resultats": res["resultats"],
+                "note": note,
+            }, ensure_ascii=False), False
 
         elif tool_name == "analyser_evolution_clients":
             from datetime import datetime as _dt
@@ -1108,7 +1178,7 @@ async def _execute_tool(tool_name: str, tool_input: dict, crm_repo, rag_engine) 
                         {
                             "fichier": s.filename,
                             "type": s.doc_type.value,
-                            "extrait": s.excerpt,
+                            "extrait": (s.content or s.excerpt)[:1200],
                             "pertinence": round(s.relevance_score * 100),
                         }
                         for s in sources
@@ -1194,7 +1264,7 @@ async def chat_query(
                     return [], ""
                 try:
                     srcs = await rag_engine.search(text)
-                    ctx = await rag_engine.build_context(srcs) if srcs else ""
+                    ctx = await rag_engine.build_context(srcs, max_tokens=settings.max_context_tokens) if srcs else ""
                     return srcs, ctx
                 except Exception as e:
                     logger.warning("RAG indisponible: %s", e)
@@ -1310,8 +1380,7 @@ async def chat_query(
             if injected != user_content:
                 messages[-1] = {"role": "user", "content": injected}
 
-            relevant_sources = [s for s in sources if s.relevance_score >= 0.40]
-            yield f"data: {json.dumps({'type': 'sources', 'sources': [{'doc_id': s.doc_id, 'filename': s.filename, 'doc_type': s.doc_type.value, 'excerpt': s.excerpt, 'relevance_score': s.relevance_score} for s in relevant_sources]})}\n\n"
+            yield f"data: {json.dumps({'type': 'sources', 'sources': [{'doc_id': s.doc_id, 'filename': s.filename, 'doc_type': s.doc_type.value, 'excerpt': s.excerpt, 'relevance_score': s.relevance_score} for s in _dedup_sources_for_display(sources)]})}\n\n"
 
             # ── 4. Boucle agentique avec streaming réel ────────────────────
             full_answer = ""
@@ -1322,9 +1391,11 @@ async def chat_query(
                 collected_text = ""
                 pending_tool_calls = []
                 pending_assistant_message = None
-                # Itération 0 : on buférise pour supprimer le "thinking" si l'IA appelle un outil.
-                # Itérations 1+ : on streame directement (réponse finale après résultats d'outils).
-                buffer_only = (iteration == 0)
+                # On bufférise à CHAQUE itération : le texte qui précède un appel d'outil
+                # est du "thinking"/préambule (« Laisse-moi chercher… ») et doit être jeté,
+                # pas seulement à l'itération 0. Seul le texte de l'itération FINALE (sans
+                # outil) est restitué à l'utilisateur via le flush plus bas.
+                buffer_only = True
                 token_buffer: list[str] = []
 
                 async for event in llm.agentic_stream(
@@ -1352,7 +1423,9 @@ async def chat_query(
                 if not pending_tool_calls:
                     full_answer = collected_text
                     if buffer_only:
-                        # Itération 0 sans outil : streamer le buffer (réponse directe)
+                        # Itération finale (aucun outil appelé) : on restitue le buffer,
+                        # c.-à-d. la VRAIE réponse — les préambules des tours précédents
+                        # ont déjà été jetés au moment de leur tool_call.
                         for chunk in token_buffer:
                             yield f"data: {json.dumps({'type': 'token', 'content': chunk})}\n\n"
                     break
@@ -1363,7 +1436,7 @@ async def chat_query(
                 blocked = True
                 for call in pending_tool_calls:
                     n = call["name"]
-                    limit = 4 if n == "executer_analyse_sql" else 2
+                    limit = 4 if n in ("executer_analyse_sql", "interroger_documents") else 2
                     if called_tools.get(n, 0) < limit:
                         blocked = False
                         break
@@ -1381,7 +1454,9 @@ async def chat_query(
                     yield f"data: {json.dumps({'type': 'tool_call', 'tool': call['name'], 'label': tool_label})}\n\n"
 
                     content, is_error = await _execute_tool(
-                        call["name"], call["input"], crm_repo, rag_engine
+                        call["name"], call["input"], crm_repo, rag_engine,
+                        doc_registry=container.doc_registry,
+                        ro_sql=container.ro_sql,
                     )
                     if is_error:
                         logger.warning("Tool %s échoué (iter %d): %s", call["name"], iteration, content[:100])
@@ -1407,7 +1482,8 @@ async def chat_query(
                     {"role": "assistant", "content": full_answer},
                 ], user_id=current_user.id)
 
-            yield f"data: {json.dumps({'type': 'done', 'intent': 'local_db'})}\n\n"
+            final_intent = intent_hint or "rag"
+            yield f"data: {json.dumps({'type': 'done', 'intent': final_intent})}\n\n"
 
         except Exception as exc:
             logger.error("Erreur event_stream: %s\n%s", exc, traceback.format_exc())
@@ -1519,6 +1595,6 @@ async def chat_query_sync(body: ChatRequest, request: Request):
                 doc_id=s.doc_id, filename=s.filename, doc_type=s.doc_type.value,
                 excerpt=s.excerpt, relevance_score=s.relevance_score,
             )
-            for s in result.sources
+            for s in _dedup_sources_for_display(result.sources)
         ],
     )

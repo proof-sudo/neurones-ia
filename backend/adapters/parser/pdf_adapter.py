@@ -7,6 +7,11 @@ import pdfplumber
 
 from config.settings import settings
 from core.ports.document_parser import DocumentParser
+from adapters.parser.markdown_fidelity import (
+    alnum_count as _alnum_count,
+    is_faithful as _is_faithful,
+    FIDELITY_MIN_RATIO as _FIDELITY_MIN_RATIO,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +24,19 @@ try:
 except ImportError:
     pass
 
+_PYMUPDF4LLM_AVAILABLE = False
+try:
+    import pymupdf4llm  # PDF → Markdown (titres, tableaux, listes) ; s'appuie sur PyMuPDF
+    _PYMUPDF4LLM_AVAILABLE = True
+except ImportError:
+    pass
+
 _TESSERACT_AVAILABLE = False
+# Langues OCR réellement disponibles, déterminées après détection du binaire.
+# On ne demande jamais une langue absente : Tesseract n'échoue pas toujours sur
+# "fra+eng" quand "fra" manque (il retombe silencieusement sur "eng"), donc le
+# repli via except ne suffit pas à garantir le bon modèle.
+_OCR_LANGS = "eng"
 try:
     import pytesseract
     from PIL import Image
@@ -41,19 +58,58 @@ try:
             )
     else:
         _TESSERACT_AVAILABLE = True
+
+    if _TESSERACT_AVAILABLE:
+        try:
+            _installed_langs = set(pytesseract.get_languages(config=""))
+        except Exception as e:  # binaire injoignable, droits, etc.
+            logger.debug("Liste des langues Tesseract indisponible : %s", e)
+            _installed_langs = set()
+        _wanted = [lang for lang in ("fra", "eng") if lang in _installed_langs]
+        if _wanted:
+            _OCR_LANGS = "+".join(_wanted)
+        if _installed_langs and "fra" not in _installed_langs:
+            logger.warning(
+                "Pack de langue Tesseract 'fra' absent (langues présentes : %s) — "
+                "OCR en anglais uniquement, qualité dégradée sur les PDF scannés en "
+                "français. Installez fra.traineddata dans le dossier tessdata "
+                "(https://github.com/tesseract-ocr/tessdata).",
+                ", ".join(sorted(_installed_langs)) or "aucune",
+            )
 except ImportError:
     pass
 
 
 class PDFAdapter(DocumentParser):
     """
-    Extraction de texte PDF avec triple fallback :
-    1. pdfplumber  — PDFs structurés standard
+    Extraction de texte PDF avec cascade :
+    0. pymupdf4llm — Markdown structuré (titres, tableaux, listes) ; repli si fidélité < seuil
+    1. pdfplumber  — PDFs structurés standard (texte plat)
     2. PyMuPDF     — PDFs complexes / encodage non-standard
     3. OCR (PyMuPDF + pytesseract) — PDFs scannés (images)
     """
 
     async def parse(self, file_path: str) -> str:
+        # Étape 0 : Markdown structuré (pymupdf4llm) — préserve titres, tableaux, listes.
+        # Garde-fou : repli sur le pipeline texte/OCR page-par-page si la conversion perd
+        # du contenu (les PDF scannés/CV à page-image ne donnent pas un Markdown fidèle).
+        if _PYMUPDF4LLM_AVAILABLE:
+            markdown = self._try_pymupdf4llm(file_path)
+            if markdown:
+                baseline = self._plain_text_baseline(file_path)
+                if _is_faithful(markdown, baseline):
+                    logger.info(
+                        "PDF → Markdown via pymupdf4llm (%d caractères) : %s",
+                        len(markdown), file_path,
+                    )
+                    return markdown
+                logger.warning(
+                    "PDF → Markdown rejeté (fidélité %d/%d car. alphanum. < %.0f %%) — "
+                    "repli sur le pipeline texte/OCR : %s",
+                    _alnum_count(markdown), _alnum_count(baseline),
+                    _FIDELITY_MIN_RATIO * 100, file_path,
+                )
+
         # Décision OCR PAGE PAR PAGE (et non sur la moyenne du document) : un CV peut
         # avoir des pages texte ET une page de certifications/diplômes en image. Une
         # moyenne globale « ok » sauterait l'OCR et perdrait cette page-image noyée dans
@@ -138,6 +194,24 @@ class PDFAdapter(DocumentParser):
         return (len(text) / n_pages) >= settings.ocr_min_chars_per_page
 
     # ── Extracteurs ────────────────────────────────────────────────────────────
+
+    def _try_pymupdf4llm(self, file_path: str) -> str:
+        """Conversion PDF → Markdown (titres #, tableaux |…|, listes). Vide si échec."""
+        try:
+            import pymupdf4llm
+            md = pymupdf4llm.to_markdown(file_path)
+            return md.strip() if md else ""
+        except Exception as e:
+            logger.debug("pymupdf4llm échoué sur %s : %s", file_path, e)
+            return ""
+
+    def _plain_text_baseline(self, file_path: str) -> str:
+        """Texte plat de référence pour juger la fidélité du Markdown (PyMuPDF puis pdfplumber)."""
+        if _FITZ_AVAILABLE:
+            text = self._try_pymupdf(file_path)
+            if text:
+                return text
+        return self._try_pdfplumber(file_path)
 
     @staticmethod
     def _image_heavy_pages(file_path: str) -> set[int]:
@@ -240,7 +314,8 @@ class PDFAdapter(DocumentParser):
 
     def _ocr_pages(self, file_path: str, page_indices: list[int]) -> dict[int, str]:
         """OCR ciblé : rend chaque page demandée en image (200 DPI) puis Tesseract (fra+eng).
-        Retourne {index_page: texte}. Cappé à settings.ocr_max_pages pages OCR-isées."""
+        Retourne {index_page: texte}. Cappé à settings.ocr_max_pages pages OCR-isées.
+        Utilise les langues réellement installées (_OCR_LANGS, idéalement fra+eng)."""
         try:
             import fitz
             import pytesseract
@@ -264,9 +339,9 @@ class PDFAdapter(DocumentParser):
                     logger.debug("OCR page %d de %s…", i, file_path)
                     pix = doc[i].get_pixmap(matrix=mat, alpha=False)
                     img = Image.open(io.BytesIO(pix.tobytes("png")))
-                    # Tente français puis anglais en fallback
+                    # Langues installées (fra+eng si dispo) ; repli eng par sécurité
                     try:
-                        text = pytesseract.image_to_string(img, lang="fra+eng")
+                        text = pytesseract.image_to_string(img, lang=_OCR_LANGS)
                     except pytesseract.TesseractError:
                         text = pytesseract.image_to_string(img, lang="eng")
                     if text.strip():
