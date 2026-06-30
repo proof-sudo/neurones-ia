@@ -31,6 +31,16 @@ services:
     container_name: neurones-ia-backend
     restart: unless-stopped
     env_file: .env.prod
+    environment:
+      # Chemins data DANS le volume persistant (/app/data) — priment sur .env.prod.
+      # Sans ça, les défauts "../data" tombent hors du volume → base SQLite (et users)
+      # effacée à CHAQUE redéploiement. Bug réel rencontré : admin créé puis disparu.
+      - GED_PATH=/app/data/ged
+      - TEMPLATES_PATH=/app/data/templates
+      - UPLOADS_PATH=/app/data/uploads
+      - CHROMADB_PATH=/app/data/chromadb
+      - BM25_INDEX_PATH=/app/data/bm25_index
+      - LOCAL_DB_PATH=/app/data/local_db/neurones.db
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
