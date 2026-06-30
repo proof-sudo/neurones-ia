@@ -56,8 +56,10 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        # Externalisé : surchargeable via .env.prod / variable d'env, sans éditer le compose.
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://187.127.228.104:8080/api/v1}
+        # URL relative : le frontend appelle /api/v1 sur le même hôte que la page,
+        # nginx route /api → backend. Indépendant de l'IP/port/domaine (aucun rebuild
+        # nécessaire si l'IP change ou si on ajoute un domaine). Surchargeable au besoin.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
     container_name: neurones-ia-frontend
     restart: unless-stopped
     environment:
