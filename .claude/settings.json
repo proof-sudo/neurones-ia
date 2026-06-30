@@ -6,7 +6,10 @@
       "Bash(./.venv/Scripts/python.exe -m pytest test_metadata_extraction.py::test_round_trip test_strategy_pipeline.py::test_happy_standard -q)",
       "Bash(./.venv/Scripts/python.exe -m pytest --collect-only -q)",
       "Bash(node_modules/.bin/tsc --noEmit)",
-      "Bash(echo \"=== total tsc errors: $\\(node_modules/.bin/tsc --noEmit 2>&1)"
+      "Bash(echo \"=== total tsc errors: $\\(node_modules/.bin/tsc --noEmit 2>&1)",
+      "PowerShell(Set-Location backend; if \\(Test-Path .venv\\\\Scripts\\\\python.exe\\) { $py = \".\\\\.venv\\\\Scripts\\\\python.exe\" } else { $py = \"python\" }; & $py -m pytest tests/unit/test_presales_conformity.py tests/unit/test_presales_matrix_store.py tests/unit/test_presales_latency.py -p no:cacheprovider -q)",
+      "PowerShell(& .\\\\.venv\\\\Scripts\\\\python.exe -m pytest tests/unit/test_presales_offer.py tests/unit/test_presales_matrix_export.py tests/unit/test_presales_conformity.py tests/unit/test_presales_matrix_store.py tests/unit/test_presales_latency.py -p no:cacheprovider -q)",
+      "PowerShell(& .\\\\.venv\\\\Scripts\\\\python.exe -m pytest tests/unit -p no:cacheprovider -q 2>&1)"
     ]
   }
 }

@@ -293,6 +293,22 @@ class ChecklistExportRequest(BaseModel):
     appendices: list[AppendixSchema] = []
 
 
+# ── Matrice de conformité : confirmation humaine (cochage) ────────────────────
+class MatrixConfirmationItem(BaseModel):
+    """Un cochage humain sur une exigence de la matrice de conformité."""
+    id: str
+    statut_confirme: Optional[str] = None      # statut VALIDÉ (CONFORME / NON_CONFORME / …)
+    domaine_valide: Optional[str] = None
+    commentaire: Optional[str] = None
+    confirme: bool = True                       # False = lever une confirmation existante
+
+
+class MatrixConfirmRequest(BaseModel):
+    ao_filename: str
+    confirme_par: str = ""                       # email/nom du valideur
+    confirmations: list[MatrixConfirmationItem] = []
+
+
 class OfferGenerationRequest(BaseModel):
     ao_filename: str
     scoring_result: ScoringResultSchema

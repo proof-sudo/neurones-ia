@@ -88,6 +88,23 @@ class Settings(BaseSettings):
     # écriture de cache (chaque /score recalcule). Réactivable sans toucher au code.
     score_cache_enabled: bool = False
 
+    # ── UC10 Présale — leviers latence & offre (ISOLÉS au module présale) ─────────
+    # Logge la durée des grandes étapes (scoring, stratégie, offre) — « Lot 0 » de mesure.
+    presales_perf_log: bool = True
+    # Timeout DUR (secondes) par grand appel LLM présale via asyncio.wait_for. 0 = désactivé
+    # (comportement actuel). >0 = un appel qui traîne est coupé proprement plutôt que de bloquer.
+    presales_llm_timeout_seconds: float = 0.0
+    # Purge LRU des caches disque présale (score / stratégie / offre) : garde les N fichiers
+    # les plus récents. 0 = pas de purge. Rend `score_cache_enabled=True` sûr en prod.
+    presales_cache_max_files: int = 500
+    # Cache disque de la stratégie et des sections d'offre par empreinte (même principe que /score).
+    presales_strategy_cache_enabled: bool = False
+    # Modèle de rédaction des sections d'offre : "haiku" (défaut, rapide) ou "sonnet"
+    # (offre plus qualitative / à fort impact, plus lente). Bascule sans toucher au code.
+    offer_sections_model: str = "haiku"
+    # Pré-statut de conformité IA des exigences au moment de l'export/assess de la matrice.
+    matrix_assess_on_export: bool = True
+
     # OCR PDF
     ocr_max_pages: int = 40              # cap pages OCR (perf) — au-delà, WARNING explicite
     ocr_min_chars_per_page: int = 80     # en-dessous, la couche texte est jugée trop maigre → OCR

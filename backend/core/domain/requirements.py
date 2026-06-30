@@ -76,9 +76,22 @@ class Exigence:
     domaine_valide: str = ""                 # corrigé humain (vide = pas encore validé)
     confidence: float = 0.0                  # confiance du classifieur (0.0–1.0)
     section_reponse: str = ""                # section de l'offre qui couvre l'exigence
-    statut_conformite: str = STATUT_A_TRAITER  # cf. STATUTS_CONFORMITE
+    statut_conformite: str = STATUT_A_TRAITER  # statut VALIDÉ par l'humain (cochage) — cf. STATUTS_CONFORMITE
     blocking: bool = False                   # éliminatoire si non couverte (seuils, pièces obligatoires)
     commentaire: str = ""
+    # ── Validation IA → contrôle humain ────────────────────────────────────────
+    # Modèle « suggéré par l'IA → confirmé par l'humain », calqué sur
+    # domaines_suggeres → domaine_valide. L'IA propose `statut_suggere` (+ justification,
+    # confiance, preuve) ; l'humain COCHE pour confirmer (`confirme=True`) en fixant
+    # `statut_conformite`. Tant que non confirmé, `statut_conformite` reste A_TRAITER :
+    # on ne considère JAMAIS une exigence « réunie » sur la seule foi de l'IA.
+    statut_suggere: str = STATUT_A_TRAITER   # proposition IA (cf. STATUTS_CONFORMITE)
+    justification_ia: str = ""               # pourquoi l'IA propose ce statut (traçable)
+    confiance_ia: float = 0.0                # 0.0–1.0
+    preuve_ref: str = ""                     # pointeur de preuve (critère, doc GED, force)
+    confirme: bool = False                   # True = un humain a coché pour confirmer
+    confirme_par: str = ""                   # email/nom du valideur humain
+    confirme_le: str = ""                    # ISO 8601, posé à la confirmation
 
     def __post_init__(self) -> None:
         # Normalisation défensive : un type/statut hors vocabulaire est ramené à
@@ -87,6 +100,8 @@ class Exigence:
             self.type = TYPE_BESOIN
         if self.statut_conformite not in STATUTS_CONFORMITE:
             self.statut_conformite = STATUT_A_TRAITER
+        if self.statut_suggere not in STATUTS_CONFORMITE:
+            self.statut_suggere = STATUT_A_TRAITER
 
     @property
     def domaine_effectif(self) -> str:

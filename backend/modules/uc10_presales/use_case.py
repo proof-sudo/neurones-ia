@@ -15,6 +15,7 @@ from core.services.rag_engine import RAGEngine
 from modules.uc10_presales.scoring_pipeline import ScoringPipeline, _clean_json
 from modules.uc10_presales.offer_generator import OfferGenerator
 from modules.uc10_presales.odoo_enrichment import OdooEnrichmentService
+from modules.uc10_presales.latency import timer, with_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +211,8 @@ class PresalesUseCase:
         docx_parser: DocumentParser,
     ):
         self._pipeline = ScoringPipeline(llm=llm_haiku, rag_engine=rag_engine)
-        self._generator = OfferGenerator(llm=llm_haiku)
+        # llm_premium=Sonnet → offre + qualitative si settings.offer_sections_model == "sonnet".
+        self._generator = OfferGenerator(llm=llm_haiku, llm_premium=llm_sonnet)
         self._llm_sonnet = llm_sonnet
         self._pdf_parser = pdf_parser
         self._docx_parser = docx_parser
@@ -226,7 +228,9 @@ class PresalesUseCase:
                 "(https://github.com/UB-Mannheim/tesseract/wiki) "
                 "avec le pack de langue français (fra), puis relancez le backend."
             )
-        result = await self._pipeline.run(ao_filename=filename, ao_text=text)
+        with timer("score_ao.pipeline"):
+            result = await with_timeout(
+                self._pipeline.run(ao_filename=filename, ao_text=text), "pipeline.run")
         # Étape 6 — enrichissement Odoo (non-bloquant : ne casse jamais le scoring)
         await self._odoo_enrichment.enrich(result)
         return result
@@ -251,7 +255,10 @@ class PresalesUseCase:
         client_name: str = "",
     ) -> tuple[dict, str, str]:
         """Étape 1 : sections éditables (LLM), sans .docx."""
-        return await self._generator.build_sections(scoring=scoring, client_name=client_name)
+        with timer("offer.build_sections"):
+            return await with_timeout(
+                self._generator.build_sections(scoring=scoring, client_name=client_name),
+                "offer.build_sections")
 
     def render_offer(
         self,
@@ -354,11 +361,15 @@ class PresalesUseCase:
         # 3 appels Sonnet EN PARALLÈLE (au lieu d'un bloc unique de 8000 tokens ≈ 220s) :
         # stratégie (texte) ∥ plan de réponse (texte) ∥ phases (JSON). Chacun produit moins de
         # tokens et tourne en concurrence → wall-clock ≈ le plus lent des 3 (~70-90s) au lieu de la somme.
-        strategy_text, response_plan, phases_raw = await asyncio.gather(
-            self._gen_strategy_block(_STRATEGY_TEXT_SYSTEM.replace("{decision}", decision_label), user, 2500, "stratégie"),
-            self._gen_strategy_block(_RESPONSE_PLAN_SYSTEM, user, 2000, "plan de réponse"),
-            self._gen_phases_block(_PHASES_SYSTEM.replace("{decision}", decision_label), user),
-        )
+        with timer("bid_strategy.generate"):
+            strategy_text, response_plan, phases_raw = await with_timeout(
+                asyncio.gather(
+                    self._gen_strategy_block(_STRATEGY_TEXT_SYSTEM.replace("{decision}", decision_label), user, 2500, "stratégie"),
+                    self._gen_strategy_block(_RESPONSE_PLAN_SYSTEM, user, 2000, "plan de réponse"),
+                    self._gen_phases_block(_PHASES_SYSTEM.replace("{decision}", decision_label), user),
+                ),
+                "bid_strategy.gather",
+            )
         strategy_text = strategy_text or "Génération indisponible — veuillez réessayer."
         phases = self._merge_phase_actions(skeleton, phases_raw)
 
