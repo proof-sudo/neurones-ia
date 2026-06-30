@@ -14,8 +14,7 @@ from fastapi import APIRouter, Request, UploadFile, File, HTTPException
 from fastapi.responses import Response
 
 from modules.uc10_presales.schemas import (
-    ScoringResultSchema, OfferGenerationRequest, OfferGenerationResponse,
-    KeyElementSchema, MatchedDocumentSchema, BidRecommendationSchema,
+    ScoringResultSchema, OfferGenerationRequest, KeyElementSchema, MatchedDocumentSchema, BidRecommendationSchema,
     BidStrategyRequest, BidStrategySchema, AnalysisExportRequest,
     StrategyExportRequest, ChecklistExportRequest, MatrixConfirmRequest,
     TeamMatchRequest, TeamMatchResponse,
@@ -516,7 +515,7 @@ async def export_analysis(body: AnalysisExportRequest, request: Request):
     client_name = body.client_name or "Non précisé"
     doc = DocxDocument()
     h = _docx_helpers(doc)
-    Pt = h["Pt"]; RGBColor = h["RGBColor"]; Cm = h["Cm"]
+    Pt = h["Pt"]; Cm = h["Cm"]
     WD = h["WD_ALIGN_PARAGRAPH"]
 
     # ── PAGE DE COUVERTURE ────────────────────────────────────────────────────
@@ -917,7 +916,7 @@ async def export_scoring(body: AnalysisExportRequest, request: Request):
     client_name = body.client_name or "Non précisé"
     doc = DocxDocument()
     h = _docx_helpers(doc)
-    Pt = h["Pt"]; RGBColor = h["RGBColor"]; Cm = h["Cm"]
+    Pt = h["Pt"]; Cm = h["Cm"]
     WD = h["WD_ALIGN_PARAGRAPH"]
 
     score_color = h["C_GREEN"] if scoring.score >= 70 else (h["C_AMBER"] if scoring.score >= 40 else h["C_RED"])
@@ -1170,10 +1169,9 @@ async def export_strategy(body: StrategyExportRequest):
 
     doc = DocxDocument()
     h = _docx_helpers(doc)
-    Pt = h["Pt"]; RGBColor = h["RGBColor"]; Cm = h["Cm"]
+    Pt = h["Pt"]; Cm = h["Cm"]
     WD = h["WD_ALIGN_PARAGRAPH"]
 
-    score_color = h["C_GREEN"] if scoring.score >= 70 else (h["C_AMBER"] if scoring.score >= 40 else h["C_RED"])
     rec_map = {
         "GO": ("GO — Répondre à l'AO", h["C_GREEN"]),
         "CONDITIONAL": ("CONDITIONNEL — Sous réserve", h["C_AMBER"]),

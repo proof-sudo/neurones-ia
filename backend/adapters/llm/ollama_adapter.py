@@ -1,4 +1,3 @@
-import json
 import logging
 import httpx
 from openai import AsyncOpenAI

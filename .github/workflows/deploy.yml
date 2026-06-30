@@ -40,7 +40,8 @@ jobs:
           cache: 'pip'
           cache-dependency-path: backend/requirements.txt
       - name: Lint backend (ruff)
-        run: pip install ruff && ruff check backend/ --select E,F,W --ignore E501
+        # Config (select/ignore/exclude) pilotée par backend/ruff.toml.
+        run: pip install ruff && ruff check backend/
       - name: Test backend (pytest unit)
         run: pip install -r requirements.txt && pytest tests/unit -q
         working-directory: backend

@@ -9,7 +9,7 @@ from config.settings import settings
 from core.ports.llm_gateway import LLMGateway, OutputTruncatedError
 from core.ports.document_parser import DocumentParser
 from core.domain.offer import (
-    ScoringResult, OfferDraft, StrategyPhase, PhaseAction, BidStrategy, Partner, Precondition,
+    ScoringResult, OfferDraft, StrategyPhase, PhaseAction, BidStrategy, Partner,
 )
 from core.services.rag_engine import RAGEngine
 from modules.uc10_presales.scoring_pipeline import ScoringPipeline, _clean_json
@@ -295,7 +295,7 @@ class PresalesUseCase:
         config, skeleton = load_strategy_skeleton(days_remaining)
 
         lines = [
-            f"═══ CONTEXTE AO ═══",
+            "═══ CONTEXTE AO ═══",
             f"Intitulé AO : {scoring.ao_filename}",
             f"Client / Commanditaire : {client_name or 'Non précisé'}",
             f"Secteur : {secteur}",
@@ -309,7 +309,7 @@ class PresalesUseCase:
         ]
         if partner is not None:
             lines.append(f"PARTENAIRE DE GROUPEMENT : {partner.name} ({partner.role}, {partner.type})")
-        lines += ["", f"═══ RÉSUMÉ AO ═══", scoring.summary[:800], ""]
+        lines += ["", "═══ RÉSUMÉ AO ═══", scoring.summary[:800], ""]
 
         # Squelette de phases à remplir (ids fixes, intitulés, actions types)
         if skeleton:
@@ -338,7 +338,7 @@ class PresalesUseCase:
             lines += ["═══ POINTS DE VIGILANCE ═══"] + [f"  • {v.texte}" for v in scoring.points_vigilance[:6]] + [""]
 
         if livrables and livrables != "non précisé":
-            lines += [f"═══ LIVRABLES ATTENDUS ═══", livrables, ""]
+            lines += ["═══ LIVRABLES ATTENDUS ═══", livrables, ""]
 
         if scoring.strengths:
             lines += ["═══ FORCES DE NEURONES SUR CET AO ═══"] + [f"  + {s}" for s in scoring.strengths[:6]] + [""]
@@ -354,7 +354,7 @@ class PresalesUseCase:
             lines += ["═══ ANALYSE DES ÉCARTS (ce qui manque / ce qu'il faut compenser) ═══", scoring.gaps_analysis[:500], ""]
 
         if decision_reason:
-            lines += [f"═══ JUSTIFICATION DE LA DÉCISION ═══", decision_reason, ""]
+            lines += ["═══ JUSTIFICATION DE LA DÉCISION ═══", decision_reason, ""]
 
         user = "\n".join(lines)
 
@@ -500,7 +500,8 @@ class PresalesUseCase:
         return TeamMatchResponse(profiles=profiles, query_used=query[:200])
 
     async def _extract_text(self, filename: str, file_bytes: bytes) -> str:
-        import tempfile, os
+        import tempfile
+        import os
         ext = filename.lower().rsplit(".", 1)[-1]
         with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp:
             tmp.write(file_bytes)

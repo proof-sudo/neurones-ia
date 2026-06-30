@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 FROM node:22-alpine AS builder
 
 WORKDIR /app
@@ -8,7 +9,8 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 COPY package*.json ./
 COPY postinstall.cjs ./
-RUN npm ci
+# Cache npm partagé entre builds (BuildKit) → rebuilds plus rapides.
+RUN --mount=type=cache,target=/root/.npm npm ci
 
 COPY . .
 RUN npm run build

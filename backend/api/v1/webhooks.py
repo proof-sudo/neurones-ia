@@ -19,10 +19,8 @@ En développement local, utiliser ngrok :
   ngrok http 8000
   → copier l'URL HTTPS dans les actions Odoo
 """
-import hashlib
 import hmac
 import logging
-from typing import Any
 
 from fastapi import APIRouter, Request, HTTPException, BackgroundTasks
 from pydantic import BaseModel

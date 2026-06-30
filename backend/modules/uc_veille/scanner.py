@@ -1,7 +1,6 @@
 import logging
 import re
 from datetime import datetime
-from typing import Optional
 
 import httpx
 
@@ -63,7 +62,6 @@ async def scan_rss_feed(url: str, keywords: str = "") -> list[dict]:
             link = getattr(entry, "link", "")
             published = None
             if hasattr(entry, "published_parsed") and entry.published_parsed:
-                import time
                 published = datetime(*entry.published_parsed[:6])
             full_text = f"{title} {desc}"
             entries.append({

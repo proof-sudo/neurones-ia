@@ -14,7 +14,6 @@ est PUR (load/merge/save séparés) → testable hors disque via `base`.
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 
 from config.settings import settings
