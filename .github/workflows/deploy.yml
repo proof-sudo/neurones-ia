@@ -99,6 +99,18 @@ jobs:
     needs: build-push
     runs-on: ubuntu-latest
     steps:
+      # Le runner a besoin du docker-compose.yml pour l'envoyer au VPS (remplace le git pull).
+      - uses: actions/checkout@v4
+
+      - name: Upload docker-compose.yml to VPS
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          source: docker-compose.yml
+          target: ${{ secrets.VPS_DEPLOY_PATH }}
+
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1
         env:
@@ -121,8 +133,8 @@ jobs:
             # injecté via stdin, jamais écrit dans un fichier ni loggé.
             echo "${GHCR_PAT}" | docker login ghcr.io -u "${GHCR_USER}" --password-stdin
 
-            # Met à jour docker-compose.yml / configs (PAS le build : il vient de GHCR).
-            git pull origin main
+            # docker-compose.yml vient d'être déposé par scp ci-dessus — aucune dépendance
+            # git côté VPS. Les images, elles, viennent de GHCR (docker compose pull).
 
             # Tag déployé actuellement, pour rollback éventuel.
             PREV_TAG="$(cat .deployed_tag 2>/dev/null || echo '')"
