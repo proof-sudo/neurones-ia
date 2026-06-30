@@ -19,7 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="fr" className={inter.variable} suppressHydrationWarning>
       <body
         className="h-dvh flex overflow-hidden antialiased text-slate-900"
-        style={{ background: "#f0f2f8" }}
+        style={{ background: "#f7f8fa" }}
       >
         <AppShell>{children}</AppShell>
       </body>

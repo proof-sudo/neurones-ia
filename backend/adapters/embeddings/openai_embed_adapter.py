@@ -33,6 +33,14 @@ class OpenAIEmbedAdapter(Embedder):
         )
         self._model = settings.embedding_model
 
+    @staticmethod
+    def _is_quota_exhausted(exc: Exception) -> bool:
+        """Vrai si le 429 est un quota/crédit épuisé (panne durable), pas un rate-limit
+        transitoire. Inutile de retenter : on lève tout de suite pour que le fallback
+        local prenne le relais sans accumuler ~4.75s de pauses par appel."""
+        code = str(getattr(exc, "code", "") or "")
+        return "insufficient_quota" in f"{code} {exc}".lower()
+
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if not texts:
             return []
@@ -46,6 +54,9 @@ class OpenAIEmbedAdapter(Embedder):
                 return [item.embedding for item in response.data]
             except (APIConnectionError, RateLimitError) as e:
                 last_exc = e
+                if isinstance(e, RateLimitError) and self._is_quota_exhausted(e):
+                    logger.warning("OpenAI quota épuisé (insufficient_quota) — pas de retry, bascule fallback immédiate.")
+                    raise
                 wait = 1.5 ** attempt
                 logger.warning("OpenAI embed retry %d/3 (%s) — attente %.1fs", attempt + 1, e, wait)
                 await asyncio.sleep(wait)

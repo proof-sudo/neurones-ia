@@ -156,7 +156,7 @@ neurones-ia/
 | Node.js | 22 | Frontend |
 | Docker + Compose | 24 / 2.x | Déploiement |
 | Git | 2.x | Versioning |
-| Tesseract OCR | 4.x | Extraction PDF scannés |
+| Tesseract OCR | 4.x+ | Extraction PDF scannés (pack langue `fra` requis) |
 
 **Clés API nécessaires :**
 - `ANTHROPIC_API_KEY` — Claude Haiku + Sonnet ([console.anthropic.com](https://console.anthropic.com))
@@ -196,6 +196,36 @@ uvicorn main:app --reload --port 8000
 
 L'API est disponible sur [http://localhost:8000](http://localhost:8000).
 Documentation interactive Swagger : [http://localhost:8000/docs](http://localhost:8000/docs).
+
+#### Tesseract OCR (PDF scannés)
+
+L'OCR n'est sollicité que pour les **PDF scannés** (sans couche texte). Il faut le binaire Tesseract **et** le pack de langue français `fra` — sinon l'OCR retombe sur l'anglais et lit mal les accents (un *warning* l'indique dans les logs du backend).
+
+```bash
+# Debian / Ubuntu
+sudo apt-get install -y tesseract-ocr tesseract-ocr-fra
+
+# macOS (Homebrew) — tesseract-lang fournit toutes les langues dont fra
+brew install tesseract tesseract-lang
+```
+
+**Windows :**
+1. Installer Tesseract via l'installeur [UB-Mannheim](https://github.com/UB-Mannheim/tesseract/wiki) et **cocher « French » dans « Additional language data »**.
+2. Si le pack français n'a pas été coché, télécharger `fra.traineddata` et le placer dans le dossier `tessdata` :
+   ```powershell
+   Invoke-WebRequest `
+     -Uri "https://github.com/tesseract-ocr/tessdata/raw/main/fra.traineddata" `
+     -OutFile "C:\Program Files\Tesseract-OCR\tessdata\fra.traineddata"
+   # (terminal Administrateur requis pour écrire dans Program Files)
+   ```
+3. Si Tesseract n'est pas installé au chemin par défaut, définir la variable `TESSERACT_CMD` vers `tesseract.exe`.
+
+**Vérifier l'installation** — `fra` doit apparaître dans la liste :
+```bash
+tesseract --list-langs
+```
+
+> En **Docker**, rien à faire : le `Dockerfile` installe déjà `tesseract-ocr` + `tesseract-ocr-fra`.
 
 ### 3. Frontend
 

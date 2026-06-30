@@ -1,3 +1,4 @@
+import asyncio
 import logging
 
 from core.ports.embedder import Embedder
@@ -27,22 +28,45 @@ class FallbackEmbedAdapter(Embedder):
         self._primary = primary
         self._fallback = fallback
         self._using_fallback = False
+        # Sérialise UNIQUEMENT la première sonde du primaire : sans ça, un burst d'appels
+        # concurrents (ex. 8 recherches CV en parallèle) tape tous OpenAI et récolte chacun
+        # un 429 avant que le flag ne se pose → tempête de 429. Une fois sondé, le happy path
+        # (OpenAI vivant) repart en parallèle sans verrou.
+        self._probed = False
+        self._probe_lock = asyncio.Lock()
 
     # ── API publique ──────────────────────────────────────────────────────────
 
     async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         if self._using_fallback:
             return await self._fallback.embed_texts(texts)
+
+        # Tant qu'on n'a pas sondé le primaire une première fois, on sérialise : un seul
+        # appel teste OpenAI, les autres attendent le verdict pour ne pas multiplier les 429.
+        if not self._probed:
+            async with self._probe_lock:
+                if self._using_fallback:
+                    return await self._fallback.embed_texts(texts)
+                if not self._probed:
+                    return await self._embed_primary_or_fallback(texts, first_probe=True)
+            # sortie du verrou : primaire jugé vivant → on continue en parallèle ci-dessous
+
+        return await self._embed_primary_or_fallback(texts, first_probe=False)
+
+    async def _embed_primary_or_fallback(self, texts: list[str], first_probe: bool) -> list[list[float]]:
         try:
-            return await self._primary.embed_texts(texts)
+            result = await self._primary.embed_texts(texts)
+            self._probed = True
+            return result
         except Exception as exc:
             if _is_quota_error(exc):
-                logger.warning(
-                    "OpenAI embeddings indisponibles (quota/auth) → bascule sur le modèle local. "
-                    "Cause : %s",
-                    exc,
-                )
+                if not self._using_fallback:
+                    logger.warning(
+                        "OpenAI embeddings indisponibles (quota/auth) → bascule définitive sur "
+                        "le modèle local pour la session. Cause : %s", exc,
+                    )
                 self._using_fallback = True
+                self._probed = True
                 return await self._fallback.embed_texts(texts)
             raise
 
@@ -62,4 +86,5 @@ class FallbackEmbedAdapter(Embedder):
     def reset_to_primary(self) -> None:
         """Force le retour vers OpenAI (utile après rechargement des crédits)."""
         self._using_fallback = False
+        self._probed = False  # re-sonder OpenAI au prochain appel
         logger.info("FallbackEmbedAdapter : retour au modèle primaire OpenAI")

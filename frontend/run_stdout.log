@@ -1,0 +1,105 @@
+
+> frontend@0.1.0 dev
+> npx cross-env NODE_ENV=development next dev
+
+   ▲ Next.js 15.5.18
+   - Local:        http://localhost:3000
+   - Network:      http://172.26.0.1:3000
+   - Environments: .env.local
+   - Experiments (use with caution):
+     ⨯ dynamicIO
+
+ ✓ Starting...
+ ✓ Ready in 6.4s
+ ○ Compiling / ...
+ ✓ Compiled / in 1966ms (695 modules)
+ GET / 200 in 104ms
+ ○ Compiling /presales ...
+ ✓ Compiled /presales in 3.5s (1282 modules)
+ GET /presales 200 in 5052ms
+ ○ Compiling /favicon.ico ...
+ ✓ Compiled /favicon.ico in 596ms (744 modules)
+ GET /favicon.ico 200 in 1037ms
+ ✓ Compiled in 3s (1284 modules)
+ ✓ Compiled in 387ms (1284 modules)
+ ✓ Compiled in 670ms (1284 modules)
+ ✓ Compiled in 601ms (1284 modules)
+ ✓ Compiled in 526ms (1284 modules)
+ ✓ Compiled in 583ms (1284 modules)
+ ✓ Compiled in 528ms (1284 modules)
+ ✓ Compiled in 406ms (1284 modules)
+ ✓ Compiled in 676ms (1284 modules)
+ ✓ Compiled in 592ms (1284 modules)
+ ✓ Compiled in 494ms (1284 modules)
+ ✓ Compiled in 1122ms (1284 modules)
+ ✓ Compiled in 972ms (1284 modules)
+ ✓ Compiled in 468ms (1284 modules)
+ ✓ Compiled in 417ms (1284 modules)
+ GET /presales 200 in 1011ms
+ ○ Compiling /favicon.ico ...
+ ✓ Compiled /favicon.ico in 1134ms (1298 modules)
+ GET /favicon.ico 200 in 1404ms
+ GET /login 200 in 1773ms
+ ○ Compiling / ...
+ ✓ Compiled / in 535ms (751 modules)
+ GET / 200 in 885ms
+ ○ Compiling /ged ...
+ ✓ Compiled /ged in 677ms (1327 modules)
+ GET /ged 200 in 905ms
+ GET /presales 200 in 67ms
+ GET /presales 200 in 1933ms
+ GET /favicon.ico 200 in 147ms
+ ○ Compiling /chat ...
+ ✓ Compiled /chat in 3.4s (1350 modules)
+ GET /chat 200 in 4271ms
+ GET /chat 200 in 426ms
+ ✓ Compiled in 1082ms (588 modules)
+ GET /chat 200 in 130ms
+ GET /chat 200 in 1576ms
+ GET /favicon.ico 200 in 153ms
+ GET /presales 200 in 250ms
+ ○ Compiling /ged ...
+ ✓ Compiled /ged in 1886ms (755 modules)
+ GET /ged 200 in 2639ms
+ GET /ged 200 in 90ms
+ GET /chat 200 in 174ms
+ GET /ged 200 in 255ms
+ GET /chat 200 in 121ms
+ GET /ged 200 in 123ms
+ GET /presales 200 in 194ms
+ GET /chat 200 in 95ms
+ ✓ Compiled in 3.5s (1343 modules)
+ GET /chat 200 in 158ms
+ GET /chat 200 in 491ms
+ ○ Compiling /favicon.ico ...
+ ✓ Compiled /favicon.ico in 646ms (772 modules)
+ GET /favicon.ico 200 in 937ms
+ ✓ Compiled in 608ms (1343 modules)
+ GET /chat 200 in 231ms
+ GET /ged 200 in 69ms
+ GET /chat 200 in 45ms
+ GET /ged 200 in 65ms
+ GET /chat 200 in 37ms
+ GET /ged 200 in 44ms
+ GET /chat 200 in 47ms
+ GET /chat 200 in 1283ms
+ ○ Compiling /favicon.ico ...
+ ✓ Compiled /favicon.ico in 1807ms (772 modules)
+ GET /favicon.ico 200 in 2288ms
+ ✓ Compiled in 1344ms (1343 modules)
+ GET /chat 200 in 459ms
+ ✓ Compiled in 3.1s (1343 modules)
+ GET /chat 200 in 251ms
+ GET /chat 200 in 1441ms
+ ○ Compiling /favicon.ico ...
+ ✓ Compiled /favicon.ico in 1535ms (772 modules)
+ GET /favicon.ico 200 in 2117ms
+ GET /presales 200 in 296ms
+ GET /presales 200 in 684ms
+ GET /favicon.ico 200 in 31ms
+ ○ Compiling /veille ...
+ ✓ Compiled /veille in 4.5s (1344 modules)
+ GET /veille 200 in 5308ms
+ GET /veille 200 in 94ms
+ GET /veille 200 in 1671ms
+ GET /login 200 in 170ms

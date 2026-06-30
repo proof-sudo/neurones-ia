@@ -77,6 +77,13 @@ class BM25Adapter(SparseSearch):
             pickle.dump((self._chunk_ids, self._corpus), f)
         logger.debug("Index BM25 sauvegardé (%d chunks)", len(self._chunk_ids))
 
+    def clear(self) -> None:
+        """Vide l'index BM25 et persiste l'état vide (reconstruction à neuf)."""
+        self._chunk_ids, self._corpus, self._id_set = [], [], set()
+        self._bm25 = None
+        self.save()
+        logger.info("Index BM25 réinitialisé (rebuild)")
+
     def load(self) -> None:
         if INDEX_FILE.exists():
             try:

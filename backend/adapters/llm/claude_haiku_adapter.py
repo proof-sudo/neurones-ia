@@ -5,7 +5,7 @@ from typing import AsyncIterator
 import anthropic
 import tiktoken
 
-from core.ports.llm_gateway import LLMGateway
+from core.ports.llm_gateway import LLMGateway, OutputTruncatedError
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -25,14 +25,31 @@ class ClaudeHaikuAdapter(LLMGateway):
         self._model = settings.haiku_model
         self._encoder = tiktoken.get_encoding("cl100k_base")
 
-    async def generate(self, system: str, user: str, max_tokens: int = 1024) -> str:
-        response = await self._client.messages.create(
+    async def generate(
+        self, system: str, user: str, max_tokens: int = 1024,
+        raise_on_truncation: bool = False, temperature: float | None = None,
+    ) -> str:
+        kwargs = dict(
             model=self._model,
             max_tokens=max_tokens,
             system=[{"type": "text", "text": system, "cache_control": _SYSTEM_CACHE_CONTROL}],
             messages=[{"role": "user", "content": user}],
         )
-        return response.content[0].text
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        response = await self._client.messages.create(**kwargs)
+        text = response.content[0].text
+        if response.stop_reason == "max_tokens":
+            # Sortie coupée net au plafond : tout JSON aval sera invalide. On le dit clairement
+            # ici plutôt que de laisser le caller deviner via un "Expecting ',' delimiter" trompeur.
+            logger.warning(
+                "Réponse Claude Haiku TRONQUÉE (stop_reason=max_tokens, budget=%d tokens). "
+                "Le contenu est incomplet — augmenter max_tokens pour cette étape.",
+                max_tokens,
+            )
+            if raise_on_truncation:
+                raise OutputTruncatedError(partial_text=text, max_tokens=max_tokens)
+        return text
 
     async def stream(self, system: str, user: str, max_tokens: int = 1024) -> AsyncIterator[str]:
         async with self._client.messages.stream(
@@ -44,8 +61,14 @@ class ClaudeHaikuAdapter(LLMGateway):
             async for text in stream.text_stream:
                 yield text
 
-    async def extract(self, prompt: str, text: str, max_tokens: int = 512) -> str:
-        return await self.generate(system=prompt, user=text, max_tokens=max_tokens)
+    async def extract(
+        self, prompt: str, text: str, max_tokens: int = 512,
+        raise_on_truncation: bool = False, temperature: float | None = None,
+    ) -> str:
+        return await self.generate(
+            system=prompt, user=text, max_tokens=max_tokens,
+            raise_on_truncation=raise_on_truncation, temperature=temperature,
+        )
 
     async def classify(self, text: str, categories: list[str], default: str | None = None) -> str:
         system = (

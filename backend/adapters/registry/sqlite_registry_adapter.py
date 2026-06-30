@@ -2,7 +2,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.ports.document_registry import DocumentRegistry
@@ -53,6 +53,14 @@ class SQLiteRegistryAdapter(DocumentRegistry):
             )
             await session.commit()
 
+    async def hard_delete(self, file_path: str) -> None:
+        """Suppression physique du registre — utilisé pour le droit à l'oubli RGPD (CV)."""
+        async with AsyncSessionLocal() as session:
+            await session.execute(
+                delete(GEDEntryModel).where(GEDEntryModel.file_path == file_path)
+            )
+            await session.commit()
+
     async def list_active_entries(self, doc_type: Optional[DocumentType] = None) -> list[GEDEntry]:
         async with AsyncSessionLocal() as session:
             query = select(GEDEntryModel).where(GEDEntryModel.is_active == True)
@@ -60,6 +68,12 @@ class SQLiteRegistryAdapter(DocumentRegistry):
                 query = query.where(GEDEntryModel.doc_type == doc_type.value)
             result = await session.execute(query)
             return [self._to_domain(row) for row in result.scalars()]
+
+    async def clear_all(self) -> int:
+        async with AsyncSessionLocal() as session:
+            result = await session.execute(delete(GEDEntryModel))
+            await session.commit()
+            return result.rowcount or 0
 
     @staticmethod
     def _to_domain(model: GEDEntryModel) -> GEDEntry:

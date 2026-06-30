@@ -5,7 +5,7 @@ from typing import AsyncIterator
 import tiktoken
 from openai import AsyncOpenAI
 
-from core.ports.llm_gateway import LLMGateway, AgentStep
+from core.ports.llm_gateway import LLMGateway, AgentStep, OutputTruncatedError
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -23,13 +23,23 @@ class OpenAIGPTAdapter(LLMGateway):
         self._model = settings.openai_chat_model
         self._encoder = tiktoken.get_encoding("cl100k_base")
 
-    async def generate(self, system: str, user: str, max_tokens: int = 1024) -> str:
-        response = await self._client.chat.completions.create(
+    async def generate(
+        self, system: str, user: str, max_tokens: int = 1024,
+        raise_on_truncation: bool = False, temperature: float | None = None,
+    ) -> str:
+        kwargs = dict(
             model=self._model,
             max_tokens=max_tokens,
             messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
         )
-        return response.choices[0].message.content or ""
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        response = await self._client.chat.completions.create(**kwargs)
+        text = response.choices[0].message.content or ""
+        if raise_on_truncation and response.choices[0].finish_reason == "length":
+            logger.warning("Réponse OpenAI/Ollama TRONQUÉE (finish_reason=length, budget=%d).", max_tokens)
+            raise OutputTruncatedError(partial_text=text, max_tokens=max_tokens)
+        return text
 
     async def stream(self, system: str, user: str, max_tokens: int = 1024) -> AsyncIterator[str]:
         stream = await self._client.chat.completions.create(
@@ -43,8 +53,14 @@ class OpenAIGPTAdapter(LLMGateway):
             if token:
                 yield token
 
-    async def extract(self, prompt: str, text: str, max_tokens: int = 512) -> str:
-        return await self.generate(system=prompt, user=text, max_tokens=max_tokens)
+    async def extract(
+        self, prompt: str, text: str, max_tokens: int = 512,
+        raise_on_truncation: bool = False, temperature: float | None = None,
+    ) -> str:
+        return await self.generate(
+            system=prompt, user=text, max_tokens=max_tokens,
+            raise_on_truncation=raise_on_truncation, temperature=temperature,
+        )
 
     async def classify(self, text: str, categories: list[str], default: str | None = None) -> str:
         system = (

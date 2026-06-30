@@ -6,7 +6,7 @@ python-multipart==0.0.12
 # LLM
 anthropic==0.40.0
 openai==1.57.0
-tiktoken==0.8.0
+tiktoken==0.13.0
 
 # RAG
 langchain==0.3.9
@@ -19,7 +19,9 @@ sentence-transformers==3.3.1
 # Document parsing
 pdfplumber==0.11.4
 pymupdf==1.24.14
+pymupdf4llm==0.0.17          # PDF → Markdown (POC parsing GED) ; s'appuie sur pymupdf
 python-docx==1.1.2
+openpyxl==3.1.5
 pytesseract==0.3.13
 Pillow==11.1.0
 
@@ -27,6 +29,9 @@ Pillow==11.1.0
 sqlalchemy[asyncio]==2.0.36
 aiosqlite==0.20.0
 alembic==1.14.0
+
+# Entity resolution (Phase 2) — appariement flou (fallback difflib si absent)
+rapidfuzz==3.10.1
 
 # HTTP client (Odoo distant)
 httpx==0.28.1
@@ -49,6 +54,7 @@ bcrypt==5.0.0
 # Config
 pydantic-settings==2.6.1
 python-dotenv==1.0.1
+PyYAML==6.0.3
 
 # Cache
 redis==5.2.1

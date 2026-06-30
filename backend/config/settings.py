@@ -25,8 +25,12 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://localhost:11434"
     ollama_model: str = "llama3.1"           # ollama pull llama3.1 (ou mistral-nemo, qwen2.5)
     ollama_timeout_seconds: float = 120.0    # modèles locaux peuvent être lents au premier appel
+    # Backend d'embedding : "local" (sentence-transformers, indépendant du quota OpenAI)
+    # ou "openai" (text-embedding-3-small). "local" = UN SEUL modèle indexation + requête
+    # → évite tout mélange de dimensions (Cause A).
+    embedding_backend: str = "local"
     embed_fallback_enabled: bool = True      # bascule sur sentence-transformers si OpenAI indisponible
-    embed_fallback_model: str = "all-MiniLM-L6-v2"   # modèle local sentence-transformers
+    embed_fallback_model: str = "paraphrase-multilingual-MiniLM-L12-v2"   # local multilingue (FR), 384d
 
     # Odoo (serveur distant)
     odoo_url: str = ""
@@ -50,7 +54,82 @@ class Settings(BaseSettings):
     chunk_overlap: int = 60
     retrieval_top_k: int = 10
     rerank_top_k: int = 5
-    max_context_tokens: int = 3000
+    max_context_tokens: int = 10000   # budget contexte RAG (tokens réels) ; Haiku gère 200k, 3000 tronquait les parents
+    # Chunks max conservés par fichier après fusion (dédoublonnage). 1 = un seul chunk/doc
+    # (max de diversité) mais un CV multi-pages ne remonte alors que sa page la mieux classée
+    # → ses certifs (autre page) sont perdues. 2 = recall des docs multi-pages sans noyer le top-k.
+    rag_max_chunks_per_file: int = 2
+    # Taille d'extrait conservée par chunk (chars). Un chunk fait ~600 mots (~4000-4500 chars) :
+    # un excerpt trop court ampute la FIN du chunk — or les certifications d'un CV y vivent
+    # (ex. « ODOO Functional Certification » à l'offset 2657 d'un CV de 3112 chars était coupée à
+    # 2500). On dimensionne pour tenir un chunk entier → plus de troncature en plein milieu d'une
+    # info décisive. Le budget global reste borné par max_context_tokens dans build_context.
+    excerpt_chars: int = 4500
+    # Levier ① — plancher de similarité cosinus pour le matching CV (étape 3a). C'est un
+    # PRÉ-FILTRE LÉGER (enlève le bruit grossier), PAS le filtre de précision : avec le fallback
+    # sentence-transformers (cosinus compressés ~0.4-0.6), un seuil trop haut (ex. 0.50) écarte
+    # des matches légitimes AVANT que le re-rank LLM (levier ③) puisse les juger. On garde donc
+    # bas et on laisse le LLM trancher. Avec text-embedding-3-small (cosinus mieux étalés ~0.3-0.7),
+    # ce seuil pourra remonter. 0 = désactivé.
+    cv_min_similarity: float = 0.35
+    # Levier ③ — re-rank LLM de pertinence par domaine (étape 3a). Après le plancher cosinus,
+    # le LLM juge STRICTEMENT si chaque CV correspond à un profil demandé (un CV réseau ≠ besoin
+    # dev Odoo) et écarte les hors-sujet que l'embedder seul ne sait pas distinguer. 1 appel/scoring.
+    cv_llm_rerank: bool = True
+    # Mêmes leviers ①+③ pour les PROJETS similaires (étape 3b, search_diverse) : sans eux, le
+    # matching « par type » remonte toujours le top-2 ABE (souvent Cisco/Fortinet) même pour un AO
+    # Odoo, et un fallback injecte des docs hors-type/hors-sujet. Le plancher reste BAS (pré-filtre :
+    # à 0.50 il éliminait des ABE GED pertinentes — ex. routeur Cisco pour un AO réseau — avant le
+    # re-rank). Le re-rank LLM (project_llm_rerank) fait la précision.
+    project_min_similarity: float = 0.35
+    project_llm_rerank: bool = True
+    # Cache disque des analyses /score (1 fichier JSON par AO, nommé par SHA-256). Désactivé en
+    # prod : chaque AO écrivait un fichier → saturation disque serveur. False = aucune lecture ni
+    # écriture de cache (chaque /score recalcule). Réactivable sans toucher au code.
+    score_cache_enabled: bool = False
+
+    # ── UC10 Présale — leviers latence & offre (ISOLÉS au module présale) ─────────
+    # Logge la durée des grandes étapes (scoring, stratégie, offre) — « Lot 0 » de mesure.
+    presales_perf_log: bool = True
+    # Timeout DUR (secondes) par grand appel LLM présale via asyncio.wait_for. 0 = désactivé
+    # (comportement actuel). >0 = un appel qui traîne est coupé proprement plutôt que de bloquer.
+    presales_llm_timeout_seconds: float = 0.0
+    # Purge LRU des caches disque présale (score / stratégie / offre) : garde les N fichiers
+    # les plus récents. 0 = pas de purge. Rend `score_cache_enabled=True` sûr en prod.
+    presales_cache_max_files: int = 500
+    # Cache disque de la stratégie et des sections d'offre par empreinte (même principe que /score).
+    presales_strategy_cache_enabled: bool = False
+    # Modèle de rédaction des sections d'offre : "haiku" (défaut, rapide) ou "sonnet"
+    # (offre plus qualitative / à fort impact, plus lente). Bascule sans toucher au code.
+    offer_sections_model: str = "haiku"
+    # Pré-statut de conformité IA des exigences au moment de l'export/assess de la matrice.
+    matrix_assess_on_export: bool = True
+
+    # OCR PDF
+    ocr_max_pages: int = 40              # cap pages OCR (perf) — au-delà, WARNING explicite
+    ocr_min_chars_per_page: int = 80     # en-dessous, la couche texte est jugée trop maigre → OCR
+    # Page avec une image significative (certif/diplôme scanné) ET peu de texte → OCR ciblé,
+    # même si la couche texte dépasse ocr_min_chars_per_page (cas du titre « Certifications »
+    # suivi d'une image). Évite de perdre les pages-image noyées dans un document textuel.
+    ocr_image_page_text_max: int = 600   # plafond texte pour déclencher l'OCR d'une page-image
+    ocr_image_area_ratio: float = 0.06   # image couvrant ≥ 6 % de la page = significative
+                                         # (sépare nettement logos ~1 % des scans de certifs ~9 %+)
+
+    # Extraction structurée (couche kb_*) — Phase 1
+    extraction_confidence_threshold: float = 0.6   # sous ce score → revue_humaine=True
+    structured_extract_text_limit: int = 8000       # nb de caractères envoyés au LLM
+
+    # Résolution d'entités (Phase 2)
+    entity_match_auto_threshold: float = 0.90       # ≥ → lien automatique
+    entity_match_review_threshold: float = 0.75      # [review, auto[ → revue humaine
+
+    # Text-to-SQL lecture seule (Phase 3)
+    sql_query_timeout_seconds: float = 8.0           # timeout applicatif d'une requête générée
+
+    # Reranker (P6) — cross-encoder local optionnel après la fusion RRF
+    rerank_enabled: bool = False     # si True, le chat re-classe par défaut
+    rerank_model: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    rerank_candidates: int = 20      # nb de candidats RRF re-scorés par le cross-encoder
 
     # Chat
     max_history_turns: int = 6
@@ -58,6 +137,10 @@ class Settings(BaseSettings):
     # Budget tokens
     token_budget_monthly_fcfa: int = 130_000
     token_alert_threshold_pct: int = 80
+
+    # Quarantaine — auto-suppression des fichiers non indexables (ex. PDF scannés
+    # sans texte) après N jours d'inactivité. 0 = désactivé.
+    quarantine_retention_days: int = 7
 
     # Cache
     redis_url: str = "redis://localhost:6379"

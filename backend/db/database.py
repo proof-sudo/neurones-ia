@@ -36,6 +36,7 @@ AsyncSessionLocal = async_sessionmaker(
 
 
 async def init_db():
+    settings.local_db_path.parent.mkdir(parents=True, exist_ok=True)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
