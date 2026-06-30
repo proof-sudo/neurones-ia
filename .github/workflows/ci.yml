@@ -46,7 +46,8 @@ jobs:
         run: pip install ruff
 
       - name: Run ruff check
-        run: ruff check backend/ --select E,F,W --ignore E501
+        # Config (select/ignore/exclude) pilotée par backend/ruff.toml.
+        run: ruff check backend/
 
   # ─── Tests backend (pytest — tests unitaires) ──────────────────────────────
   test-backend:

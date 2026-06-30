@@ -1,9 +1,7 @@
 import logging
-from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import delete, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.ports.document_registry import DocumentRegistry
 from core.domain.document import GEDEntry, DocumentType
@@ -63,7 +61,7 @@ class SQLiteRegistryAdapter(DocumentRegistry):
 
     async def list_active_entries(self, doc_type: Optional[DocumentType] = None) -> list[GEDEntry]:
         async with AsyncSessionLocal() as session:
-            query = select(GEDEntryModel).where(GEDEntryModel.is_active == True)
+            query = select(GEDEntryModel).where(GEDEntryModel.is_active == True)  # noqa: E712 (idiome SQLAlchemy)
             if doc_type:
                 query = query.where(GEDEntryModel.doc_type == doc_type.value)
             result = await session.execute(query)

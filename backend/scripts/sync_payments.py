@@ -7,8 +7,7 @@ async def main():
     from adapters.crm.odoo_adapter import OdooAdapter
     from db.database import AsyncSessionLocal
     from db.models import InvoiceModel
-    from sqlalchemy import select, update
-    from datetime import datetime
+    from sqlalchemy import select
 
     odoo = OdooAdapter()
 

@@ -783,7 +783,6 @@ def _update_planning_table(doc: DocxDocument, planning_items: list[dict]) -> boo
         # Détecter si c'est une ligne de phase (toutes les cellules ont le même _tc = merged)
         # ou une ligne TOTAL
         first_text = _norm(cells[0].text.strip())
-        last_text = cells[n_cols - 1].text.strip() if n_cols > 1 else ""
 
         # Ligne TOTAL
         if "total" in first_text:
@@ -1628,7 +1627,7 @@ class OfferGenerator:
         # pas de remplir un élément (ancre absente), on laisse l'espace et on insère
         # une consigne : page de garde → bannière en haut ; section/tableau dont
         # l'emplacement est introuvable → annexe de fin (contenu généré reproduit).
-        cover_todos: list[str] = []
+        cover_todos: list[str] = []  # noqa: F841 — TODO: câbler annexe page de garde (feature WIP)
         missing_sections: list[tuple[str, list[str]]] = []
         missing_desc: tuple[list[str], list[dict]] | None = None
         missing_tables: list[tuple[str, list[str]]] = []
@@ -1664,7 +1663,7 @@ class OfferGenerator:
         # puis insère fonctionnalités + modules dans le bon ordre
         _clear_section(doc, H_DESCRIPTION, H_METHODOLOGIE)
         if not _fill_description_section(doc, sections["fonctionnalites"], sections["modules"]):
-            missing_desc = (sections["fonctionnalites"], sections["modules"])
+            missing_desc = (sections["fonctionnalites"], sections["modules"])  # noqa: F841 — TODO: câbler annexe description (feature WIP)
 
         # ── 7. TABLE 0 : composants techniques (UPDATE en place) ──────────────
         if not _update_tech_table(doc, sections["stack_technique"]):

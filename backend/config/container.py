@@ -4,7 +4,6 @@ Câble les ports (interfaces abstraites) aux adapters (implémentations concrèt
 Changer un adapter ici ne nécessite aucune modification dans les use cases.
 """
 import logging
-from pathlib import Path
 
 from config.settings import settings
 

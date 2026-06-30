@@ -11,7 +11,7 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, delete, func
 
-from api.v1.dependencies import CurrentUser, get_current_user
+from api.v1.dependencies import CurrentUser
 from modules.uc02_capital_knowledge.schemas import ChatRequest, ChatResponse, SourceSchema
 from modules.uc02_capital_knowledge.use_case import CapitalKnowledgeUseCase
 from core.services.query_dispatcher import _classify_intent_rules

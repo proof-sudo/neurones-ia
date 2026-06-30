@@ -1,6 +1,5 @@
 from abc import ABC, abstractmethod
 
-from core.domain.document import Source
 
 
 class SparseSearch(ABC):

@@ -3,7 +3,7 @@ Endpoint d'interrogation directe des données Odoo (miroir SQLite).
 Fonctionne SANS clé Anthropic — pure logique Python + SQLite.
 """
 import re
-from fastapi import APIRouter, Request
+from fastapi import APIRouter
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 import json
