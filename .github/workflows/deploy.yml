@@ -125,6 +125,9 @@ jobs:
           envs: IMAGE_TAG,GHCR_USER,GHCR_PAT
           script: |
             set -euo pipefail
+            # Le shell SSH est non-login → PATH minimal qui n'inclut pas forcément docker.
+            # On ajoute les emplacements usuels pour que docker/curl soient trouvés.
+            export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/snap/bin:$PATH"
             cd "${{ secrets.VPS_DEPLOY_PATH }}"
 
             echo "🚀 Déploiement de ${IMAGE_TAG} démarré $(date)"
