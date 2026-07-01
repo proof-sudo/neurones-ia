@@ -1,13 +1,17 @@
 #!/usr/bin/env python
 """Réindexe tous les CV (data/ged/cvs) en force pour appliquer la lecture vision des
 certifications-logos. Backend ARRÊTÉ. Usage : .venv/Scripts/python.exe scripts/reindex_cvs_vision.py"""
-import asyncio, logging, sys
+import asyncio
+import logging
+import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 for s in (sys.stdout, sys.stderr):
-    try: s.reconfigure(encoding="utf-8")
-    except Exception: pass
+    try:
+        s.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 from config.settings import settings  # noqa: E402
 from config.container import Container  # noqa: E402

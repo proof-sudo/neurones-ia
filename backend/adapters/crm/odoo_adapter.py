@@ -390,7 +390,7 @@ class OdooAdapter(CRMRepository):
             })
         return result
 
-    async def get_sale_orders(self, client_id: str = None, year: int | None = None, limit: int = 100, since: datetime | None = None) -> list[dict]:  # noqa: signature matches port
+    async def get_sale_orders(self, client_id: str = None, year: int | None = None, limit: int = 100, since: datetime | None = None) -> list[dict]:  # signature matches port
         domain = [["state", "in", ["sale", "done"]]]
         if client_id:
             domain.append(["partner_id", "=", int(client_id)])
