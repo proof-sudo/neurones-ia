@@ -95,6 +95,124 @@ _DEFAULT_STACKS: dict[str, list[dict]] = {
 }
 
 
+# ── Contexte d'offre & parse tolérant (offre à fort impact) ─────────────────────
+# Fonctions PURES (testables) : enrichissement du prompt + récupération partielle du
+# JSON + garde-fou qualité. But : passer d'un « remplisseur de gabarit » à un conseiller
+# qui propose du contenu spécifique et différenciant, et ne PLUS tout perdre si le JSON
+# casse (on sauve la prose IA récupérable au lieu de retomber en générique total).
+
+_STR_ARRAY_KEYS = ("expression_besoins", "objectifs_reponse", "presentation_reponse", "fonctionnalites")
+
+
+def _offer_user_context(scoring: ScoringResult, client_name: str, domain: str,
+                        delai: str, budget: str) -> str:
+    """Contexte utilisateur ENRICHI pour la génération des sections d'offre.
+
+    Au-delà du résumé + besoins, on fournit la matière pour une offre DIFFÉRENCIANTE :
+    atouts de Neurones, écarts à compenser, risques+mitigations, critères à surcoter,
+    profils attendus, signaux client (Odoo) et références mobilisables. Tout provient du
+    ScoringResult — aucun nouvel appel LLM."""
+    lines = [
+        f"AO : {scoring.ao_filename}",
+        f"Client : {client_name or 'Non précisé'}",
+        f"Domaine : {domain}",
+        f"Délai de livraison : {delai}",
+        f"Budget estimé : {budget}",
+        "",
+        "RÉSUMÉ DE L'AO :",
+        scoring.summary[:900] if scoring.summary else "(non disponible)",
+    ]
+    if scoring.besoins:
+        lines += ["", "BESOINS IDENTIFIÉS :"] + [f"- {b.texte}" for b in scoring.besoins[:12]]
+    if scoring.criteres_selection:
+        lines += ["", "CRITÈRES DE SÉLECTION À SURCOTER (soigner ces angles) :"] + \
+                 [f"- {c.texte}" for c in scoring.criteres_selection[:8]]
+    if scoring.strengths:
+        lines += ["", "ATOUTS DE NEURONES À VALORISER (différenciateurs) :"] + \
+                 [f"+ {s}" for s in scoring.strengths[:6]]
+    if scoring.risks:
+        lines += ["", "RISQUES À ADRESSER DANS L'OFFRE (montrer la maîtrise) :"] + \
+                 [f"- [{r.criticite}] {r.label}" + (f" → {r.mitigation}" if r.mitigation else "")
+                  for r in scoring.risks[:6]]
+    if scoring.gaps_analysis:
+        lines += ["", "ÉCARTS À COMPENSER :", scoring.gaps_analysis[:400]]
+    if scoring.profils_demandes:
+        lines += ["", "PROFILS ATTENDUS :"] + \
+                 [f"- {p.profil}" + (f" ({p.domaine})" if p.domaine else "")
+                  for p in scoring.profils_demandes[:8]]
+    cc = getattr(scoring, "client_context", None)
+    if cc is not None and getattr(cc, "matched", False):
+        sig: list[str] = []
+        if cc.is_existing_client:
+            sig.append("client existant de Neurones")
+        if cc.deployed_technologies:
+            sig.append("technologies déjà déployées chez lui : " + ", ".join(cc.deployed_technologies[:6]))
+        sig += list(cc.relationship_signals[:3])
+        if sig:
+            lines += ["", "CONTEXTE CLIENT (historique Odoo, à exploiter avec tact) :"] + \
+                     [f"· {s}" for s in sig]
+    refs = [d.filename for d in (scoring.similar_projects or [])][:5]
+    if refs:
+        lines += ["", "RÉFÉRENCES MOBILISABLES (projets similaires en GED) :"] + [f"· {r}" for r in refs]
+    lines += [
+        "",
+        "Rédige des sections SPÉCIFIQUES à cet AO et à ce client : cite les vraies technologies, "
+        "valorise les atouts ci-dessus, montre comment les risques sont maîtrisés et propose des "
+        "modules à forte valeur. Bannis tout texte générique passe-partout.",
+    ]
+    return "\n".join(lines)
+
+
+def _salvage_string_array(text: str, key: str) -> list[str]:
+    """Extrait un tableau de chaînes d'un JSON malformé/tronqué (best effort)."""
+    m = re.search(r'"' + re.escape(key) + r'"\s*:\s*\[(.*?)\]', text, re.DOTALL)
+    if not m:
+        return []
+    out: list[str] = []
+    for it in re.findall(r'"((?:[^"\\]|\\.)*)"', m.group(1)):
+        s = it.replace('\\n', '\n').replace('\\"', '"').replace('\\\\', '\\').strip()
+        if s:
+            out.append(s)
+    return out
+
+
+def _salvage_offer_json(text: str) -> dict:
+    """Récupère ce qui est lisible d'un JSON cassé : titre + paragraphes (la prose IA)."""
+    data: dict = {}
+    m = re.search(r'"titre_projet"\s*:\s*"([^"]{3,300})"', text)
+    if m:
+        data["titre_projet"] = m.group(1).strip()
+    for key in _STR_ARRAY_KEYS:
+        arr = _salvage_string_array(text, key)
+        if arr:
+            data[key] = arr
+    return data
+
+
+def _loads_offer_json(raw: str) -> dict:
+    """Parse le JSON des sections, avec RÉCUPÉRATION partielle si malformé/tronqué.
+
+    Au lieu de tout perdre (→ offre 100 % générique), on sauve au moins la prose IA
+    récupérable ; les listes structurées (modules, stack…) retombent sur leurs défauts."""
+    cleaned = _clean_json(raw or "")
+    try:
+        obj = json.loads(cleaned)
+        if isinstance(obj, dict):
+            return obj
+    except Exception:
+        pass
+    return _salvage_offer_json(cleaned)
+
+
+def _offer_quality_warnings(data: dict) -> list[str]:
+    """Liste les sections retombées en repli générique (clés absentes du JSON LLM)."""
+    if not data:
+        return ["JSON LLM totalement illisible — offre en repli générique."]
+    return [f"section '{key}' en repli générique"
+            for key in (("titre_projet",) + _STR_ARRAY_KEYS + ("modules", "stack_technique"))
+            if not data.get(key)]
+
+
 # ── LLM prompt ────────────────────────────────────────────────────────────────
 # Le prompt est construit par `_build_sections_system` : le bloc « planning » varie
 # selon le template (par phase pour les modèles legacy ; par activité pour les
@@ -665,7 +783,6 @@ def _update_planning_table(doc: DocxDocument, planning_items: list[dict]) -> boo
         # Détecter si c'est une ligne de phase (toutes les cellules ont le même _tc = merged)
         # ou une ligne TOTAL
         first_text = _norm(cells[0].text.strip())
-        last_text = cells[n_cols - 1].text.strip() if n_cols > 1 else ""
 
         # Ligne TOTAL
         if "total" in first_text:
@@ -1204,8 +1321,11 @@ def _ensure_header_title(doc: DocxDocument, title: str) -> None:
 
 class OfferGenerator:
 
-    def __init__(self, llm: LLMGateway):
+    def __init__(self, llm: LLMGateway, llm_premium: LLMGateway | None = None):
         self._llm = llm
+        # Modèle « premium » optionnel (Sonnet) pour une offre plus qualitative / à fort
+        # impact ; activé via settings.offer_sections_model == "sonnet". None → toujours Haiku.
+        self._llm_premium = llm_premium
 
     @staticmethod
     def build_filename(scoring: ScoringResult, client_name: str = "") -> str:
@@ -1292,38 +1412,31 @@ class OfferGenerator:
              if any(k in e.category.lower() for k in ("budget", "montant", "coût"))),
             "non précisé",
         )
-        user = (
-            f"AO : {scoring.ao_filename}\n"
-            f"Client : {client_name or 'Non précisé'}\n"
-            f"Domaine : {domain}\n"
-            f"Délai de livraison : {delai}\n"
-            f"Budget estimé : {budget}\n"
-            f"Résumé AO :\n{scoring.summary[:600]}\n\n"
-            f"Besoins identifiés :\n"
-            + "\n".join(f"- {b.texte}" for b in scoring.besoins[:12])
-            + "\n\nRessources demandées :\n"
-            + "\n".join(f"- {r.texte}" for r in scoring.ressources_demandees[:6])
-        )
-        # 6000 (était 3000) : les rubriques de l'offre (besoins + objectifs + présentation +
-        # fonctionnalités + modules + planning) dépassaient 3000 tokens → JSON coupé → toutes
-        # les sections retombaient sur le texte générique. raise_on_truncation pour le SAVOIR.
+        # Contexte ENRICHI : atouts, écarts, risques, critères, profils, signaux client,
+        # références → matière pour une offre spécifique et différenciante (cf. _offer_user_context).
+        user = _offer_user_context(scoring, client_name, domain, delai, budget)
+        # Modèle de rédaction : Sonnet (offre + qualitative / à fort impact) si configuré ET
+        # disponible, sinon Haiku (rapide, défaut). Le budget de sortie suit le modèle.
+        use_premium = bool(self._llm_premium) and settings.offer_sections_model == "sonnet"
+        gen_llm = self._llm_premium if use_premium else self._llm
+        max_out = 8000 if use_premium else 6000
         try:
-            raw = await self._llm.generate(
+            raw = await gen_llm.generate(
                 system=_build_sections_system(planning_activities),
-                user=user, max_tokens=6000, raise_on_truncation=True,
+                user=user, max_tokens=max_out, raise_on_truncation=True,
                 temperature=0.7,  # rédaction de l'offre : créativité conservée
             )
         except OutputTruncatedError as exc:
             logger.error(
-                "Sections d'offre TRONQUÉES au plafond de %d tokens — relever si récurrent.",
+                "Sections d'offre TRONQUÉES au plafond de %d tokens — relève le budget si récurrent.",
                 exc.max_tokens,
             )
-            raw = exc.partial_text  # on tente quand même un parse de récupération
-        try:
-            data = json.loads(_clean_json(raw))
-        except Exception as exc:
-            logger.warning("JSON sections parse failed (%s) — fallback", exc)
-            data = {}
+            raw = exc.partial_text  # parse de RÉCUPÉRATION : on sauve la prose IA récupérable
+        # Parse tolérant : récupération partielle plutôt que tout perdre (→ offre générique).
+        data = _loads_offer_json(raw)
+        warnings = _offer_quality_warnings(data)
+        if warnings:
+            logger.warning("Qualité sections d'offre (%s) — %s", domain, " ; ".join(warnings))
 
         client = client_name or "le client"
         ao_short = scoring.ao_filename.rsplit(".", 1)[0].replace("-", " ").replace("_", " ")
@@ -1514,7 +1627,7 @@ class OfferGenerator:
         # pas de remplir un élément (ancre absente), on laisse l'espace et on insère
         # une consigne : page de garde → bannière en haut ; section/tableau dont
         # l'emplacement est introuvable → annexe de fin (contenu généré reproduit).
-        cover_todos: list[str] = []
+        cover_todos: list[str] = []  # noqa: F841 — TODO: câbler annexe page de garde (feature WIP)
         missing_sections: list[tuple[str, list[str]]] = []
         missing_desc: tuple[list[str], list[dict]] | None = None
         missing_tables: list[tuple[str, list[str]]] = []
@@ -1550,7 +1663,7 @@ class OfferGenerator:
         # puis insère fonctionnalités + modules dans le bon ordre
         _clear_section(doc, H_DESCRIPTION, H_METHODOLOGIE)
         if not _fill_description_section(doc, sections["fonctionnalites"], sections["modules"]):
-            missing_desc = (sections["fonctionnalites"], sections["modules"])
+            missing_desc = (sections["fonctionnalites"], sections["modules"])  # noqa: F841 — TODO: câbler annexe description (feature WIP)
 
         # ── 7. TABLE 0 : composants techniques (UPDATE en place) ──────────────
         if not _update_tech_table(doc, sections["stack_technique"]):

@@ -49,15 +49,27 @@ _RED = "B91C1C"
 _HEADERS = [
     ("Réf.", 10),
     ("Type", 12),
-    ("Exigence", 70),
-    ("Source AO", 16),
-    ("Domaine(s) suggéré(s)", 24),
-    ("Domaine validé", 18),
-    ("Section réponse", 20),
-    ("Statut", 22),
-    ("Bloquant", 10),
-    ("Commentaire", 30),
+    ("Exigence", 58),
+    ("Source AO", 14),
+    ("Domaine(s) suggéré(s)", 22),
+    ("Domaine validé", 16),
+    ("Statut suggéré (IA)", 18),
+    ("Justification IA", 40),
+    ("Conf.", 8),
+    ("Statut validé (humain)", 20),
+    ("Confirmé par", 18),
+    ("Bloquant", 9),
+    ("Commentaire", 26),
 ]
+
+# Couleur du statut suggéré IA (repère visuel — le code interne reste le vocabulaire contrôlé).
+_STATUT_FILL = {
+    STATUT_CONFORME: "DCFCE7",
+    STATUT_CONFORME_PARTIEL: "FEF9C3",
+    STATUT_NON_CONFORME: "FEE2E2",
+    STATUT_NON_APPLICABLE: "F1F5F9",
+    STATUT_A_TRAITER: "FFFFFF",
+}
 
 _THIN = Side(style="thin", color="D0D7E2")
 _BORDER = Border(left=_THIN, right=_THIN, top=_THIN, bottom=_THIN)
@@ -100,10 +112,13 @@ def _build_matrix_sheet(ws, matrice: MatriceConformite) -> None:
             ex.source_ref or "—",
             ", ".join(ex.domaines_suggeres) or DOMAINE_NON_CLASSE,
             ex.domaine_valide,
-            ex.section_reponse,
-            _statut_label(ex.statut_conformite),
-            "OUI" if ex.blocking else "",
-            ex.commentaire,
+            _statut_label(ex.statut_suggere),                              # 7 — proposition IA
+            ex.justification_ia,                                           # 8 — pourquoi (traçable)
+            f"{int(ex.confiance_ia * 100)}%" if ex.confiance_ia else "",  # 9 — confiance IA
+            _statut_label(ex.statut_conformite) if ex.confirme else "",    # 10 — validé humain (vide tant que non coché)
+            ex.confirme_par,                                               # 11 — qui a confirmé
+            "OUI" if ex.blocking else "",                                  # 12 — éliminatoire
+            ex.commentaire,                                                # 13
         ]
         zebra = "FFFFFF" if i % 2 == 0 else "F8FAFC"
         for col, val in enumerate(values, start=1):
@@ -111,13 +126,15 @@ def _build_matrix_sheet(ws, matrice: MatriceConformite) -> None:
             cell.border = _BORDER
             cell.alignment = Alignment(
                 vertical="top",
-                wrap_text=col in (3, 5, 7, 10),         # exigence, domaines, section, commentaire
-                horizontal="center" if col in (1, 2, 9) else "left",
+                wrap_text=col in (3, 5, 8, 13),         # exigence, domaines, justification, commentaire
+                horizontal="center" if col in (1, 2, 9, 12) else "left",
             )
             cell.fill = PatternFill("solid", fgColor=zebra)
             if col == 3:
                 cell.font = Font(size=10)
-            if col == 9 and ex.blocking:                # bloquant en rouge gras
+            if col == 7:                                # statut suggéré IA — coloré selon le verdict
+                cell.fill = PatternFill("solid", fgColor=_STATUT_FILL.get(ex.statut_suggere, "FFFFFF"))
+            if col == 12 and ex.blocking:               # bloquant en rouge gras
                 cell.font = Font(bold=True, color=_RED)
                 cell.fill = PatternFill("solid", fgColor="FEE2E2")
 
@@ -126,7 +143,8 @@ def _build_matrix_sheet(ws, matrice: MatriceConformite) -> None:
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = f"A1:{get_column_letter(len(_HEADERS))}{max(last_row, 1)}"
 
-    # Listes déroulantes pour la validation humaine (sur la plage de données).
+    # Listes déroulantes pour la validation humaine (sur la plage de données) : Domaine validé
+    # (col F) et Statut VALIDÉ par l'humain (col J — le cochage de confirmation se fait ici).
     if n:
         rng = f"{last_row}"
         dv_dom = DataValidation(
@@ -142,7 +160,7 @@ def _build_matrix_sheet(ws, matrice: MatriceConformite) -> None:
         ws.add_data_validation(dv_dom)
         ws.add_data_validation(dv_statut)
         dv_dom.add(f"F2:F{rng}")        # Domaine validé
-        dv_statut.add(f"H2:H{rng}")     # Statut
+        dv_statut.add(f"J2:J{rng}")     # Statut validé (humain)
 
 
 def _build_summary_sheet(ws, matrice: MatriceConformite) -> None:
@@ -186,6 +204,11 @@ def _build_summary_sheet(ws, matrice: MatriceConformite) -> None:
             ws.cell(row=row, column=2, value=val)
             row += 1
 
+    suggere_counts: dict[str, int] = {}
+    for ex in matrice.exigences:
+        suggere_counts[ex.statut_suggere] = suggere_counts.get(ex.statut_suggere, 0) + 1
+
     _table("Par domaine", matrice.count_by_domaine())
-    _table("Par statut", matrice.count_by_statut(), _STATUT_LABELS)
+    _table("Par statut suggéré (IA)", suggere_counts, _STATUT_LABELS)
+    _table("Par statut validé (humain)", matrice.count_by_statut(), _STATUT_LABELS)
     _table("Par type", matrice.count_by_type(), _TYPE_LABELS)

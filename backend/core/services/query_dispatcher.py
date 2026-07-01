@@ -1,8 +1,6 @@
-import asyncio
 import logging
 import re
 from datetime import datetime
-from typing import Optional
 
 from core.ports.llm_gateway import LLMGateway
 from core.ports.crm_repository import CRMRepository

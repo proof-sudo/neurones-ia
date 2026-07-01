@@ -1,7 +1,6 @@
 import json
 import logging
 from datetime import datetime
-from pathlib import Path
 
 from adapters.crm.odoo_adapter import OdooAdapter
 from db.database import AsyncSessionLocal

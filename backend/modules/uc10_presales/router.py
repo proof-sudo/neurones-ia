@@ -14,10 +14,9 @@ from fastapi import APIRouter, Request, UploadFile, File, HTTPException
 from fastapi.responses import Response
 
 from modules.uc10_presales.schemas import (
-    ScoringResultSchema, OfferGenerationRequest, OfferGenerationResponse,
-    KeyElementSchema, MatchedDocumentSchema, BidRecommendationSchema,
+    ScoringResultSchema, OfferGenerationRequest, KeyElementSchema, MatchedDocumentSchema, BidRecommendationSchema,
     BidStrategyRequest, BidStrategySchema, AnalysisExportRequest,
-    StrategyExportRequest, ChecklistExportRequest,
+    StrategyExportRequest, ChecklistExportRequest, MatrixConfirmRequest,
     TeamMatchRequest, TeamMatchResponse,
     MarketIdentitySchema, CalendarEventSchema, EvaluationModalitiesSchema,
     ScoringCriterionSchema, RiskSchema, PreconditionSchema, AppendixSchema,
@@ -34,6 +33,14 @@ from modules.uc10_presales.template_validator import (
 )
 from modules.uc10_presales.template_contract import DEFAULT_DOMAIN
 from core.domain.offer import ScoringResult, BidStrategy, Partner, Appendix
+# Matrice de conformité : build_matrice / render_matrix_xlsx étaient UTILISÉS sans être
+# importés (NameError latent sur /export-matrix) → import explicite. + assesseur IA,
+# store de persistance (clôture C5) et utilitaires de latence.
+from modules.uc10_presales.requirements_builder import build_matrice
+from modules.uc10_presales.matrix_export import render_matrix_xlsx
+from modules.uc10_presales.conformity import assess_matrice
+from modules.uc10_presales import matrix_store
+from modules.uc10_presales.latency import prune_cache_dir, content_key
 
 # Checklist générique inférée (CI / marchés publics) — utilisée quand l'AO ne liste
 # aucune pièce explicite. Affichée avec un avertissement « inférée ».
@@ -90,6 +97,8 @@ def _get_use_case(request: Request) -> PresalesUseCase:
 # n'est pas déterministe, même à température 0 : c'est la seule garantie de reproductibilité).
 # `force=true` recalcule et écrase l'entrée. Content-addressé → pas de TTL nécessaire.
 _SCORE_CACHE_DIR = Path(settings.uploads_path).parent / "score_cache"
+# Cache optionnel des sections d'offre (clé = empreinte scoring + client + modèle).
+_OFFER_CACHE_DIR = Path(settings.uploads_path).parent / "offer_sections_cache"
 
 
 def _score_cache_path(file_bytes: bytes) -> Path:
@@ -142,6 +151,7 @@ async def score_ao(
         try:
             _SCORE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
             cache_path.write_text(json.dumps(schema.model_dump(mode="json"), ensure_ascii=False), encoding="utf-8")
+            prune_cache_dir(_SCORE_CACHE_DIR, settings.presales_cache_max_files)  # purge LRU bornée
         except OSError as exc:
             logger.debug("Écriture cache score échouée (%s) — non bloquant", exc)
     return schema
@@ -168,6 +178,19 @@ async def generate_offer(body: OfferGenerationRequest, request: Request):
 @router.post("/offer/sections", response_model=OfferSectionsResponse)
 async def offer_sections(body: OfferGenerationRequest, request: Request):
     """Étape 1 : génère (IA) les sections éditables de l'offre, sans produire le .docx."""
+    # Cache disque optionnel (presales_strategy_cache_enabled) : même AO + client + modèle →
+    # mêmes sections sans nouvel appel LLM (la génération est non déterministe à T=0.7).
+    cache_path = None
+    if settings.presales_strategy_cache_enabled:
+        key = content_key(body.scoring_result.model_dump_json(), body.client_name or "",
+                          settings.offer_sections_model)
+        cache_path = _OFFER_CACHE_DIR / f"{key}.json"
+        if cache_path.exists():
+            try:
+                return OfferSectionsResponse(**json.loads(cache_path.read_text(encoding="utf-8")))
+            except Exception as exc:
+                logger.warning("Cache sections illisible (%s) — régénération", exc)
+
     use_case = _get_use_case(request)
     scoring = _from_schema(body.scoring_result)
     try:
@@ -175,12 +198,20 @@ async def offer_sections(body: OfferGenerationRequest, request: Request):
     except Exception as e:
         logger.exception("Génération des sections d'offre échouée")
         raise HTTPException(status_code=500, detail=f"{type(e).__name__}: {e}")
-    return OfferSectionsResponse(
+    resp = OfferSectionsResponse(
         sections=OfferSectionsSchema(**sections),
         domain=domain,
         client_name=client,
         filename=OfferGenerator.build_filename(scoring, client),
     )
+    if cache_path is not None:
+        try:
+            _OFFER_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(resp.model_dump_json(), encoding="utf-8")
+            prune_cache_dir(_OFFER_CACHE_DIR, settings.presales_cache_max_files)
+        except OSError as exc:
+            logger.debug("Écriture cache sections échouée (%s) — non bloquant", exc)
+    return resp
 
 
 @router.post("/offer/render")
@@ -484,7 +515,7 @@ async def export_analysis(body: AnalysisExportRequest, request: Request):
     client_name = body.client_name or "Non précisé"
     doc = DocxDocument()
     h = _docx_helpers(doc)
-    Pt = h["Pt"]; RGBColor = h["RGBColor"]; Cm = h["Cm"]
+    Pt = h["Pt"]; Cm = h["Cm"]
     WD = h["WD_ALIGN_PARAGRAPH"]
 
     # ── PAGE DE COUVERTURE ────────────────────────────────────────────────────
@@ -801,6 +832,15 @@ async def export_matrix(body: AnalysisExportRequest, request: Request):
     avec leur référence source. Aucun appel LLM — pur calcul déterministe."""
     scoring = _from_schema(body.scoring_result)
     matrice = build_matrice(scoring, generated_at=datetime.now().isoformat(timespec="seconds"))
+    if settings.matrix_assess_on_export:
+        # Pré-statut de conformité IA (déterministe, sans appel LLM) + persistance (clôture C5)
+        # → l'Excel exporté et la checklist UI partagent la même matrice assessée.
+        assess_matrice(matrice, scoring)
+        try:
+            matrix_store.save(matrice)
+            prune_cache_dir(matrix_store.default_base(), settings.presales_cache_max_files)
+        except OSError as exc:
+            logger.debug("Persistance matrice échouée (%s) — non bloquant", exc)
     logger.info(
         "Export matrice — %s : %d exigences (exhaustif=%s)",
         scoring.ao_filename, matrice.total, matrice.is_exhaustive,
@@ -817,6 +857,56 @@ async def export_matrix(body: AnalysisExportRequest, request: Request):
     )
 
 
+# ── Checklist de conformité validée par l'IA + contrôle humain par cochage ────────
+@router.post("/matrix/assess")
+async def matrix_assess(body: AnalysisExportRequest, request: Request):
+    """Construit la matrice de conformité, PRÉ-STATUE chaque exigence (IA, déterministe,
+    sans appel LLM : dérivé du scoring) et persiste le tout. Renvoie la matrice (dict)
+    que la checklist UI affichera, ligne par ligne, pour cochage humain de confirmation."""
+    scoring = _from_schema(body.scoring_result)
+    matrice = build_matrice(scoring, generated_at=datetime.now().isoformat(timespec="seconds"))
+    assess_matrice(matrice, scoring)
+    try:
+        matrix_store.save(matrice)
+        prune_cache_dir(matrix_store.default_base(), settings.presales_cache_max_files)
+    except OSError as exc:
+        logger.warning("Persistance matrice échouée (%s) — non bloquant", exc)
+    logger.info("Matrice assessée — %s : %d exigences", scoring.ao_filename, matrice.total)
+    return matrice.to_dict()
+
+
+@router.get("/matrix")
+async def matrix_get(ao_filename: str):
+    """Recharge la matrice persistée (incluant les validations humaines déjà saisies)
+    d'un AO. 404 si aucune matrice n'a encore été assessée pour cet AO."""
+    matrice = matrix_store.load(ao_filename)
+    if matrice is None:
+        raise HTTPException(status_code=404, detail="Aucune matrice persistée — lancez d'abord /matrix/assess.")
+    return matrice.to_dict()
+
+
+@router.post("/matrix/confirm")
+async def matrix_confirm(body: MatrixConfirmRequest):
+    """Applique les COCHAGES humains de confirmation (statut validé, domaine, commentaire)
+    et re-persiste. Chaque exigence cochée est figée : confirmé par / le. C'est le contrôle
+    humain qui atteste que les éléments validés sont effectivement réunis."""
+    matrice = matrix_store.confirm(
+        body.ao_filename,
+        [c.model_dump() for c in body.confirmations],
+        confirme_par=body.confirme_par,
+        now_iso=datetime.now().isoformat(timespec="seconds"),
+    )
+    if matrice is None:
+        raise HTTPException(status_code=404, detail="Aucune matrice à confirmer — lancez d'abord /matrix/assess.")
+    return {
+        "ao_filename": matrice.ao_filename,
+        "total": matrice.total,
+        "confirmes": sum(1 for e in matrice.exigences if e.confirme),
+        "par_statut_valide": matrice.count_by_statut(),
+        "exigences": matrice.to_dict()["exigences"],
+    }
+
+
 @router.post("/export-scoring")
 async def export_scoring(body: AnalysisExportRequest, request: Request):
     """Exporte le scoring & positionnement (Step 2) : score, forces, risques, écarts, docs GED."""
@@ -826,7 +916,7 @@ async def export_scoring(body: AnalysisExportRequest, request: Request):
     client_name = body.client_name or "Non précisé"
     doc = DocxDocument()
     h = _docx_helpers(doc)
-    Pt = h["Pt"]; RGBColor = h["RGBColor"]; Cm = h["Cm"]
+    Pt = h["Pt"]; Cm = h["Cm"]
     WD = h["WD_ALIGN_PARAGRAPH"]
 
     score_color = h["C_GREEN"] if scoring.score >= 70 else (h["C_AMBER"] if scoring.score >= 40 else h["C_RED"])
@@ -1079,10 +1169,9 @@ async def export_strategy(body: StrategyExportRequest):
 
     doc = DocxDocument()
     h = _docx_helpers(doc)
-    Pt = h["Pt"]; RGBColor = h["RGBColor"]; Cm = h["Cm"]
+    Pt = h["Pt"]; Cm = h["Cm"]
     WD = h["WD_ALIGN_PARAGRAPH"]
 
-    score_color = h["C_GREEN"] if scoring.score >= 70 else (h["C_AMBER"] if scoring.score >= 40 else h["C_RED"])
     rec_map = {
         "GO": ("GO — Répondre à l'AO", h["C_GREEN"]),
         "CONDITIONAL": ("CONDITIONNEL — Sous réserve", h["C_AMBER"]),

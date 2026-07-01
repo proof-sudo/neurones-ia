@@ -19,14 +19,14 @@ logger = logging.getLogger(__name__)
 
 _FITZ_AVAILABLE = False
 try:
-    import fitz  # PyMuPDF
+    import fitz  # PyMuPDF  # noqa: F401 (probe de disponibilité)
     _FITZ_AVAILABLE = True
 except ImportError:
     pass
 
 _PYMUPDF4LLM_AVAILABLE = False
 try:
-    import pymupdf4llm  # PDF → Markdown (titres, tableaux, listes) ; s'appuie sur PyMuPDF
+    import pymupdf4llm  # PDF → Markdown (titres, tableaux, listes) ; s'appuie sur PyMuPDF  # noqa: F401
     _PYMUPDF4LLM_AVAILABLE = True
 except ImportError:
     pass
@@ -39,7 +39,7 @@ _TESSERACT_AVAILABLE = False
 _OCR_LANGS = "eng"
 try:
     import pytesseract
-    from PIL import Image
+    from PIL import Image  # noqa: F401 (probe de disponibilité)
 
     # Sur Windows, pointer vers le chemin par défaut si pas configuré
     if platform.system() == "Windows":

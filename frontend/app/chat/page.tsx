@@ -603,7 +603,7 @@ export default function ChatPage() {
             const updated = [...prev];
             updated[updated.length - 1] = {
               role: "assistant",
-              content: "Le backend n'est pas disponible. Lancez `uvicorn main:app --reload` dans le dossier `backend/`.",
+              content: "Le service IA est temporairement indisponible. Veuillez réessayer dans quelques instants.",
               streaming: false,
               thinking: false,
               error: true,

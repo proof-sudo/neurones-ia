@@ -1,6 +1,5 @@
 import asyncio
 import hashlib
-import json
 import logging
 import uuid
 from datetime import datetime
@@ -11,7 +10,7 @@ from core.ports.sparse_search import SparseSearch
 from core.ports.embedder import Embedder
 from core.ports.document_registry import DocumentRegistry
 from core.ports.document_parser import DocumentParser
-from core.domain.document import Chunk, Document, GEDEntry, DocumentType, DocumentMetadata
+from core.domain.document import GEDEntry, DocumentType, DocumentMetadata
 from core.services.chunking.router import ChunkingRouter
 from core.services.metadata_extractor import MetadataExtractor
 from core.services.quality_validator import QualityValidator

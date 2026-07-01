@@ -2,7 +2,6 @@ import asyncio
 import logging
 from typing import Optional
 
-from config.settings import settings
 from core.ports.vector_store import VectorStore
 from core.ports.sparse_search import SparseSearch
 from core.ports.embedder import Embedder

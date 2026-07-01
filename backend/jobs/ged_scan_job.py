@@ -1,7 +1,6 @@
 import logging
 
 from adapters.storage.local_ged_adapter import LocalGEDAdapter, _TYPE_MAP
-from core.domain.document import DocumentType
 from core.services.ged_indexer import GEDIndexer
 
 logger = logging.getLogger(__name__)

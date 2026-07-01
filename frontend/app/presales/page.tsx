@@ -12,7 +12,8 @@ import { cn } from "@/lib/utils";
 import {
   scoreAO, generateBidStrategy, exportAnalysis, exportScoring, exportStrategy,
   exportMatrix, exportChecklist, validateTemplate, buildOfferSections, renderOffer,
-  fetchGEDFiles, uploadGEDFile, itemText, type GEDFile, type ExtractedItem,
+  fetchGEDFiles, uploadGEDFile, itemText, assessMatrix, confirmMatrix,
+  type GEDFile, type ExtractedItem, type ConformityExigence,
   type ScoringResult, type BidStrategy, type TemplateValidation, type OfferSections,
   type MarketIdentity, type CalendarEvent, type EvaluationModalities,
   type ScoringCriterion, type Risk, type Precondition,
@@ -2072,6 +2073,173 @@ function Step5({ ao, onValidate, triggerDownload, onOfferReady }: {
   );
 }
 
+// ── Conformité : checklist validée par l'IA + contrôle humain par cochage ────────
+
+const _STATUT_LABEL: Record<string, string> = {
+  CONFORME: "Conforme", CONFORME_PARTIEL: "Partiel", NON_CONFORME: "Non conforme",
+  NON_APPLICABLE: "N/A", A_TRAITER: "À évaluer",
+};
+const _STATUT_STYLE: Record<string, string> = {
+  CONFORME: "bg-green-50 text-green-700 border-green-200",
+  CONFORME_PARTIEL: "bg-amber-50 text-amber-700 border-amber-200",
+  NON_CONFORME: "bg-red-50 text-red-700 border-red-200",
+  NON_APPLICABLE: "bg-slate-50 text-slate-500 border-slate-200",
+  A_TRAITER: "bg-slate-50 text-slate-500 border-slate-200",
+};
+const _STATUT_OPTIONS = ["CONFORME", "CONFORME_PARTIEL", "NON_CONFORME", "NON_APPLICABLE"];
+
+function ConformityPanel({ ao }: { ao: AOEntry }) {
+  const [items, setItems] = useState<ConformityExigence[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [confirmed, setConfirmed] = useState<Set<string>>(new Set());
+  const [statuts, setStatuts] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState("");
+
+  const aoName = ao.scoringResult?.ao_filename ?? ao.filename;
+
+  async function runAssess() {
+    if (!ao.scoringResult) return;
+    setLoading(true); setError(""); setSavedMsg("");
+    try {
+      const m = await assessMatrix(ao.scoringResult, ao.clientName);
+      setItems(m.exigences);
+      const conf = new Set<string>();
+      const st: Record<string, string> = {};
+      for (const ex of m.exigences) {
+        if (ex.confirme) conf.add(ex.id);
+        st[ex.id] = ex.confirme && ex.statut_conformite !== "A_TRAITER" ? ex.statut_conformite : ex.statut_suggere;
+      }
+      setConfirmed(conf); setStatuts(st);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Échec de l'analyse de conformité.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function toggleConfirm(id: string) {
+    setConfirmed(prev => {
+      const s = new Set(prev);
+      if (s.has(id)) s.delete(id); else s.add(id);
+      return s;
+    });
+  }
+  function setStatut(id: string, v: string) { setStatuts(prev => ({ ...prev, [id]: v })); }
+
+  async function saveConfirmations() {
+    if (!items) return;
+    setSaving(true); setError(""); setSavedMsg("");
+    try {
+      const confirmations = items.map(ex => ({
+        id: ex.id,
+        confirme: confirmed.has(ex.id),
+        statut_confirme: confirmed.has(ex.id) ? (statuts[ex.id] ?? ex.statut_suggere) : undefined,
+      }));
+      const res = await confirmMatrix(aoName, confirmations);
+      setItems(res.exigences);
+      setSavedMsg(`${res.confirmes}/${res.total} exigence(s) confirmée(s) et enregistrée(s).`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Échec de l'enregistrement des confirmations.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!ao.scoringResult) return null;
+
+  const total = items?.length ?? 0;
+  const nbConfirmed = items ? items.filter(ex => confirmed.has(ex.id)).length : 0;
+
+  return (
+    <SectionCard title="Conformité — validée par l'IA, confirmée par cochage" icon={<FileCheck size={15} />}>
+      {!items ? (
+        <div className="space-y-3">
+          <p className="text-xs text-slate-500">
+            L'IA pré-statue chaque exigence de l'AO (conforme / partiel / non conforme) à partir de
+            l'analyse du scoring. Vous confirmez ensuite, par cochage, que chaque élément validé est
+            effectivement réuni.
+          </p>
+          <button
+            onClick={runAssess}
+            disabled={loading}
+            className="flex items-center gap-2 px-4 py-2 bg-[#0a2a43] hover:brightness-110 text-white rounded-xl text-sm font-medium disabled:opacity-50 transition-colors"
+          >
+            {loading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
+            Analyser la conformité (IA)
+          </button>
+          {error && <p className="text-xs text-red-600">{error}</p>}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-slate-600">{nbConfirmed}/{total} confirmée(s)</span>
+            <button onClick={runAssess} disabled={loading} className="text-xs text-slate-400 hover:text-[#0a2a43]">
+              {loading ? "…" : "Recalculer"}
+            </button>
+          </div>
+          <div className="space-y-1.5 max-h-[28rem] overflow-y-auto pr-1">
+            {items.map(ex => (
+              <div key={ex.id} className="border border-slate-200 rounded-lg p-2.5">
+                <div className="flex items-start gap-2.5">
+                  <input
+                    type="checkbox"
+                    checked={confirmed.has(ex.id)}
+                    onChange={() => toggleConfirm(ex.id)}
+                    className="mt-0.5 w-4 h-4 rounded border-slate-300 text-[#0a2a43] cursor-pointer shrink-0 accent-[#0a2a43]"
+                    title="Confirmer que cette exigence est réunie"
+                  />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded border", _STATUT_STYLE[ex.statut_suggere] ?? _STATUT_STYLE.A_TRAITER)}>
+                        IA : {_STATUT_LABEL[ex.statut_suggere] ?? ex.statut_suggere}
+                      </span>
+                      {ex.blocking && (
+                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-red-50 text-red-600 border-red-200">éliminatoire</span>
+                      )}
+                      {ex.confiance_ia > 0 && (
+                        <span className="text-[10px] text-slate-400">conf. {Math.round(ex.confiance_ia * 100)}%</span>
+                      )}
+                    </div>
+                    <p className="text-xs text-slate-700 mt-1 leading-relaxed">{ex.texte}</p>
+                    {ex.justification_ia && (
+                      <p className="text-[11px] text-slate-400 italic mt-0.5">{ex.justification_ia}</p>
+                    )}
+                  </div>
+                  {confirmed.has(ex.id) && (
+                    <select
+                      value={statuts[ex.id] ?? ex.statut_suggere}
+                      onChange={e => setStatut(ex.id, e.target.value)}
+                      className="text-[11px] border border-slate-200 rounded-lg px-1.5 py-1 bg-white shrink-0"
+                    >
+                      {_STATUT_OPTIONS.map(s => <option key={s} value={s}>{_STATUT_LABEL[s]}</option>)}
+                    </select>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            {savedMsg
+              ? <span className="text-xs text-green-600 font-medium">{savedMsg}</span>
+              : <span className="text-xs text-slate-400">Cochez les exigences réunies, ajustez le statut, puis enregistrez.</span>}
+            <button
+              onClick={saveConfirmations}
+              disabled={saving}
+              className="flex items-center gap-2 px-4 py-2 bg-[#f26a21] hover:brightness-95 text-white rounded-xl text-sm font-medium disabled:opacity-50 transition-colors shrink-0"
+            >
+              {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+              Enregistrer les confirmations
+            </button>
+          </div>
+          {error && <p className="text-xs text-red-600">{error}</p>}
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
 // ── Step 6 — Checklist dossier ────────────────────────────────────────────────
 
 function Step6({ ao, onToggle, onNoteChange, onAddItem, onDeleteItem, onExport, exporting, onValidate }: {
@@ -2104,6 +2272,8 @@ function Step6({ ao, onToggle, onNoteChange, onAddItem, onDeleteItem, onExport, 
 
   return (
     <div className="space-y-4">
+      {/* Conformité validée par l'IA + cochage humain (contrôle de complétude) */}
+      <ConformityPanel ao={ao} />
       {/* Progress */}
       <div className="bg-white border border-slate-200 rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
@@ -2748,10 +2918,10 @@ export default function PresalesPage() {
                 className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 transition-colors">
                 <List size={13} /> Workflow
               </button>
-              <button onClick={() => setPageView("kanban")}
+              {/* <button onClick={() => setPageView("kanban")}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-slate-800 text-white">
                 <LayoutGrid size={13} /> Pipeline
-              </button>
+              </button> */}
             </div>
           </div>
         </div>
@@ -2834,10 +3004,10 @@ export default function PresalesPage() {
                 className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium bg-slate-800 text-white">
                 <List size={11} /> Workflow
               </button>
-              <button onClick={() => setPageView("kanban")}
+              {/* <button onClick={() => setPageView("kanban")}
                 className="flex items-center gap-1 px-2 py-1 text-[11px] font-medium text-slate-500 hover:bg-slate-50 transition-colors">
                 <LayoutGrid size={11} /> Pipeline
-              </button>
+              </button> */}
             </div>
           </div>
           {statsAos.total > 0 && (

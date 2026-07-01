@@ -1,0 +1,66 @@
+# ============================================================================
+#  docker-compose.local.yml — DÉVELOPPEMENT LOCAL UNIQUEMENT
+#
+#  Lancer :   docker compose -f docker-compose.local.yml up --build
+#  Arrêter :  docker compose -f docker-compose.local.yml down
+#
+#  Différences avec le docker-compose.yml de prod (VPS), qu'il ne touche pas :
+#   - PAS d'ollama (fallback LLM désactivé → chaîne Claude → GPT suffit en dev).
+#   - PAS de reverse proxy nginx → le frontend tape le backend en direct sous /v1.
+#   - Volumes Docker NOMMÉS (portables Windows/Mac/Linux) au lieu des binds
+#     absolus /opt/neurones-ia/... propres au VPS.
+#   - Images construites en LOCAL (build:) — aucun accès à GHCR requis.
+#   - Ports publiés sur toutes les interfaces (pas 127.0.0.1) pour un accès direct.
+#
+#  Prérequis : un fichier backend/.env contenant au minimum ANTHROPIC_API_KEY
+#  (et OPENAI_API_KEY si tu veux tester le fallback). Sans clé, l'app démarre
+#  mais les appels LLM échouent.
+# ============================================================================
+
+services:
+  # ─── Backend FastAPI ───────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: neurones-ia-backend-local
+    env_file:
+      - ./backend/.env          # réutilise tes clés locales (ANTHROPIC_API_KEY, etc.)
+    environment:
+      # Ces valeurs priment sur celles de .env (precedence compose).
+      - OLLAMA_ENABLED=false     # pas d'ollama en local → fallback Claude → GPT
+      - APP_ENV=development       # active /docs
+      - ALLOWED_ORIGINS=http://localhost:3000
+      # Chemins data alignés sur le volume monté ci-dessous (cohérence garantie).
+      - GED_PATH=/app/data/ged
+      - TEMPLATES_PATH=/app/data/templates
+      - UPLOADS_PATH=/app/data/uploads
+      - CHROMADB_PATH=/app/data/chromadb
+      - BM25_INDEX_PATH=/app/data/bm25_index
+      - LOCAL_DB_PATH=/app/data/local_db/neurones.db
+    ports:
+      - "8000:8000"
+    volumes:
+      - neurones_local_data:/app/data
+
+  # ─── Frontend Next.js ────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        # En local il n'y a PAS de nginx pour réécrire /api → / : le frontend
+        # appelle donc directement le backend sous /v1 (cf. frontend/lib/api.ts).
+        # NEXT_PUBLIC_* est figé au BUILD → relancer avec --build si tu le changes.
+        NEXT_PUBLIC_API_URL: http://localhost:8000/v1
+    container_name: neurones-ia-frontend-local
+    environment:
+      - PORT=3000
+      - HOSTNAME=0.0.0.0
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+
+volumes:
+  neurones_local_data:

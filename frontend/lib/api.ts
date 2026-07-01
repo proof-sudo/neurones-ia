@@ -379,6 +379,75 @@ export async function scoreAO(file: File, force = false): Promise<ScoringResult>
   return response.json() as Promise<ScoringResult>;
 }
 
+// ── Matrice de conformité : validée par l'IA + cochage humain ───────────────────
+
+export interface ConformityExigence {
+  id: string;
+  texte: string;
+  type: string;
+  source_ref: string;
+  origine: string;
+  domaines_suggeres: string[];
+  domaine_valide: string;
+  confidence: number;
+  section_reponse: string;
+  statut_conformite: string;     // statut VALIDÉ par l'humain (A_TRAITER tant que non coché)
+  blocking: boolean;
+  commentaire: string;
+  statut_suggere: string;        // proposition IA
+  justification_ia: string;
+  confiance_ia: number;
+  preuve_ref: string;
+  confirme: boolean;
+  confirme_par: string;
+  confirme_le: string;
+}
+
+export interface ConformityMatrix {
+  ao_filename: string;
+  exigences: ConformityExigence[];
+  generated_at: string;
+  expected_total: number | null;
+}
+
+export interface MatrixConfirmation {
+  id: string;
+  statut_confirme?: string;
+  domaine_valide?: string;
+  commentaire?: string;
+  confirme?: boolean;
+}
+
+/** Construit la matrice + pré-statut IA (déterministe) et la persiste. */
+export async function assessMatrix(scoring: ScoringResult, clientName = ""): Promise<ConformityMatrix> {
+  const r = await apiFetch(`${API_BASE}/presales/matrix/assess`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ scoring_result: scoring, client_name: clientName }),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({})) as { detail?: string };
+    throw new Error(e.detail ?? `Erreur analyse conformité (${r.status})`);
+  }
+  return r.json() as Promise<ConformityMatrix>;
+}
+
+/** Applique les cochages humains de confirmation et re-persiste. */
+export async function confirmMatrix(
+  aoFilename: string, confirmations: MatrixConfirmation[], confirmePar = "",
+): Promise<{ ao_filename: string; total: number; confirmes: number; par_statut_valide: Record<string, number>; exigences: ConformityExigence[] }> {
+  const r = await apiFetch(`${API_BASE}/presales/matrix/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ao_filename: aoFilename, confirme_par: confirmePar, confirmations }),
+  });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({})) as { detail?: string };
+    throw new Error(e.detail ?? `Erreur confirmation conformité (${r.status})`);
+  }
+  return r.json();
+}
+
 // ── GED ───────────────────────────────────────────────────────────────────────
 
 export interface GEDCategory {

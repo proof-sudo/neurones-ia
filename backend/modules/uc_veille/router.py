@@ -100,7 +100,7 @@ async def _run_scan(container=None):
     """Scanne toutes les sources actives et insère les nouvelles entrées."""
     async with AsyncSessionLocal() as session:
         sources_result = await session.execute(
-            select(VeilleSourceModel).where(VeilleSourceModel.active == True)
+            select(VeilleSourceModel).where(VeilleSourceModel.active == True)  # noqa: E712 (idiome SQLAlchemy)
         )
         sources = sources_result.scalars().all()
 

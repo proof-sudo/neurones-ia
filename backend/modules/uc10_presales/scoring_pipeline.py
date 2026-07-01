@@ -29,7 +29,7 @@ from core.domain.offer import (
     EligibilityThreshold,
     FinancialData,
 )
-from core.domain.document import DocumentType, Source
+from core.domain.document import Source
 
 logger = logging.getLogger(__name__)
 

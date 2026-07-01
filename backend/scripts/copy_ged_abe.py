@@ -4,7 +4,6 @@ Usage : python scripts/copy_ged_abe.py
 Doit tourner depuis D:/Neurones-IA/backend
 """
 
-import os
 import sys
 import shutil
 import requests
@@ -116,7 +115,6 @@ def main():
     for src_rel, dst_rel in MAPPINGS:
         src_path = SOURCE_ROOT / src_rel
         present = src_path.exists()
-        label = dst_rel
         print(f"\n[{'OK' if present else 'ABSENT'}] {src_rel}")
         print(f"       -> {dst_rel}")
         if present:

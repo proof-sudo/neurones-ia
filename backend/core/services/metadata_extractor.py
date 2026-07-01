@@ -5,9 +5,7 @@ Utilise Claude Haiku via tool_use pour forcer une sortie JSON schématisée par 
 Le LLM est contraint à appeler l'outil → pas de parsing de texte libre, pas de risque de format invalide.
 Le texte est tronqué à 3 000 caractères pour maîtriser le coût API.
 """
-import json
 import logging
-from typing import Optional
 
 from core.domain.document import DocumentType
 from core.ports.llm_gateway import LLMGateway

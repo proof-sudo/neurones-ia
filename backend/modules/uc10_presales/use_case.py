@@ -9,12 +9,13 @@ from config.settings import settings
 from core.ports.llm_gateway import LLMGateway, OutputTruncatedError
 from core.ports.document_parser import DocumentParser
 from core.domain.offer import (
-    ScoringResult, OfferDraft, StrategyPhase, PhaseAction, BidStrategy, Partner, Precondition,
+    ScoringResult, OfferDraft, StrategyPhase, PhaseAction, BidStrategy, Partner,
 )
 from core.services.rag_engine import RAGEngine
 from modules.uc10_presales.scoring_pipeline import ScoringPipeline, _clean_json
 from modules.uc10_presales.offer_generator import OfferGenerator
 from modules.uc10_presales.odoo_enrichment import OdooEnrichmentService
+from modules.uc10_presales.latency import timer, with_timeout
 
 logger = logging.getLogger(__name__)
 
@@ -210,7 +211,8 @@ class PresalesUseCase:
         docx_parser: DocumentParser,
     ):
         self._pipeline = ScoringPipeline(llm=llm_haiku, rag_engine=rag_engine)
-        self._generator = OfferGenerator(llm=llm_haiku)
+        # llm_premium=Sonnet → offre + qualitative si settings.offer_sections_model == "sonnet".
+        self._generator = OfferGenerator(llm=llm_haiku, llm_premium=llm_sonnet)
         self._llm_sonnet = llm_sonnet
         self._pdf_parser = pdf_parser
         self._docx_parser = docx_parser
@@ -226,7 +228,9 @@ class PresalesUseCase:
                 "(https://github.com/UB-Mannheim/tesseract/wiki) "
                 "avec le pack de langue français (fra), puis relancez le backend."
             )
-        result = await self._pipeline.run(ao_filename=filename, ao_text=text)
+        with timer("score_ao.pipeline"):
+            result = await with_timeout(
+                self._pipeline.run(ao_filename=filename, ao_text=text), "pipeline.run")
         # Étape 6 — enrichissement Odoo (non-bloquant : ne casse jamais le scoring)
         await self._odoo_enrichment.enrich(result)
         return result
@@ -251,7 +255,10 @@ class PresalesUseCase:
         client_name: str = "",
     ) -> tuple[dict, str, str]:
         """Étape 1 : sections éditables (LLM), sans .docx."""
-        return await self._generator.build_sections(scoring=scoring, client_name=client_name)
+        with timer("offer.build_sections"):
+            return await with_timeout(
+                self._generator.build_sections(scoring=scoring, client_name=client_name),
+                "offer.build_sections")
 
     def render_offer(
         self,
@@ -288,7 +295,7 @@ class PresalesUseCase:
         config, skeleton = load_strategy_skeleton(days_remaining)
 
         lines = [
-            f"═══ CONTEXTE AO ═══",
+            "═══ CONTEXTE AO ═══",
             f"Intitulé AO : {scoring.ao_filename}",
             f"Client / Commanditaire : {client_name or 'Non précisé'}",
             f"Secteur : {secteur}",
@@ -302,7 +309,7 @@ class PresalesUseCase:
         ]
         if partner is not None:
             lines.append(f"PARTENAIRE DE GROUPEMENT : {partner.name} ({partner.role}, {partner.type})")
-        lines += ["", f"═══ RÉSUMÉ AO ═══", scoring.summary[:800], ""]
+        lines += ["", "═══ RÉSUMÉ AO ═══", scoring.summary[:800], ""]
 
         # Squelette de phases à remplir (ids fixes, intitulés, actions types)
         if skeleton:
@@ -331,7 +338,7 @@ class PresalesUseCase:
             lines += ["═══ POINTS DE VIGILANCE ═══"] + [f"  • {v.texte}" for v in scoring.points_vigilance[:6]] + [""]
 
         if livrables and livrables != "non précisé":
-            lines += [f"═══ LIVRABLES ATTENDUS ═══", livrables, ""]
+            lines += ["═══ LIVRABLES ATTENDUS ═══", livrables, ""]
 
         if scoring.strengths:
             lines += ["═══ FORCES DE NEURONES SUR CET AO ═══"] + [f"  + {s}" for s in scoring.strengths[:6]] + [""]
@@ -347,18 +354,22 @@ class PresalesUseCase:
             lines += ["═══ ANALYSE DES ÉCARTS (ce qui manque / ce qu'il faut compenser) ═══", scoring.gaps_analysis[:500], ""]
 
         if decision_reason:
-            lines += [f"═══ JUSTIFICATION DE LA DÉCISION ═══", decision_reason, ""]
+            lines += ["═══ JUSTIFICATION DE LA DÉCISION ═══", decision_reason, ""]
 
         user = "\n".join(lines)
 
         # 3 appels Sonnet EN PARALLÈLE (au lieu d'un bloc unique de 8000 tokens ≈ 220s) :
         # stratégie (texte) ∥ plan de réponse (texte) ∥ phases (JSON). Chacun produit moins de
         # tokens et tourne en concurrence → wall-clock ≈ le plus lent des 3 (~70-90s) au lieu de la somme.
-        strategy_text, response_plan, phases_raw = await asyncio.gather(
-            self._gen_strategy_block(_STRATEGY_TEXT_SYSTEM.replace("{decision}", decision_label), user, 2500, "stratégie"),
-            self._gen_strategy_block(_RESPONSE_PLAN_SYSTEM, user, 2000, "plan de réponse"),
-            self._gen_phases_block(_PHASES_SYSTEM.replace("{decision}", decision_label), user),
-        )
+        with timer("bid_strategy.generate"):
+            strategy_text, response_plan, phases_raw = await with_timeout(
+                asyncio.gather(
+                    self._gen_strategy_block(_STRATEGY_TEXT_SYSTEM.replace("{decision}", decision_label), user, 2500, "stratégie"),
+                    self._gen_strategy_block(_RESPONSE_PLAN_SYSTEM, user, 2000, "plan de réponse"),
+                    self._gen_phases_block(_PHASES_SYSTEM.replace("{decision}", decision_label), user),
+                ),
+                "bid_strategy.gather",
+            )
         strategy_text = strategy_text or "Génération indisponible — veuillez réessayer."
         phases = self._merge_phase_actions(skeleton, phases_raw)
 
@@ -489,7 +500,8 @@ class PresalesUseCase:
         return TeamMatchResponse(profiles=profiles, query_used=query[:200])
 
     async def _extract_text(self, filename: str, file_bytes: bytes) -> str:
-        import tempfile, os
+        import tempfile
+        import os
         ext = filename.lower().rsplit(".", 1)[-1]
         with tempfile.NamedTemporaryFile(delete=False, suffix=f".{ext}") as tmp:
             tmp.write(file_bytes)

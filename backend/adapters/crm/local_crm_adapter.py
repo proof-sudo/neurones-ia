@@ -3,7 +3,6 @@ from typing import Optional
 from datetime import datetime, timedelta
 
 from sqlalchemy import select, or_
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.ports.crm_repository import CRMRepository
 from core.domain.client import Client, Contract, Invoice, Project, ContractStatus, InvoiceStatus
@@ -98,7 +97,7 @@ class LocalCRMAdapter(CRMRepository):
             ]
 
     async def get_year_stats(self, year: int, exclude_internal: bool = False) -> dict:
-        from sqlalchemy import func, extract, not_
+        from sqlalchemy import func, extract
         async with AsyncSessionLocal() as session:
             year_filter = extract("year", SaleOrderModel.date_order) == year
             state_filter = SaleOrderModel.state.in_(["sale", "done"])
@@ -218,7 +217,7 @@ class LocalCRMAdapter(CRMRepository):
             ]
 
     async def get_top_clients(self, limit: int = 5, year: int | None = None) -> list[dict]:
-        from sqlalchemy import func, extract, text
+        from sqlalchemy import text
         async with AsyncSessionLocal() as session:
             base_sql = """
                 SELECT client_id, client_name,
@@ -265,7 +264,6 @@ class LocalCRMAdapter(CRMRepository):
     async def get_unpaid_exposure(self) -> dict:
         """Exposition totale aux impayés : résumé global + top débiteurs."""
         from sqlalchemy import text
-        from datetime import datetime as dt
         async with AsyncSessionLocal() as session:
             # Total global
             r = await session.execute(text(
@@ -282,7 +280,6 @@ class LocalCRMAdapter(CRMRepository):
             par_statut = {row[0]: {"nb": row[1], "montant": float(row[2] or 0)} for row in r2.fetchall()}
 
             # Retard > 90 jours
-            seuil_90j = dt.now().replace(tzinfo=None)
             r3 = await session.execute(text(
                 "SELECT COUNT(*), SUM(amount) FROM invoices "
                 "WHERE status != 'paid' AND due_date IS NOT NULL "
@@ -325,8 +322,6 @@ class LocalCRMAdapter(CRMRepository):
         - Retard moyen sur les factures impayées en souffrance
         - % payé, montant total, montant en attente
         """
-        from datetime import date as date_type
-        from sqlalchemy import func
 
         async with AsyncSessionLocal() as session:
             q = (
@@ -627,7 +622,6 @@ class LocalCRMAdapter(CRMRepository):
     async def get_quarterly_forecast(self, year: int | None = None) -> dict:
         from sqlalchemy import text
         from datetime import datetime as dt
-        import math
         current_year = year or dt.now().year
         current_month = dt.now().month
         current_quarter = (current_month - 1) // 3 + 1
@@ -897,7 +891,6 @@ class LocalCRMAdapter(CRMRepository):
 
     async def get_dossier(self, ref: str) -> dict | None:
         """Récupère un dossier par sa référence (DC/YYYY/XXXX) ou par référence BDC (FP/...)."""
-        from sqlalchemy import text
         async with AsyncSessionLocal() as session:
             # Chercher directement par ref dossier
             if ref.upper().startswith("DC/"):

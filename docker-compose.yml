@@ -22,12 +22,25 @@ services:
 
   # ─── Backend FastAPI ──────────────────────────────────────────────────────
   backend:
+    # Image pré-construite et poussée par GitHub Actions (tag = SHA en prod via
+    # IMAGE_TAG ; `latest` par défaut). `build:` reste pour le dev local.
+    image: ghcr.io/proof-sudo/neurones-ia-backend:${IMAGE_TAG:-latest}
     build:
       context: ./backend
       dockerfile: Dockerfile
     container_name: neurones-ia-backend
     restart: unless-stopped
     env_file: .env.prod
+    environment:
+      # Chemins data DANS le volume persistant (/app/data) — priment sur .env.prod.
+      # Sans ça, les défauts "../data" tombent hors du volume → base SQLite (et users)
+      # effacée à CHAQUE redéploiement. Bug réel rencontré : admin créé puis disparu.
+      - GED_PATH=/app/data/ged
+      - TEMPLATES_PATH=/app/data/templates
+      - UPLOADS_PATH=/app/data/uploads
+      - CHROMADB_PATH=/app/data/chromadb
+      - BM25_INDEX_PATH=/app/data/bm25_index
+      - LOCAL_DB_PATH=/app/data/local_db/neurones.db
     ports:
       - "127.0.0.1:8000:8000"
     volumes:
@@ -48,11 +61,15 @@ services:
 
   # ─── Frontend Next.js ─────────────────────────────────────────────────────
   frontend:
+    image: ghcr.io/proof-sudo/neurones-ia-frontend:${IMAGE_TAG:-latest}
     build:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: http://187.127.228.104:8080/api/v1
+        # URL relative : le frontend appelle /api/v1 sur le même hôte que la page,
+        # nginx route /api → backend. Indépendant de l'IP/port/domaine (aucun rebuild
+        # nécessaire si l'IP change ou si on ajoute un domaine). Surchargeable au besoin.
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-/api/v1}
     container_name: neurones-ia-frontend
     restart: unless-stopped
     environment:
