@@ -56,8 +56,11 @@ services:
       start_period: 60s
     deploy:
       resources:
+        # 6G : le pipeline /presales/score charge le modèle d'embeddings (×2 avec
+        # --workers 2) + gros contextes LLM ; à 2G le worker était OOM-killed en
+        # plein scoring → nginx renvoyait 502/504. Hôte : 15G, marge large.
         limits:
-          memory: 2G
+          memory: 6G
 
   # ─── Frontend Next.js ─────────────────────────────────────────────────────
   frontend:
