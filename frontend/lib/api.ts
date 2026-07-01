@@ -376,7 +376,14 @@ export async function scoreAO(file: File, force = false): Promise<ScoringResult>
     throw new Error((error as { detail?: string }).detail ?? `Erreur serveur ${response.status}`);
   }
 
-  return response.json() as Promise<ScoringResult>;
+  // Réponse streamée (heartbeat) : le flux démarre par un 200, donc une erreur du pipeline
+  // arrive dans le corps via la sentinelle { __error__: <status>, detail }. Les espaces de
+  // heartbeat en tête sont ignorés par JSON.parse.
+  const data = await response.json() as ScoringResult & { __error__?: number; detail?: string };
+  if (data && typeof data.__error__ === "number") {
+    throw new Error(data.detail ?? `Erreur serveur ${data.__error__}`);
+  }
+  return data as ScoringResult;
 }
 
 // ── Matrice de conformité : validée par l'IA + cochage humain ───────────────────
