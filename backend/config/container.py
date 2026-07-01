@@ -52,6 +52,7 @@ class Container:
         self._init_services()
         await self._start_jobs()
         self._warm_up_local_embedder()
+        self._initial_ged_scan()
         logger.info("Container prêt.")
 
     def _warm_up_local_embedder(self):
@@ -75,6 +76,22 @@ class Container:
         # tâche sans réf peut être garbage-collectée avant de tourner (d'où le warm-up qui
         # ne se déclenchait qu'à la 1ʳᵉ requête au lieu du démarrage).
         self._warmup_task = asyncio.create_task(_load())
+
+    def _initial_ged_scan(self):
+        """Scan GED au démarrage : ré-indexe les fichiers présents mais absents de
+        l'index (comparaison de hash → saute ceux déjà indexés, donc no-op quand
+        l'index est intact). Rend l'index AUTO-RÉPARANT après un (re)démarrage : si
+        un déploiement a réinitialisé l'index, il se reconstruit seul. Non bloquant."""
+        import asyncio
+
+        async def _scan():
+            try:
+                from jobs.ged_scan_job import run_ged_scan
+                await run_ged_scan(self._ged_indexer)
+            except Exception as exc:
+                logger.warning("Scan GED au démarrage échoué (non bloquant) : %s", exc)
+
+        self._startup_scan_task = asyncio.create_task(_scan())
 
     async def shutdown(self):
         if self._scheduler:
