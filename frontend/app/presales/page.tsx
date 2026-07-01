@@ -5,7 +5,7 @@ import {
   Upload, FileText, CheckCircle, XCircle, AlertCircle, AlertTriangle,
   Download, Loader2, Trash2, Sparkles, ArrowRight, Shield, Target,
   Users, Eye, ClipboardList, BarChart2, Layers, Lock, Plus, Send,
-  CalendarDays, Trophy, ThumbsDown, Clock, LayoutGrid, List,
+  CalendarDays, Trophy, ThumbsDown, Clock, List,
   Briefcase, Scale, Coins, X, Search, ChevronDown, FileCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -1897,7 +1897,7 @@ function Step5({ ao, onValidate, triggerDownload, onOfferReady }: {
   const [tplLoading, setTplLoading] = useState(false);
   const [tplError, setTplError] = useState<string | null>(null);
 
-  const [sections, setSections] = useState<OfferSections | null>(null);
+  const [, setSections] = useState<OfferSections | null>(null);
   const [filename, setFilename] = useState("");
   const [building, setBuilding] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
@@ -2256,7 +2256,7 @@ function Step6({ ao, onToggle, onNoteChange, onAddItem, onDeleteItem, onExport, 
 
   const toggleNote = (id: string) => setExpandedNotes(prev => {
     const s = new Set(prev);
-    s.has(id) ? s.delete(id) : s.add(id);
+    if (s.has(id)) s.delete(id); else s.add(id);
     return s;
   });
 
@@ -2912,7 +2912,7 @@ export default function PresalesPage() {
               <Upload size={12} /> Nouvel AO
             </button>
             <input ref={fileInputRef} type="file" accept=".pdf,.docx" multiple className="hidden"
-              onChange={e => { e.target.files && handleFiles(e.target.files); setPageView("workflow"); }} />
+              onChange={e => { if (e.target.files) handleFiles(e.target.files); setPageView("workflow"); }} />
             <div className="flex items-center rounded-lg border border-slate-200 overflow-hidden">
               <button onClick={() => setPageView("workflow")}
                 className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-500 hover:bg-slate-50 transition-colors">

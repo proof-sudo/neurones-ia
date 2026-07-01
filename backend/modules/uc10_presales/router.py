@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 import logging
@@ -11,7 +12,7 @@ from urllib.parse import quote
 from config.settings import settings
 
 from fastapi import APIRouter, Request, UploadFile, File, HTTPException
-from fastapi.responses import Response
+from fastapi.responses import Response, StreamingResponse
 
 from modules.uc10_presales.schemas import (
     ScoringResultSchema, OfferGenerationRequest, KeyElementSchema, MatchedDocumentSchema, BidRecommendationSchema,
@@ -105,7 +106,15 @@ def _score_cache_path(file_bytes: bytes) -> Path:
     return _SCORE_CACHE_DIR / f"{hashlib.sha256(file_bytes).hexdigest()}.json"
 
 
-@router.post("/score", response_model=ScoringResultSchema)
+# Intervalle du « heartbeat » pendant le scoring long (~169s en prod). Le pipeline n'émet
+# rien avant sa réponse finale ; sur une connexion inactive, un proxy/pare-feu côté client
+# coupe à ~30s (→ 499 nginx, 504 navigateur). On streame donc un espace toutes les 10s : des
+# espaces en tête d'un JSON sont valides, donc `response.json()` côté client les ignore et
+# aucun changement de parsing n'est requis pour le cas nominal.
+_SCORE_HEARTBEAT_SECONDS = 10
+
+
+@router.post("/score")
 async def score_ao(
     request: Request,
     file: UploadFile = File(..., description="AO en PDF ou Word"),
@@ -116,6 +125,12 @@ async def score_ao(
     Le cache disque est désactivé par défaut en prod (settings.score_cache_enabled) pour ne pas
     saturer le serveur : chaque appel recalcule. S'il est réactivé, le résultat est mémorisé par
     empreinte SHA-256 du fichier et `?force=true` force une nouvelle analyse.
+
+    Réponse streamée (`application/json`) : des espaces de heartbeat maintiennent la connexion
+    active pendant le pipeline (cf. `_SCORE_HEARTBEAT_SECONDS`), suivis du JSON du résultat.
+    Comme le flux démarre par un `200`, une erreur du pipeline ne peut plus être un code HTTP :
+    elle est encodée dans le corps avec une sentinelle `{"__error__": <status>, "detail": ...}`
+    que le client détecte.
     """
     logger.info("Score AO reçu — fichier=%s content_type=%s force=%s", file.filename, file.content_type, force)
     if file.content_type not in _ALLOWED_TYPES and not file.filename.endswith((".pdf", ".docx")):
@@ -133,28 +148,50 @@ async def score_ao(
             cached = json.loads(cache_path.read_text(encoding="utf-8"))
             schema = ScoringResultSchema.model_validate(cached)
             logger.info("Score AO servi depuis le cache disque — %s", file.filename)
-            return schema
+            # Cache : réponse immédiate, pas besoin de streamer.
+            return Response(
+                content=json.dumps(schema.model_dump(mode="json"), ensure_ascii=False),
+                media_type="application/json",
+            )
         except Exception as exc:
             logger.warning("Cache score illisible (%s) — recalcul de %s", exc, file.filename)
 
     use_case = _get_use_case(request)
-    try:
-        result = await use_case.score_ao(filename=file.filename, file_bytes=file_bytes)
-    except ValueError as e:
-        raise HTTPException(status_code=422, detail=str(e))
-    except Exception as e:
-        logger.exception("Erreur pipeline scoring AO '%s'", file.filename)
-        raise HTTPException(status_code=500, detail=f"Erreur analyse AO : {type(e).__name__}: {e}")
 
-    schema = _to_schema(result)
-    if settings.score_cache_enabled:
+    async def _stream():
+        task = asyncio.create_task(use_case.score_ao(filename=file.filename, file_bytes=file_bytes))
+        # Heartbeat : espaces réguliers tant que le pipeline tourne (shield → wait_for
+        # n'annule pas la tâche en cas de timeout, il continue en arrière-plan).
+        while not task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=_SCORE_HEARTBEAT_SECONDS)
+            except asyncio.TimeoutError:
+                yield b" "
+
         try:
-            _SCORE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
-            cache_path.write_text(json.dumps(schema.model_dump(mode="json"), ensure_ascii=False), encoding="utf-8")
-            prune_cache_dir(_SCORE_CACHE_DIR, settings.presales_cache_max_files)  # purge LRU bornée
-        except OSError as exc:
-            logger.debug("Écriture cache score échouée (%s) — non bloquant", exc)
-    return schema
+            result = task.result()
+        except ValueError as e:
+            yield json.dumps({"__error__": 422, "detail": str(e)}, ensure_ascii=False).encode()
+            return
+        except Exception as e:
+            logger.exception("Erreur pipeline scoring AO '%s'", file.filename)
+            yield json.dumps(
+                {"__error__": 500, "detail": f"Erreur analyse AO : {type(e).__name__}: {e}"},
+                ensure_ascii=False,
+            ).encode()
+            return
+
+        schema = _to_schema(result)
+        if settings.score_cache_enabled:
+            try:
+                _SCORE_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                cache_path.write_text(json.dumps(schema.model_dump(mode="json"), ensure_ascii=False), encoding="utf-8")
+                prune_cache_dir(_SCORE_CACHE_DIR, settings.presales_cache_max_files)  # purge LRU bornée
+            except OSError as exc:
+                logger.debug("Écriture cache score échouée (%s) — non bloquant", exc)
+        yield json.dumps(schema.model_dump(mode="json"), ensure_ascii=False).encode()
+
+    return StreamingResponse(_stream(), media_type="application/json")
 
 
 @router.post("/generate")
