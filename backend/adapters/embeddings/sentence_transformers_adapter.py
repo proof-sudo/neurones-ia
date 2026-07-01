@@ -7,9 +7,13 @@ from core.ports.embedder import Embedder
 logger = logging.getLogger(__name__)
 
 
-@lru_cache(maxsize=1)
+# maxsize=4 : plusieurs modèles peuvent être résidents EN MÊME TEMPS — le modèle legacy
+# (presale + indexation) et le modèle FR CamemBERT (chat) sont tous deux actifs. Avec
+# maxsize=1 ils s'évinçaient mutuellement et se rechargeaient (~6s) à chaque alternance,
+# notamment pendant l'indexation qui embarque chaque document dans les deux cibles.
+@lru_cache(maxsize=4)
 def _load_model(model_name: str):
-    """Charge le modèle une seule fois (lazy, thread-safe via lru_cache)."""
+    """Charge le modèle une seule fois par nom (lazy, thread-safe via lru_cache)."""
     try:
         from sentence_transformers import SentenceTransformer
         logger.info("Chargement sentence-transformers '%s'…", model_name)

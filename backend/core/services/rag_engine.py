@@ -217,6 +217,26 @@ class RAGEngine:
         que la recherche sémantique plafonnée à rerank_top_k ne peut pas répondre."""
         return await self._vector_store.inventory()
 
+    async def get_full_document(self, doc_id: str) -> Optional[dict]:
+        """Reconstruit le TEXTE INTÉGRAL d'un document à partir de tous ses chunks
+        (ordonnés par chunk_index), sans le plafond de la recherche sémantique.
+
+        Sert à décrire l'histoire complète d'une personne (CV) plutôt que le seul
+        fragment qui matche une recherche. Retourne None si le doc_id est inconnu.
+        """
+        chunks = await self._vector_store.get_chunks_by_doc_id(doc_id)
+        if not chunks:
+            return None
+        meta0 = chunks[0].get("metadata") or {}
+        texte = "\n".join((c.get("content") or "").strip() for c in chunks).strip()
+        return {
+            "doc_id": doc_id,
+            "filename": meta0.get("filename") or meta0.get("doc_id") or doc_id,
+            "doc_type": meta0.get("doc_type"),
+            "nb_chunks": len(chunks),
+            "texte_integral": texte,
+        }
+
     async def search_diverse(
         self,
         query: str,

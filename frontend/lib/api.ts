@@ -522,6 +522,38 @@ export async function deleteGEDFile(docId: string): Promise<void> {
   if (!r.ok) throw new Error(`Delete error: ${r.status}`);
 }
 
+/** URL d'aperçu inline (PDF) d'un document GED. NB : l'endpoint exige le Bearer JWT, donc
+ *  un <iframe src> direct vers cette URL renverrait 401 — préférer fetchGEDFileBlobUrl. */
+export function gedFileInlineUrl(docId: string): string {
+  return `${API_BASE}/ged/files/${docId}/download?inline=1`;
+}
+
+/** Récupère un document GED (auth Bearer) et renvoie un blob URL affichable dans un <iframe>
+ *  (visionneuse PDF native du navigateur). L'appelant DOIT révoquer l'URL au démontage. */
+export async function fetchGEDFileBlobUrl(docId: string): Promise<string> {
+  const r = await apiFetch(`${API_BASE}/ged/files/${docId}/download?inline=1`);
+  if (!r.ok) throw new Error(`Aperçu impossible (${r.status})`);
+  const blob = await r.blob();
+  return URL.createObjectURL(blob);
+}
+
+/** Télécharge le fichier source d'un document GED. L'endpoint exige le Bearer JWT, donc on
+ *  passe par fetch authentifié → blob → ancre, plutôt qu'un simple <a href> (qui n'enverrait
+ *  pas l'en-tête Authorization). */
+export async function downloadGEDFile(docId: string, filename: string): Promise<void> {
+  const r = await apiFetch(`${API_BASE}/ged/files/${docId}/download`);
+  if (!r.ok) throw new Error(`Téléchargement impossible (${r.status})`);
+  const blob = await r.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename || "document";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 export async function createGEDFolder(path: string): Promise<void> {
   const r = await apiFetch(`${API_BASE}/ged/folders`, {
     method: "POST",

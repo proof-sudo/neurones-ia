@@ -53,12 +53,24 @@ class GEDIndexer:
         kb_repository=None,         # KBRepository — persistance kb_* (optionnel)
         classifier=None,            # DocumentClassifier — fallback si type UNKNOWN (optionnel)
         entity_resolver=None,       # EntityResolver — résolution d'entités P2 (optionnel)
+        vision_extractor=None,      # DocumentVisionExtractor — contenu visuel des pages (optionnel)
+        secondary_targets: list[tuple[Embedder, VectorStore]] | None = None,
         chunk_size: int = 600,
         chunk_overlap: int = 60,
     ):
         self._vector_store = vector_store
         self._sparse_search = sparse_search
         self._embedder = embedder
+        # Cibles vectorielles (embedder, vector_store) : chaque document est embarqué et
+        # upserté dans TOUTES les cibles. La cible primaire est l'historique ; les
+        # secondaires (ex. collection FR CamemBERT pour le chat) restent ainsi synchronisées
+        # à partir du MÊME texte/chunking. Le BM25 est indexé par chunk_id (identique quel
+        # que soit le modèle) → partagé entre toutes les collections, écrit une seule fois.
+        self._targets: list[tuple[Embedder, VectorStore]] = [(embedder, vector_store)]
+        if secondary_targets:
+            self._targets.extend(secondary_targets)
+        # Tous les stores (pour les opérations sans embedding : suppression, reset, purge).
+        self._stores: list[VectorStore] = [t[1] for t in self._targets]
         self._registry = registry
         self._parsers: list[DocumentParser] = [pdf_parser, docx_parser]
         self._chunking_router = chunking_router
@@ -70,6 +82,7 @@ class GEDIndexer:
         self._kb_repository = kb_repository
         self._classifier = classifier
         self._entity_resolver = entity_resolver
+        self._vision = vision_extractor
 
     async def process(
         self,
@@ -137,6 +150,12 @@ class GEDIndexer:
             except Exception as exc:
                 logger.warning("Classification échouée pour %s : %s", file_path.name, exc)
 
+        # ── 3ter. Contenu VISUEL des pages-images (tous docs) → lecture vision, injecté ──
+        # Doit précéder l'extraction (4) et le chunking (7) pour que le champ structuré ET le
+        # RAG voient ce que la couche texte/OCR ne restitue pas (schémas, tableaux, badges).
+        if self._vision is not None:
+            text = await self._augment_with_vision(text, file_path, doc_type)
+
         # ── 4. Extraction métadonnées ──────────────────────────────────────
         extracted_fields = await self._metadata_extractor.extract(text, doc_type)
 
@@ -145,7 +164,8 @@ class GEDIndexer:
 
         # ── 6. Construction des métadonnées du document ───────────────────
         if existing:
-            await self._vector_store.delete_by_doc_id(existing.doc_id)
+            for store in self._stores:
+                await store.delete_by_doc_id(existing.doc_id)
             self._sparse_search.remove(existing.vector_ids)
             doc_id = existing.doc_id
         else:
@@ -167,15 +187,17 @@ class GEDIndexer:
             logger.warning("Aucun chunk généré pour %s", file_path.name)
             return False
 
-        # ── 8. Embeddings par batch ────────────────────────────────────────
-        embeddings: list[list[float]] = []
+        # ── 8. Embeddings par batch → upsert dans CHAQUE cible vectorielle ──
+        # Les chunks (ids + contenu) sont identiques pour toutes les cibles ; seul le modèle
+        # d'embedding diffère. On ré-embarque donc le même texte par cible (modèles locaux).
         contents = [c.content for c in chunks]
-        for i in range(0, len(contents), _EMBED_BATCH):
-            batch = contents[i : i + _EMBED_BATCH]
-            batch_emb = await self._embedder.embed_texts(batch)
-            embeddings.extend(batch_emb)
-
-        await self._vector_store.upsert(chunks, embeddings)
+        for embedder, store in self._targets:
+            embeddings: list[list[float]] = []
+            for i in range(0, len(contents), _EMBED_BATCH):
+                batch = contents[i : i + _EMBED_BATCH]
+                batch_emb = await embedder.embed_texts(batch)
+                embeddings.extend(batch_emb)
+            await store.upsert(chunks, embeddings)
 
         # ── 9. BM25 + registre ─────────────────────────────────────────────
         bm25_chunks = [(c.chunk_id, c.content) for c in chunks]
@@ -213,7 +235,8 @@ class GEDIndexer:
     async def reset_index(self) -> dict:
         """Vide entièrement l'index (ChromaDB + BM25 + registre) pour une reconstruction à neuf.
         À enchaîner avec une ré-indexation de tous les fichiers du disque."""
-        self._vector_store.reset()
+        for store in self._stores:
+            store.reset()
         self._sparse_search.clear()
         removed = await self._registry.clear_all()
         logger.info("Index GED réinitialisé — %d entrées de registre purgées", removed)
@@ -225,7 +248,11 @@ class GEDIndexer:
         le miroir BM25. Retourne un récapitulatif."""
         entries = await self._registry.list_active_entries()
         valid_doc_ids = {e.doc_id for e in entries}
-        orphan_ids = await self._vector_store.delete_orphans(valid_doc_ids)
+        orphan_ids_all: set[str] = set()
+        for store in self._stores:
+            store_orphans = await store.delete_orphans(valid_doc_ids)
+            orphan_ids_all.update(store_orphans)
+        orphan_ids = list(orphan_ids_all)
         if orphan_ids:
             self._sparse_search.remove(orphan_ids)
             await asyncio.to_thread(self._sparse_search.save)
@@ -242,7 +269,8 @@ class GEDIndexer:
         file_str = str(file_path)
         entry = await self._registry.get_entry(file_str)
         if entry:
-            await self._vector_store.delete_by_doc_id(entry.doc_id)
+            for store in self._stores:
+                await store.delete_by_doc_id(entry.doc_id)
             self._sparse_search.remove(entry.vector_ids)
             await asyncio.to_thread(self._sparse_search.save)
             if self._kb_repository:
@@ -277,6 +305,28 @@ class GEDIndexer:
             )
         except Exception as exc:
             logger.warning("Extraction structurée échouée pour %s : %s", file_str, exc)
+
+    async def _augment_with_vision(self, text: str, file_path: Path, doc_type: DocumentType) -> str:
+        """Lit le contenu visuel des pages-images (schémas, tableaux, badges) et l'injecte :
+        le contenu transcrit/décrit est AJOUTÉ en fin de texte (chunké pour le RAG) ; pour les
+        CV, les certifications sont aussi PRÉPENDUES (fenêtre de l'extracteur kb_cv = 3000 chars).
+        Best-effort : renvoie le texte inchangé en cas d'échec ou si rien n'est trouvé."""
+        try:
+            res = await self._vision.extract(file_path, doc_type)
+        except Exception as exc:
+            logger.warning("Extraction vision échouée pour %s : %s", file_path.name, exc)
+            return text
+        contenu = res.get("contenu") or ""
+        certs = res.get("certifications") or []
+        out = text
+        if contenu:
+            out = f"{out}\n\n[CONTENU VISUEL DES PAGES IMAGES]\n{contenu}"
+        if doc_type == DocumentType.CV and certs:
+            out = "CERTIFICATIONS (extraites des badges) : " + " ; ".join(certs) + "\n\n" + out
+            logger.info("CV %s : %d certification(s) injectée(s) depuis les logos", file_path.name, len(certs))
+        elif contenu:
+            logger.info("%s : contenu visuel injecté (%d chars)", file_path.name, len(contenu))
+        return out
 
     async def _resolve_entities(self, doc_id: str, doc_type: DocumentType) -> None:
         """Résolution d'entités → ids canoniques. Tolérante aux pannes (best-effort)."""

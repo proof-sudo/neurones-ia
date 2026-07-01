@@ -17,7 +17,10 @@ class Container:
         self._llm_haiku = None
         self._llm_sonnet = None
         self._embedder = None
+        self._embedder_fr = None          # embedder CamemBERT dédié au chat (uc02)
         self._vector_store = None
+        self._vector_store_fr = None      # collection ChromaDB FR dédiée au chat
+        self._rag_engine_fr = None        # RAGEngine FR (chat) ; legacy reste pour presale
         self._sparse_search = None
         self._reranker = None
         self._pdf_parser = None
@@ -44,6 +47,7 @@ class Container:
         self._kb_repository = None
         self._classifier = None
         self._entity_resolver = None
+        self._vision = None
         self._ro_sql = None
 
     async def startup(self):
@@ -68,6 +72,11 @@ class Container:
                 loop = asyncio.get_event_loop()
                 await loop.run_in_executor(None, _load_model, settings.embed_fallback_model)
                 logger.info("Warm-up : modèle d'embeddings local préchargé.")
+                # Précharge aussi le modèle FR (CamemBERT) du chat s'il est activé : évite
+                # le cold-start (~6s) à la 1ʳᵉ question GED.
+                if settings.chat_embedding_enabled:
+                    await loop.run_in_executor(None, _load_model, settings.chat_embedding_model)
+                    logger.info("Warm-up : modèle d'embeddings chat FR (%s) préchargé.", settings.chat_embedding_model)
             except Exception as exc:
                 logger.warning("Warm-up embeddings local échoué (non bloquant) : %s", exc)
 
@@ -136,6 +145,18 @@ class Container:
         else:
             self._embedder = OpenAIEmbedAdapter()
         self._vector_store = ChromaDBAdapter()
+        # ── Embeddings FR (CamemBERT) pour le chat + documents (uc02) ──────────────
+        # Collection ChromaDB dédiée (chat_collection_name) embarquée avec un modèle FR natif,
+        # ISOLÉE de la collection historique que presale/veille continuent d'interroger.
+        # Kill-switch : chat_embedding_enabled=False → le chat retombe sur l'embedder legacy.
+        if settings.chat_embedding_enabled:
+            from adapters.embeddings.sentence_transformers_adapter import SentenceTransformersAdapter
+            self._embedder_fr = SentenceTransformersAdapter(model_name=settings.chat_embedding_model)
+            self._vector_store_fr = ChromaDBAdapter(collection_name=settings.chat_collection_name)
+            logger.info(
+                "Embeddings chat FR : %s → collection '%s' (isolée de presale)",
+                settings.chat_embedding_model, settings.chat_collection_name,
+            )
         self._sparse_search = BM25Adapter()
         self._pdf_parser = PDFAdapter()
         self._docx_parser = DocxAdapter()
@@ -203,6 +224,17 @@ class Container:
             auto_threshold=settings.entity_match_auto_threshold,
             review_threshold=settings.entity_match_review_threshold,
         )
+        # Vision des pages-images (tous docs) — adaptateur Claude DIRECT (la méthode
+        # generate_with_images vit sur l'adaptateur concret, pas sur la chaîne de fallback).
+        if settings.vision_enabled:
+            from core.services.document_vision_extractor import DocumentVisionExtractor
+            from adapters.llm.claude_haiku_adapter import ClaudeHaikuAdapter
+            self._vision = DocumentVisionExtractor(
+                vision_llm=ClaudeHaikuAdapter(),
+                max_pages=settings.vision_max_pages,
+                area_ratio=settings.vision_area_ratio,
+                dpi=settings.vision_dpi,
+            )
         self._rag_engine = RAGEngine(
             vector_store=self._vector_store,
             sparse_search=self._sparse_search,
@@ -215,9 +247,27 @@ class Container:
             rerank_default=settings.rerank_enabled,
             rerank_candidates=settings.rerank_candidates,
         )
+        # RAGEngine FR (chat) : même config, mais embedder CamemBERT + collection FR.
+        # Le BM25 (sparse) est partagé : il est indexé par chunk_id, indépendant du modèle.
+        # Kill-switch off → le chat réutilise simplement le moteur legacy.
+        if settings.chat_embedding_enabled and self._vector_store_fr is not None:
+            self._rag_engine_fr = RAGEngine(
+                vector_store=self._vector_store_fr,
+                sparse_search=self._sparse_search,
+                embedder=self._embedder_fr,
+                llm=self._llm_haiku,
+                top_k=settings.retrieval_top_k,
+                rerank_top_k=settings.rerank_top_k,
+                token_budget=self._token_budget,
+                reranker=self._reranker,
+                rerank_default=settings.rerank_enabled,
+                rerank_candidates=settings.rerank_candidates,
+            )
+        else:
+            self._rag_engine_fr = self._rag_engine
         self._query_dispatcher = QueryDispatcher(
             llm=self._llm_haiku,
-            rag_engine=self._rag_engine,
+            rag_engine=self._rag_engine_fr,
             crm_repo=self._crm_repo,
         )
         self._ged_indexer = GEDIndexer(
@@ -236,6 +286,12 @@ class Container:
             kb_repository=self._kb_repository,
             classifier=self._classifier,
             entity_resolver=self._entity_resolver,
+            vision_extractor=self._vision,
+            secondary_targets=(
+                [(self._embedder_fr, self._vector_store_fr)]
+                if (settings.chat_embedding_enabled and self._vector_store_fr is not None)
+                else None
+            ),
         )
 
     async def _start_jobs(self):
@@ -268,6 +324,18 @@ class Container:
     @property
     def rag_engine(self):
         return self._rag_engine
+
+    @property
+    def rag_engine_fr(self):
+        """Moteur RAG FR (CamemBERT) pour le chat + l'inspection documentaire (uc02).
+        Identique au moteur legacy si chat_embedding_enabled=False."""
+        return self._rag_engine_fr
+
+    @property
+    def vector_store_fr(self):
+        """Collection ChromaDB FR du chat. Retombe sur la collection legacy si le chat FR
+        est désactivé (kill-switch)."""
+        return self._vector_store_fr or self._vector_store
 
     @property
     def query_dispatcher(self):

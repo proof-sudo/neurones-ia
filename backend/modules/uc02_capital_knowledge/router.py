@@ -161,6 +161,18 @@ def _get_system_prompt() -> str:
         "4. Spécifie TOUJOURS la période couverte dans chaque réponse chiffrée.\n"
         "5. Si des données CRM sont déjà dans le message (section '## Données CRM'), utilise-les sans appeler d'outil.\n\n"
 
+        "PROFILS / CV — RACONTER TOUTE L'HISTOIRE DE LA PERSONNE :\n"
+        "Quand on te demande de DÉCRIRE, PRÉSENTER ou PARLER du profil/CV d'UNE personne précise "
+        "('présente-moi X', 'décris le CV de Y', 'qui est Z', 'parle-moi de W') :\n"
+        "1. Identifie la personne si besoin (rechercher_documents_ged ou interroger_documents), puis "
+        "APPELLE 'obtenir_profil_complet' (avec le nom ou le doc_id) — il renvoie le CV INTÉGRAL.\n"
+        "2. Restitue alors TOUT le parcours, pas seulement le fragment recherché : synthèse du profil, "
+        "expériences (du plus récent au plus ancien, avec client/secteur/rôle), formations, certifications, "
+        "compétences clés. Le but est de raconter l'histoire complète de la personne.\n"
+        "3. N'utilise PAS 'obtenir_profil_complet' pour COMPTER/FILTRER des CV (→ interroger_documents). "
+        "Quand la question vise PLUSIEURS personnes (ex. 'les profils DevOps') : donne d'abord une LISTE "
+        "avec un résumé court par personne, puis le profil complet uniquement sur la personne ciblée ou à la demande.\n\n"
+
         "RÈGLE ABSOLUE — BRIÈVETÉ :\n"
         "N'écris AUCUN texte avant d'avoir reçu les résultats d'outils. "
         "Si tu dois appeler un outil, fais-le DIRECTEMENT sans annoncer ce que tu vas faire. "
@@ -176,7 +188,24 @@ def _get_system_prompt() -> str:
         "Si on demande un nombre → donne uniquement le nombre + unité. "
         "Si on demande une liste → donne directement la liste. "
         "Tu peux ajouter UNE courte précision factuelle si elle est indispensable (ex: la période couverte). "
-        "Langue : français uniquement."
+        "Langue : français uniquement.\n\n"
+
+        "VISUALISATION — GRAPHIQUES :\n"
+        "Quand la réponse contient une SÉRIE de valeurs comparables (évolution dans le temps, classement, "
+        "répartition, comparaison entre entités), AJOUTE un graphique EN PLUS du texte via un bloc de code "
+        "```chart contenant du JSON. Exemple exact :\n"
+        "```chart\n"
+        '{"type":"bar","title":"CA par année (M XOF)","unit":"M XOF",'
+        '"data":[{"label":"2023","value":1200},{"label":"2024","value":1500},{"label":"2025","value":1850}]}\n'
+        "```\n"
+        "Types : 'bar' (comparaison/classement), 'line' (évolution temporelle), 'pie' ou 'donut' (répartition). "
+        "Règles strictes :\n"
+        "- 'data' = liste d'objets {label, value} ; 'value' est un nombre BRUT, sans séparateur de milliers ni unité "
+        "(mets l'unité dans 'unit', ex: \"M XOF\", \"%\").\n"
+        "- Pour les grands montants, convertis en millions pour la lisibilité (1 850 000 000 XOF → value:1850, unit:\"M XOF\").\n"
+        "- Maximum ~12 points de données. N'INVENTE JAMAIS de valeur : uniquement les chiffres réels issus des outils.\n"
+        "- Place le bloc ```chart APRÈS la réponse chiffrée (le texte/tableau reste la source, le graphique illustre).\n"
+        "- PAS de graphique pour une valeur unique, une liste non numérique ou des données non quantitatives."
     )
 
 _CRM_TOOLS = [
@@ -671,6 +700,31 @@ _CRM_TOOLS = [
             "required": ["sql"],
         },
     },
+    {
+        "name": "obtenir_profil_complet",
+        "description": (
+            "Récupère le PROFIL COMPLET d'une personne à partir de son CV : le TEXTE INTÉGRAL "
+            "du CV (parcours, compétences, formations) + ses expériences et certifications structurées. "
+            "C'est l'outil à utiliser dès qu'on demande de DÉCRIRE / PRÉSENTER / RACONTER le profil ou "
+            "le CV d'UNE personne précise — il renvoie tout le document, pas seulement un extrait.\n\n"
+            "UTILISE-LE quand :\n"
+            "- 'présente-moi le profil de Jean Dupont', 'décris le CV de X', 'parle-moi de Y', 'qui est Z'\n"
+            "- après avoir identifié UNE personne (via rechercher_documents_ged ou interroger_documents) "
+            "et que l'utilisateur veut le détail de son parcours.\n\n"
+            "NE PAS l'utiliser pour COMPTER ou FILTRER des CV (→ interroger_documents), ni quand la "
+            "question vise une liste de plusieurs personnes (dans ce cas, liste + résumé court, puis "
+            "appelle cet outil seulement sur la personne ciblée ou à la demande).\n\n"
+            "Fournis 'nom' (nom de la personne) OU 'doc_id' si tu le connais déjà. Si le nom correspond "
+            "à plusieurs personnes, l'outil renvoie la liste pour que tu demandes laquelle."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "nom": {"type": "string", "description": "Nom (complet ou partiel) de la personne dont on veut le CV"},
+                "doc_id": {"type": "string", "description": "doc_id du CV si déjà connu (prioritaire sur 'nom')"},
+            },
+        },
+    },
 ]
 
 # Labels lisibles pour les événements SSE progress
@@ -710,6 +764,7 @@ _TOOL_LABELS = {
     "analyser_evolution_clients": "Analyse de l'évolution du portefeuille clients…",
     "executer_analyse_sql": "Analyse SQL sur mesure…",
     "interroger_documents": "Analyse SQL des documents (GED)…",
+    "obtenir_profil_complet": "Récupération du profil complet…",
 }
 
 
@@ -1161,7 +1216,10 @@ async def _execute_tool(tool_name: str, tool_input: dict, crm_repo, rag_engine, 
 
         elif tool_name == "rechercher_documents_ged":
             try:
-                sources = await rag_engine.search(tool_input["query"])
+                sources = await rag_engine.search(
+                    tool_input["query"],
+                    min_dense_score=settings.ged_min_similarity,
+                )
                 # Total exhaustif pour éviter que le LLM prenne ce top-k pour toute la GED.
                 try:
                     total_ged = (await rag_engine.inventory())["total_documents"]
@@ -1193,6 +1251,104 @@ async def _execute_tool(tool_name: str, tool_input: dict, crm_repo, rag_engine, 
             except Exception as e:
                 return json.dumps({"erreur": f"GED indisponible : {e}. Essaie un autre outil."}), True
 
+        elif tool_name == "obtenir_profil_complet":
+            # Profil COMPLET d'une personne : texte intégral du CV (tous les chunks)
+            # + structuré (kb_cv / expériences / certifications). Sert à raconter
+            # toute l'histoire de la personne, pas seulement le fragment recherché.
+            if ro_sql is None:
+                return json.dumps({"erreur": "Moteur SQL en lecture seule indisponible."}), True
+            doc_id = (tool_input.get("doc_id") or "").strip()
+            nom = (tool_input.get("nom") or "").strip()
+            if not doc_id and not nom:
+                return json.dumps({"erreur": "Fournis 'nom' ou 'doc_id'."}), True
+            try:
+                # 1. Résolution du doc_id à partir du nom si nécessaire.
+                if not doc_id:
+                    esc = nom.replace("'", "''")
+                    res = await ro_sql.query(
+                        "SELECT doc_id, nom_complet, fichier_source FROM kb_cv "
+                        f"WHERE nom_complet LIKE '%{esc}%' LIMIT 20",
+                        KB_TABLES,
+                    )
+                    rows = res["resultats"]
+                    uniq = {r["doc_id"]: r for r in rows}
+                    if not uniq:
+                        return json.dumps({
+                            "message": f"Aucun CV trouvé pour '{nom}' dans la GED.",
+                            "profil": None,
+                        }, ensure_ascii=False), False
+                    if len(uniq) > 1:
+                        return json.dumps({
+                            "message": (
+                                f"Plusieurs personnes correspondent à '{nom}'. "
+                                "Demande à l'utilisateur de préciser, ou rappelle cet outil avec le doc_id voulu."
+                            ),
+                            "candidats": [
+                                {"nom": r.get("nom_complet"), "doc_id": d, "fichier_source": r.get("fichier_source")}
+                                for d, r in uniq.items()
+                            ],
+                        }, ensure_ascii=False), False
+                    doc_id = next(iter(uniq))
+
+                esc_id = doc_id.replace("'", "''")
+                # 2. Texte intégral reconstruit depuis tous les chunks.
+                full = await rag_engine.get_full_document(doc_id)
+                texte = (full or {}).get("texte_integral", "") or ""
+                MAX_CHARS = 14_000
+                tronque = len(texte) > MAX_CHARS
+                if tronque:
+                    texte = texte[:MAX_CHARS]
+
+                # 3. Fiche structurée (identité + expériences + certifications).
+                cv_res = await ro_sql.query(
+                    "SELECT nom_complet, titre_poste, annees_experience, localisation, fichier_source "
+                    f"FROM kb_cv WHERE doc_id='{esc_id}' LIMIT 1",
+                    KB_TABLES,
+                )
+                cv_row = cv_res["resultats"][0] if cv_res["resultats"] else {}
+                exp_res = await ro_sql.query(
+                    "SELECT intitule_projet, client, role, secteur, date_debut, date_fin, en_cours "
+                    f"FROM kb_cv_experiences WHERE doc_id='{esc_id}' "
+                    "ORDER BY date_debut DESC LIMIT 100",
+                    KB_TABLES,
+                )
+                cert_res = await ro_sql.query(
+                    "SELECT intitule, organisme, annee "
+                    f"FROM kb_cv_certifications WHERE doc_id='{esc_id}' ORDER BY annee DESC LIMIT 100",
+                    KB_TABLES,
+                )
+
+                if not texte and not cv_row:
+                    return json.dumps({
+                        "message": f"Aucun contenu trouvé pour le doc_id '{doc_id}'.",
+                        "profil": None,
+                    }, ensure_ascii=False), False
+
+                return json.dumps({
+                    "profil": {
+                        "doc_id": doc_id,
+                        "nom": cv_row.get("nom_complet"),
+                        "titre": cv_row.get("titre_poste"),
+                        "annees_experience": cv_row.get("annees_experience"),
+                        "localisation": cv_row.get("localisation"),
+                        "fichier_source": cv_row.get("fichier_source") or (full or {}).get("filename"),
+                        "experiences": exp_res["resultats"],
+                        "certifications": cert_res["resultats"],
+                        "texte_integral": texte,
+                        "texte_tronque": tronque,
+                    },
+                    "consigne": (
+                        "Raconte l'HISTOIRE COMPLÈTE de la personne à partir de ces données : synthèse du profil, "
+                        "parcours et expériences (du plus récent au plus ancien), formations, certifications et "
+                        "compétences clés. Appuie-toi sur 'texte_integral' pour le détail narratif et sur les listes "
+                        "structurées pour la précision. Cite le fichier source."
+                    ),
+                }, ensure_ascii=False), False
+            except SqlGuardError as guard_err:
+                return json.dumps({"erreur": f"Requête refusée (garde-fou) : {guard_err}"}), True
+            except Exception as e:
+                return json.dumps({"erreur": f"Profil indisponible : {e}. Essaie rechercher_documents_ged."}), True
+
         return json.dumps({"erreur": f"Outil inconnu : {tool_name}"}), True
 
     except Exception as exc:
@@ -1220,7 +1376,9 @@ async def chat_query(
     """
     container = request.app.state.container
     crm_repo = container.crm_repo
-    rag_engine = container.rag_engine
+    # Chat (uc02) : moteur RAG FR (CamemBERT) sur la collection neurones_ged_fr.
+    # Presale (uc10) garde container.rag_engine (collection historique) — non impacté.
+    rag_engine = container.rag_engine_fr
     llm = container.llm_haiku
 
     # Parser les fichiers joints AVANT de démarrer le streaming
@@ -1263,7 +1421,7 @@ async def chat_query(
                 if intent_hint == "local_db" or parsed_docs:
                     return [], ""
                 try:
-                    srcs = await rag_engine.search(text)
+                    srcs = await rag_engine.search(text, min_dense_score=settings.ged_min_similarity)
                     ctx = await rag_engine.build_context(srcs, max_tokens=settings.max_context_tokens) if srcs else ""
                     return srcs, ctx
                 except Exception as e:
@@ -1402,7 +1560,7 @@ async def chat_query(
                     system=_get_system_prompt(),
                     messages=messages,
                     tools=_CRM_TOOLS,
-                    max_tokens=1200,
+                    max_tokens=1500,
                 ):
                     if event["type"] == "token":
                         collected_text += event["content"]

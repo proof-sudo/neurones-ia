@@ -60,6 +60,16 @@ try:
         _TESSERACT_AVAILABLE = True
 
     if _TESSERACT_AVAILABLE:
+        # tessdata local au projet (data/tessdata) → ajoute le pack 'fra' sans droits admin
+        # sur Program Files. DOIT être posé AVANT get_languages/OCR pour être pris en compte.
+        try:
+            from pathlib import Path as _Path
+            _tessdata = _Path(settings.tessdata_dir).resolve()
+            if _tessdata.is_dir() and any(_tessdata.glob("*.traineddata")):
+                os.environ["TESSDATA_PREFIX"] = str(_tessdata)
+                logger.info("OCR : tessdata local → %s", _tessdata)
+        except Exception as _e:
+            logger.debug("tessdata local non appliqué : %s", _e)
         try:
             _installed_langs = set(pytesseract.get_languages(config=""))
         except Exception as e:  # binaire injoignable, droits, etc.
