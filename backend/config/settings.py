@@ -32,6 +32,20 @@ class Settings(BaseSettings):
     embed_fallback_enabled: bool = True      # bascule sur sentence-transformers si OpenAI indisponible
     embed_fallback_model: str = "paraphrase-multilingual-MiniLM-L12-v2"   # local multilingue (FR), 384d
 
+    # ── Embeddings CamemBERT pour le CHAT + les DOCUMENTS (uc02) uniquement ──────────
+    # Architecture DOUBLE COLLECTION : le chat (uc02) interroge une collection ChromaDB
+    # dédiée, embarquée avec un modèle FRANCOPHONE NATIF (sentence-camembert). Presale
+    # (uc10) et la veille gardent l'embedder/la collection historiques — AUCUN changement
+    # de comportement pour eux. Le GEDIndexer indexe chaque document dans LES DEUX
+    # collections (2 embedders locaux) pour qu'elles restent synchronisées.
+    #   - chat_embedding_enabled=False → kill-switch : le chat retombe sur l'embedder
+    #     historique (rag_engine legacy) ; aucune collection FR n'est créée ni interrogée.
+    #   - Après activation (ou changement de modèle), réindexer une fois : POST /ged/rebuild
+    #     (ou scripts/reindex_all.py) pour peupler la collection FR.
+    chat_embedding_enabled: bool = True
+    chat_embedding_model: str = "dangvantuan/sentence-camembert-base"   # FR natif, 768d, CPU-friendly
+    chat_collection_name: str = "neurones_ged_fr"                       # collection ChromaDB dédiée au chat
+
     # Odoo (serveur distant)
     odoo_url: str = ""
     odoo_db: str = ""
@@ -83,12 +97,23 @@ class Settings(BaseSettings):
     # re-rank). Le re-rank LLM (project_llm_rerank) fait la précision.
     project_min_similarity: float = 0.35
     project_llm_rerank: bool = True
+    # Même levier ① pour la recherche GED du chat (rechercher_documents_ged). Sans plancher, le RRF
+    # (purement rangé) remplissait toujours ses rerank_top_k places, même quand 1-2 docs seulement
+    # étaient vraiment pertinents — il complétait le quota avec des voisins lointains hors-sujet
+    # (ex. une ABE PROSUMA pour une question sur la virtualisation). Le plancher cosinus les écarte
+    # AVANT la fusion ; les matches BM25 lexicaux exacts restent éligibles. 0 = désactivé.
+    ged_min_similarity: float = 0.35
     # Cache disque des analyses /score (1 fichier JSON par AO, nommé par SHA-256). Désactivé en
     # prod : chaque AO écrivait un fichier → saturation disque serveur. False = aucune lecture ni
     # écriture de cache (chaque /score recalcule). Réactivable sans toucher au code.
     score_cache_enabled: bool = False
 
     # OCR PDF
+    # tessdata local au projet (eng+osd+fra) — permet d'ajouter le pack FR sans droits admin
+    # sur C:\Program Files\Tesseract-OCR\tessdata. Si le dossier existe et contient des
+    # *.traineddata, le parser pose TESSDATA_PREFIX dessus → OCR « fra+eng ». Vide/inexistant
+    # → Tesseract utilise le tessdata système (eng seul ici).
+    tessdata_dir: Path = Path("../data/tessdata")
     ocr_max_pages: int = 40              # cap pages OCR (perf) — au-delà, WARNING explicite
     ocr_min_chars_per_page: int = 80     # en-dessous, la couche texte est jugée trop maigre → OCR
     # Page avec une image significative (certif/diplôme scanné) ET peu de texte → OCR ciblé,
@@ -101,6 +126,16 @@ class Settings(BaseSettings):
     # Extraction structurée (couche kb_*) — Phase 1
     extraction_confidence_threshold: float = 0.6   # sous ce score → revue_humaine=True
     structured_extract_text_limit: int = 8000       # nb de caractères envoyés au LLM
+
+    # Vision — pages porteuses d'IMAGES (tous types de docs). Un LLM multimodal (Haiku) rend
+    # la page en image et TRANSCRIT le texte + DÉCRIT schémas/tableaux/logos/badges, que ni la
+    # couche texte ni l'OCR ne restituent. Déclenché quand une page a des images couvrant
+    # ≥ vision_area_ratio de sa surface (ou une page de CV titrée « certifications »).
+    # Borné à vision_max_pages pages/doc → 1 appel vision/doc max. False = désactivé.
+    vision_enabled: bool = True
+    vision_max_pages: int = 3          # plafond de pages-image analysées par document (coût)
+    vision_area_ratio: float = 0.15    # part de surface en image pour déclencher la vision
+    vision_dpi: int = 150              # résolution de rendu des pages (lisibilité vs poids)
 
     # Résolution d'entités (Phase 2)
     entity_match_auto_threshold: float = 0.90       # ≥ → lien automatique

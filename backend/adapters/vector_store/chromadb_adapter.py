@@ -17,7 +17,11 @@ COLLECTION_NAME = "neurones_ged"
 class ChromaDBAdapter(VectorStore):
     """ChromaDB local pour le MVP — remplaçable par pgvector sans toucher les use cases."""
 
-    def __init__(self):
+    def __init__(self, collection_name: str = COLLECTION_NAME):
+        # collection_name : permet plusieurs collections dans le même ChromaDB — ex. une
+        # collection FR dédiée au chat (neurones_ged_fr, embeddings CamemBERT) à côté de la
+        # collection historique (neurones_ged) que presale continue d'interroger.
+        self._collection_name = collection_name
         # anonymized_telemetry=False : coupe le posthog interne de Chroma (incompatible avec
         # cette version → spam d'ERROR 'capture() takes 1 positional argument' à chaque requête).
         self._client = chromadb.PersistentClient(
@@ -27,11 +31,11 @@ class ChromaDBAdapter(VectorStore):
         self._collection = self._get_or_create_collection()
         # Cache le count pour éviter un full-scan metadata à chaque recherche
         self._approx_count: int = self._collection.count()
-        logger.info("ChromaDB initialisé — %d chunks indexés", self._approx_count)
+        logger.info("ChromaDB initialisé — collection '%s', %d chunks indexés", self._collection_name, self._approx_count)
 
     def _get_or_create_collection(self):
         return self._client.get_or_create_collection(
-            name=COLLECTION_NAME,
+            name=self._collection_name,
             metadata={"hnsw:space": "cosine"},
         )
 
@@ -39,9 +43,9 @@ class ChromaDBAdapter(VectorStore):
         logger.warning(
             "ChromaDB : dimension d'embedding changée — suppression de la collection '%s'. "
             "Tous les documents devront être réindexés via le bouton 'Réindexer'.",
-            COLLECTION_NAME,
+            self._collection_name,
         )
-        self._client.delete_collection(COLLECTION_NAME)
+        self._client.delete_collection(self._collection_name)
         self._collection = self._get_or_create_collection()
         self._approx_count = 0
 
@@ -175,12 +179,12 @@ class ChromaDBAdapter(VectorStore):
     def reset(self) -> None:
         """Supprime puis recrée la collection vide (reconstruction à neuf)."""
         try:
-            self._client.delete_collection(COLLECTION_NAME)
+            self._client.delete_collection(self._collection_name)
         except Exception as exc:
             logger.debug("reset : delete_collection sans effet (%s)", exc)
         self._collection = self._get_or_create_collection()
         self._approx_count = 0
-        logger.info("ChromaDB : collection '%s' réinitialisée (rebuild)", COLLECTION_NAME)
+        logger.info("ChromaDB : collection '%s' réinitialisée (rebuild)", self._collection_name)
 
     async def delete_orphans(self, valid_doc_ids: set[str]) -> list[str]:
         """Supprime les chunks dont le doc_id n'est plus un document actif du registre

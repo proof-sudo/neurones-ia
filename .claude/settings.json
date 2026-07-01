@@ -6,7 +6,11 @@
       "Bash(./.venv/Scripts/python.exe -m pytest test_metadata_extraction.py::test_round_trip test_strategy_pipeline.py::test_happy_standard -q)",
       "Bash(./.venv/Scripts/python.exe -m pytest --collect-only -q)",
       "Bash(node_modules/.bin/tsc --noEmit)",
-      "Bash(echo \"=== total tsc errors: $\\(node_modules/.bin/tsc --noEmit 2>&1)"
+      "Bash(echo \"=== total tsc errors: $\\(node_modules/.bin/tsc --noEmit 2>&1)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:8000/docs)",
+      "Bash(python -c \"import sys,json; d=json.load\\(sys.stdin\\); print\\('query:',d.get\\('query'\\)\\); [print\\(f\\\\\"{\\(r.get\\('dense_score'\\) if r.get\\('dense_score'\\) is not None else '--'\\):>6} dense | bm25_rank={r.get\\('sparse_rank'\\)} | {r.get\\('filename'\\)}\\\\\"\\) for r in d.get\\('results',[]\\)]\")",
+      "Bash(curl -s -X POST http://localhost:8000/v1/ged/search-debug -H \"Content-Type: application/json\" -d '{\"query\":\"ingenieurs experience virtualisation Hyper-V VMware\",\"top_k\":12}')",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X POST http://localhost:8000/v1/ged/search-debug -H \"Content-Type: application/json\" -d '{\"query\":\"test\",\"top_k\":3}')"
     ]
   }
 }

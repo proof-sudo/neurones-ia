@@ -1,3 +1,4 @@
+import base64
 import json
 import logging
 from typing import AsyncIterator
@@ -69,6 +70,40 @@ class ClaudeHaikuAdapter(LLMGateway):
             system=prompt, user=text, max_tokens=max_tokens,
             raise_on_truncation=raise_on_truncation, temperature=temperature,
         )
+
+    async def generate_with_images(
+        self,
+        system: str,
+        user: str,
+        images: list[tuple[str, bytes]],
+        max_tokens: int = 1024,
+        temperature: float | None = None,
+    ) -> str:
+        """Génération MULTIMODALE : `images` = liste de (media_type, octets) — ex.
+        ("image/png", b"..."). Haiku 4.5 est multimodal. Méthode ADDITIVE (hors interface
+        LLMGateway abstraite) : seul cet adaptateur la fournit, l'appelant teste sa présence
+        via hasattr. Utilisé pour lire les logos de certifications dans les CV scannés."""
+        content: list[dict] = []
+        for media_type, raw in images:
+            content.append({
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": media_type,
+                    "data": base64.standard_b64encode(raw).decode("ascii"),
+                },
+            })
+        content.append({"type": "text", "text": user})
+        kwargs = dict(
+            model=self._model,
+            max_tokens=max_tokens,
+            system=[{"type": "text", "text": system, "cache_control": _SYSTEM_CACHE_CONTROL}],
+            messages=[{"role": "user", "content": content}],
+        )
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        response = await self._client.messages.create(**kwargs)
+        return response.content[0].text if response.content else ""
 
     async def classify(self, text: str, categories: list[str], default: str | None = None) -> str:
         system = (

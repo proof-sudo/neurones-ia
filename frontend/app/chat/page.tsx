@@ -3,12 +3,31 @@ import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Send, Bot, User, FileText, Loader2, AlertTriangle,
   Plus, Paperclip, X, Sparkles, MessageSquare, Square,
-  History, Trash2, ChevronDown,
+  History, Trash2, ChevronDown, Download, Eye,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { streamChat, fetchChatSessions, fetchSessionHistory, deleteChatSession, type Source, type ChatSession } from "@/lib/api";
+import { streamChat, fetchChatSessions, fetchSessionHistory, deleteChatSession, downloadGEDFile, fetchGEDFileBlobUrl, fetchGEDDocumentChunks, type Source, type ChatSession } from "@/lib/api";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import ChartBlock from "@/components/ChartBlock";
+
+/** Concatène récursivement le texte brut d'un nœud Markdown (utilisé pour les blocs ```chart). */
+function nodeText(children: React.ReactNode): string {
+  if (typeof children === "string") return children;
+  if (typeof children === "number") return String(children);
+  if (Array.isArray(children)) return children.map(nodeText).join("");
+  if (children && typeof children === "object" && "props" in children) {
+    return nodeText((children as { props?: { children?: React.ReactNode } }).props?.children);
+  }
+  return "";
+}
+
+/** True si l'élément Markdown enfant est un bloc de code ```chart. */
+function isChartChild(child: React.ReactNode): boolean {
+  if (!child || typeof child !== "object" || !("props" in child)) return false;
+  const cls = (child as { props?: { className?: string } }).props?.className ?? "";
+  return /language-chart\b/.test(cls);
+}
 
 interface Message {
   role: "user" | "assistant";
@@ -42,8 +61,24 @@ const THINKING_STEPS = [
   "Rédaction de la réponse…",
 ];
 
-function SourcesDropdown({ sources }: { sources: Source[] }) {
+function SourcesDropdown({ sources, onPreview }: { sources: Source[]; onPreview: (s: Source) => void }) {
   const [open, setOpen] = useState(false);
+  const [downloading, setDownloading] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  const handleDownload = useCallback(async (src: Source) => {
+    if (!src.doc_id || downloading) return;
+    setDownloading(src.doc_id);
+    setDownloadError(null);
+    try {
+      await downloadGEDFile(src.doc_id, src.filename);
+    } catch {
+      setDownloadError(src.doc_id);
+    } finally {
+      setDownloading(null);
+    }
+  }, [downloading]);
+
   if (sources.length === 0) return null;
 
   return (
@@ -78,15 +113,148 @@ function SourcesDropdown({ sources }: { sources: Source[] }) {
               <div className="flex-1 min-w-0">
                 <p className="text-xs font-semibold text-slate-700 truncate">{src.filename}</p>
                 <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">{src.excerpt}</p>
+                {downloadError === src.doc_id && (
+                  <p className="text-[11px] text-red-500 mt-0.5">Téléchargement impossible</p>
+                )}
               </div>
-              <span className="text-[11px] font-bold text-violet-600 shrink-0 bg-violet-50 px-1.5 py-0.5 rounded-full border border-violet-100">
-                #{j + 1}
-              </span>
+              <div className="flex items-center gap-1.5 shrink-0">
+                <span className="text-[11px] font-bold text-violet-600 bg-violet-50 px-1.5 py-0.5 rounded-full border border-violet-100">
+                  #{j + 1}
+                </span>
+                {src.doc_id && (
+                  <button
+                    onClick={() => onPreview(src)}
+                    title={`Aperçu de ${src.filename}`}
+                    aria-label={`Aperçu de ${src.filename}`}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300"
+                  >
+                    <Eye className="w-3.5 h-3.5" />
+                  </button>
+                )}
+                {src.doc_id && (
+                  <button
+                    onClick={() => handleDownload(src)}
+                    disabled={downloading === src.doc_id}
+                    title={`Télécharger ${src.filename}`}
+                    aria-label={`Télécharger ${src.filename}`}
+                    className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 transition-colors disabled:opacity-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-violet-300"
+                  >
+                    {downloading === src.doc_id ? (
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    ) : (
+                      <Download className="w-3.5 h-3.5" />
+                    )}
+                  </button>
+                )}
+              </div>
             </div>
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+function DocumentPreviewPanel({ doc, onClose }: { doc: Source | null; onClose: () => void }) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null);
+  const [textContent, setTextContent] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(false);
+
+  const isPdf = !!doc && doc.filename.toLowerCase().endsWith(".pdf");
+
+  useEffect(() => {
+    if (!doc) return;
+    let cancelled = false;
+    let createdUrl: string | null = null;
+    setLoading(true);
+    setError(false);
+    setBlobUrl(null);
+    setTextContent(null);
+    (async () => {
+      try {
+        if (isPdf) {
+          const url = await fetchGEDFileBlobUrl(doc.doc_id);
+          createdUrl = url;
+          if (!cancelled) setBlobUrl(url);
+        } else {
+          const data = await fetchGEDDocumentChunks(doc.doc_id);
+          const text = [...data.chunks]
+            .sort((a, b) => a.chunk_index - b.chunk_index)
+            .map((c) => c.content)
+            .join("\n\n");
+          if (!cancelled) setTextContent(text || "(Aucun texte extrait pour ce document.)");
+        }
+      } catch {
+        if (!cancelled) setError(true);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      if (createdUrl) URL.revokeObjectURL(createdUrl);
+    };
+  }, [doc, isPdf]);
+
+  if (!doc) return null;
+
+  return (
+    <>
+      {/* Backdrop mobile */}
+      <div className="fixed inset-0 z-30 bg-black/40 sm:hidden" onClick={onClose} />
+      <div
+        className="fixed sm:relative inset-y-0 right-0 z-40 sm:z-10 w-full sm:w-[440px] md:w-[480px] shrink-0 flex flex-col"
+        style={{ background: "#ffffff", borderLeft: "1px solid #ecedf0" }}
+      >
+        {/* Header */}
+        <div className="shrink-0 px-4 py-3 flex items-center gap-2" style={{ borderBottom: "1px solid #ecedf0" }}>
+          <FileText className="w-4 h-4 text-violet-500 shrink-0" />
+          <p className="flex-1 min-w-0 text-sm font-semibold text-slate-800 truncate" title={doc.filename}>
+            {doc.filename}
+          </p>
+          <button
+            onClick={() => downloadGEDFile(doc.doc_id, doc.filename).catch(() => {})}
+            title="Télécharger"
+            aria-label="Télécharger"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-violet-600 hover:bg-violet-50 transition-colors"
+          >
+            <Download className="w-4 h-4" />
+          </button>
+          <button
+            onClick={onClose}
+            title="Fermer l'aperçu"
+            aria-label="Fermer l'aperçu"
+            className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Body */}
+        <div className="flex-1 min-h-0 overflow-hidden bg-slate-50">
+          {loading ? (
+            <div className="h-full flex items-center justify-center text-slate-400">
+              <Loader2 className="w-5 h-5 animate-spin" />
+            </div>
+          ) : error ? (
+            <div className="h-full flex flex-col items-center justify-center gap-2 text-slate-500 px-6 text-center">
+              <AlertTriangle className="w-5 h-5 text-red-400" />
+              <p className="text-sm">Aperçu indisponible pour ce document.</p>
+            </div>
+          ) : isPdf && blobUrl ? (
+            <iframe src={blobUrl} title={doc.filename} className="w-full h-full border-0" />
+          ) : textContent !== null ? (
+            <div className="h-full overflow-y-auto scrollbar-thin p-4">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-2">
+                Contenu extrait (texte indexé)
+              </p>
+              <pre className="text-xs text-slate-700 whitespace-pre-wrap font-sans leading-relaxed">{textContent}</pre>
+            </div>
+          ) : null}
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -145,8 +313,11 @@ const mdComponents = {
       {children}
     </li>
   ),
-  code: ({ inline, children }: { inline?: boolean; children?: React.ReactNode }) =>
-    inline ? (
+  code: ({ inline, className, children }: { inline?: boolean; className?: string; children?: React.ReactNode }) => {
+    if (/language-chart\b/.test(className ?? "")) {
+      return <ChartBlock raw={nodeText(children)} />;
+    }
+    return inline ? (
       <code className="bg-slate-100 text-[#0a2a43] text-[0.82em] font-mono px-1.5 py-0.5 rounded">
         {children}
       </code>
@@ -154,10 +325,14 @@ const mdComponents = {
       <code className="block bg-slate-900 text-slate-100 text-xs font-mono p-3 rounded-lg overflow-x-auto my-2">
         {children}
       </code>
-    ),
-  pre: ({ children }: { children?: React.ReactNode }) => (
-    <pre className="my-2 overflow-x-auto rounded-lg bg-slate-900">{children}</pre>
-  ),
+    );
+  },
+  pre: ({ children }: { children?: React.ReactNode }) => {
+    // Un bloc ```chart est rendu par ChartBlock (carte claire) → pas d'habillage <pre> sombre.
+    const child = Array.isArray(children) ? children[0] : children;
+    if (isChartChild(child)) return <>{children}</>;
+    return <pre className="my-2 overflow-x-auto rounded-lg bg-slate-900">{children}</pre>;
+  },
   hr: () => <hr className="my-3 border-slate-200" />,
   table: ({ children }: { children?: React.ReactNode }) => (
     <div className="my-2 overflow-x-auto rounded-xl border border-slate-200">
@@ -451,6 +626,7 @@ export default function ChatPage() {
   };
 
   const hasMessages = messages.length > 0;
+  const [previewDoc, setPreviewDoc] = useState<Source | null>(null);
 
   const formatSessionDate = (iso: string | null) => {
     if (!iso) return "";
@@ -693,7 +869,7 @@ export default function ChatPage() {
 
                   {/* Sources dropdown */}
                   {msg.sources && !msg.streaming && (
-                    <SourcesDropdown sources={msg.sources} />
+                    <SourcesDropdown sources={msg.sources} onPreview={setPreviewDoc} />
                   )}
                 </div>
               </div>
@@ -801,6 +977,9 @@ export default function ChatPage() {
         </div>
       </div>
       </div>{/* end zone principale */}
+
+      {/* ── Panneau d'aperçu document (droite) ── */}
+      <DocumentPreviewPanel doc={previewDoc} onClose={() => setPreviewDoc(null)} />
     </div>
   );
 }

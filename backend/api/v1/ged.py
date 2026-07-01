@@ -1,9 +1,13 @@
 import logging
+import mimetypes
 import shutil
+import unicodedata
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
 from config.settings import settings
@@ -264,7 +268,8 @@ async def search_debug(body: SearchDebugRequest, request: Request):
     """Playground d'inspection du retrieval : scores dense / BM25 / RRF par chunk, sans dédup."""
     if not body.query.strip():
         raise HTTPException(status_code=400, detail="Requête vide")
-    rag_engine = _container(request).rag_engine
+    # Inspection alignée sur ce que le chat consomme → moteur FR (CamemBERT).
+    rag_engine = _container(request).rag_engine_fr
     return await rag_engine.search_debug(
         query=body.query,
         top_k=max(1, min(body.top_k, 50)),
@@ -280,7 +285,8 @@ async def search_prod(body: SearchDebugRequest, request: Request):
     if not body.query.strip():
         raise HTTPException(status_code=400, detail="Requête vide")
     container = _container(request)
-    rag_engine = container.rag_engine
+    # Recherche de PRODUCTION telle que le chat la consomme → moteur FR (CamemBERT).
+    rag_engine = container.rag_engine_fr
     token_budget = container.token_budget
     filt = {"doc_type": body.doc_type} if body.doc_type else None
 
@@ -334,7 +340,8 @@ async def search_prod(body: SearchDebugRequest, request: Request):
 @router.get("/ged/index-health")
 async def index_health(request: Request):
     """Métriques de santé de l'index vectoriel + détection d'anomalies (orphelins)."""
-    vector_store = _container(request).vector_store
+    # Santé de la collection que le chat interroge → collection FR (CamemBERT).
+    vector_store = _container(request).vector_store_fr
     registry = _container(request).doc_registry
 
     stats = await vector_store.get_index_stats()
@@ -504,6 +511,51 @@ async def retry_quarantine(
         force=body.force_index, bypass_validation=body.force_index,
     )
     return {"status": "retrying", "file_path": body.file_path, "force_index": body.force_index}
+
+
+# ── GET /ged/files/{doc_id}/download ──────────────────────────────────────────
+
+def _content_disposition(filename: str, inline: bool) -> str:
+    """Content-Disposition robuste : Starlette encode les en-têtes en latin-1, donc un
+    accent/espace/— dans le nom ferait crasher la réponse. On donne un nom ASCII de repli
+    en filename= ET le nom UTF-8 complet en filename* (RFC 5987) pour le navigateur."""
+    disposition = "inline" if inline else "attachment"
+    ascii_name = (
+        unicodedata.normalize("NFKD", filename)
+        .encode("ascii", "ignore")
+        .decode()
+        .replace('"', "'")
+        .strip()
+    ) or "document"
+    return f"{disposition}; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(filename)}"
+
+
+@router.get("/ged/files/{doc_id}/download")
+async def download_file(doc_id: str, request: Request, inline: bool = False):
+    """Sert le fichier source d'un document GED.
+    inline=False (défaut) → téléchargement (attachment) ; inline=True → affichage dans le
+    navigateur (aperçu PDF). Auth + garde anti-traversée (chemin sous la racine GED)."""
+    registry = _container(request).doc_registry
+    entries = await registry.list_active_entries()
+    entry = next((e for e in entries if e.doc_id == doc_id), None)
+    if not entry:
+        raise HTTPException(status_code=404, detail="Document introuvable")
+
+    file_path = Path(entry.file_path).resolve()
+    # Garde anti-traversée : le fichier servi DOIT rester sous la racine GED.
+    try:
+        file_path.relative_to(_GED_ROOT.resolve())
+    except ValueError:
+        raise HTTPException(status_code=403, detail="Chemin hors de la GED")
+    if not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Fichier absent du disque")
+
+    media_type, _ = mimetypes.guess_type(file_path.name)
+    return FileResponse(
+        path=str(file_path),
+        media_type=media_type or "application/octet-stream",
+        headers={"Content-Disposition": _content_disposition(file_path.name, inline)},
+    )
 
 
 # ── DELETE /ged/files/{doc_id} ────────────────────────────────────────────────
