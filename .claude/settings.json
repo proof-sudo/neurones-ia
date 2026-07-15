@@ -13,7 +13,11 @@
       "Bash(curl -s -o /dev/null -w \"%{http_code}\" -X POST http://localhost:8000/v1/ged/search-debug -H \"Content-Type: application/json\" -d '{\"query\":\"test\",\"top_k\":3}')",
       "PowerShell(Set-Location backend; if \\(Test-Path .venv\\\\Scripts\\\\python.exe\\) { $py = \".\\\\.venv\\\\Scripts\\\\python.exe\" } else { $py = \"python\" }; & $py -m pytest tests/unit/test_presales_conformity.py tests/unit/test_presales_matrix_store.py tests/unit/test_presales_latency.py -p no:cacheprovider -q)",
       "PowerShell(& .\\\\.venv\\\\Scripts\\\\python.exe -m pytest tests/unit/test_presales_offer.py tests/unit/test_presales_matrix_export.py tests/unit/test_presales_conformity.py tests/unit/test_presales_matrix_store.py tests/unit/test_presales_latency.py -p no:cacheprovider -q)",
-      "PowerShell(& .\\\\.venv\\\\Scripts\\\\python.exe -m pytest tests/unit -p no:cacheprovider -q 2>&1)"
+      "PowerShell(& .\\\\.venv\\\\Scripts\\\\python.exe -m pytest tests/unit -p no:cacheprovider -q 2>&1)",
+      "Bash(node -e \"console.log\\(require\\('next/package.json'\\).version\\)\")",
+      "Bash(python wt_check.py)",
+      "Bash(python wt_debug.py)",
+      "Bash(git checkout *)"
     ]
   }
 }

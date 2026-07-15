@@ -9,6 +9,8 @@ import {
   Zap,
   LogOut,
   Rss,
+  Radar,
+  Gauge,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -27,7 +29,9 @@ const navSections = [
       { href: "/chat",     label: "Connaissance", icon: MessageSquare, shortcut: "⌘2" },
       { href: "/ged",      label: "Documents",    icon: FolderOpen,    shortcut: "⌘3" },
       { href: "/presales", label: "Avant-vente",  icon: FileSearch,    shortcut: "⌘4" },
-      { href: "/veille",   label: "Veille AO",    icon: Rss,           shortcut: "⌘5" },
+      // { href: "/veille",   label: "Veille AO",    icon: Rss,           shortcut: "⌘5" },
+      { href: "/watch-tracker", label: "Veille AO", icon: Radar,    shortcut: "⌘6" },
+      { href: "/directeur-commercial", label: "Directeur Commercial", icon: Gauge, shortcut: "⌘7" },
     ],
   },
 ];
