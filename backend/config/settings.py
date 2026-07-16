@@ -177,6 +177,13 @@ class Settings(BaseSettings):
     # sans texte) après N jours d'inactivité. 0 = désactivé.
     quarantine_retention_days: int = 7
 
+    # Veille AO / Watch-Tracker — agent d'analyse S2I (signal → risque → offre)
+    veille_ai_enabled: bool = True            # kill-switch : False → scan mots-clés seul (pas de Claude)
+    veille_max_ai_entries_per_scan: int = 30  # plafond d'appels Claude par scan (maîtrise coût/latence)
+    # Débriefing pré-généré au scan (Claude lit la page réelle via web_fetch et sauvegarde).
+    veille_debrief_min_criticite: int = 40    # criticité min pour pré-générer un débriefing
+    veille_max_debrief_per_scan: int = 12     # plafond de débriefings pré-générés par scan (0 = off)
+
     # Cache
     redis_url: str = "redis://localhost:6379"
     cache_ttl_seconds: int = 3600

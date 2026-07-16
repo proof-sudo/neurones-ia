@@ -105,6 +105,77 @@ class ClaudeHaikuAdapter(LLMGateway):
         response = await self._client.messages.create(**kwargs)
         return response.content[0].text if response.content else ""
 
+    async def generate_with_web_search(
+        self, system: str, user: str, max_tokens: int = 1024,
+        max_uses: int = 5, temperature: float | None = None,
+    ) -> str:
+        """Génération avec recherche + récupération web côté serveur (outils natifs
+        Claude, sans clé tierce). Méthode ADDITIVE (hors interface LLMGateway
+        abstraite, même convention que generate_with_images) : seul cet adaptateur
+        la fournit, l'appelant teste sa présence via hasattr. Utilisée par l'agent
+        Watch-Tracker quand l'option « Explorer Internet » est activée.
+
+        web_search seul renvoie souvent l'URL générique d'une page de LISTE (ex.
+        « /appels-offres »), pas le lien direct vers l'annonce précise — de
+        nombreux sites (BCEAO, DGMP…) n'indexent que la page de liste dans les
+        moteurs de recherche. web_fetch permet à Claude d'ouvrir cette page de
+        liste et d'en extraire le lien direct vers l'offre spécifique.
+        `max_uses` plafonne le nombre d'appels de chaque outil (coût)."""
+        kwargs = dict(
+            model=self._model,
+            max_tokens=max_tokens,
+            system=[{"type": "text", "text": system, "cache_control": _SYSTEM_CACHE_CONTROL}],
+            tools=[
+                {
+                    "type": "web_search_20260209", "name": "web_search", "max_uses": max_uses,
+                    # Requis par l'API pour ce modèle : appel direct (pas d'appel programmatique
+                    # depuis code execution) — sinon 400 invalid_request_error.
+                    "allowed_callers": ["direct"],
+                },
+                {
+                    "type": "web_fetch_20260209", "name": "web_fetch", "max_uses": max_uses,
+                    "allowed_callers": ["direct"],
+                },
+            ],
+            messages=[{"role": "user", "content": user}],
+        )
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        response = await self._client.messages.create(**kwargs)
+        # Ne garder que les blocs texte (la synthèse) ; les blocs de résultats de
+        # recherche intercalés (server_tool_use / web_search_tool_result) sont déjà
+        # pris en compte par Claude dans son raisonnement, pas à re-parser ici.
+        return "".join(block.text for block in response.content if block.type == "text")
+
+    async def generate_with_url_fetch(
+        self, system: str, user: str, max_tokens: int = 1200,
+        max_uses: int = 2, temperature: float | None = None,
+    ) -> str:
+        """Génération avec récupération d'une page web précise (outil natif Claude
+        web_fetch seul, sans web_search). Méthode ADDITIVE (hors interface
+        LLMGateway abstraite, même convention que generate_with_images) : seul cet
+        adaptateur la fournit, l'appelant teste sa présence via hasattr. Utilisée
+        pour le débriefing d'AO : l'URL exacte de l'annonce est déjà connue (donnée
+        dans `user`), Claude l'ouvre et en extrait/synthétise le contenu — pas
+        besoin de chercher, contrairement à generate_with_web_search."""
+        kwargs = dict(
+            model=self._model,
+            max_tokens=max_tokens,
+            system=[{"type": "text", "text": system, "cache_control": _SYSTEM_CACHE_CONTROL}],
+            tools=[{
+                "type": "web_fetch_20260209", "name": "web_fetch", "max_uses": max_uses,
+                "allowed_callers": ["direct"],
+            }],
+            messages=[{"role": "user", "content": user}],
+        )
+        if temperature is not None:
+            kwargs["temperature"] = temperature
+        response = await self._client.messages.create(**kwargs)
+        # Séparateur "\n\n" (pas "") : Claude émet souvent plusieurs blocs texte
+        # séparés par l'appel d'outil (ex. "Je vais l'ouvrir." puis la synthèse) —
+        # un join sans séparateur les colle sans espace ("vous.Parfait...").
+        return "\n\n".join(block.text for block in response.content if block.type == "text")
+
     async def classify(self, text: str, categories: list[str], default: str | None = None) -> str:
         system = (
             f"Tu es un classificateur. Réponds UNIQUEMENT avec l'une de ces catégories : "

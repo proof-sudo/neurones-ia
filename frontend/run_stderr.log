@@ -1,1 +1,0 @@
- ⚠ `experimental.dynamicIO` has been renamed to `experimental.cacheComponents`. Please update your next.config.js file accordingly.

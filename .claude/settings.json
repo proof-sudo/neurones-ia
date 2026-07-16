@@ -17,7 +17,20 @@
       "Bash(node -e \"console.log\\(require\\('next/package.json'\\).version\\)\")",
       "Bash(python wt_check.py)",
       "Bash(python wt_debug.py)",
-      "Bash(git checkout *)"
+      "Bash(git checkout *)",
+      "Bash(python -m py_compile config/settings.py db/models.py db/database.py modules/uc_veille/s2i_grille.py modules/uc_veille/classifier.py modules/uc_veille/schemas.py modules/uc_veille/router.py jobs/scheduler.py config/container.py)",
+      "Bash(node -e \"const s=require\\('./package.json'\\).scripts; console.log\\(JSON.stringify\\(s,null,2\\)\\)\")",
+      "Bash(python -m py_compile db/models.py modules/uc_veille/schemas.py modules/uc_veille/router.py modules/uc_veille/classifier.py)",
+      "Bash(python -c ' *)",
+      "Bash(pip index *)",
+      "Bash(pip install *)",
+      "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(python -m pip --version)",
+      "Bash(python -m pip show anthropic)",
+      "Bash(curl -s -X POST http://127.0.0.1:8000/v1/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"psoro@neuronestech.com\",\"password\":\"Stalker\"}')",
+      "Read(//tmp/**)",
+      "Bash(curl -s http://127.0.0.1:8000/v1/veille/feed?limit=100 -H 'Authorization: Bearer __CMDSUB_OUTPUT__')",
+      "Bash(python -m py_compile adapters/llm/claude_haiku_adapter.py modules/uc_veille/web_explorer.py)"
     ]
   }
 }

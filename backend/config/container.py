@@ -302,6 +302,7 @@ class Container:
             ged_indexer=self._ged_indexer,
             crm_repo=self._crm_repo,
             odoo_sync_interval_hours=settings.odoo_sync_interval_hours,
+            container=self,
         )
         self._scheduler.start()
 
