@@ -7,6 +7,13 @@ class UserRole(str, Enum):
     ADMIN = "admin"
     USER = "user"
     VIEWER = "viewer"
+    # Personas métier du cockpit (alignés sur le frontend)
+    DG = "dg"
+    DIR_COMMERCIAL = "dir_commercial"
+    DIR_OPERATIONS = "dir_operations"
+    PRESALE = "presale"
+    DIR_FINANCIER = "dir_financier"
+    COMMERCIAL = "commercial"
 
 
 @dataclass

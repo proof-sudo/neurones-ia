@@ -220,17 +220,19 @@ class LocalCRMAdapter(CRMRepository):
         from sqlalchemy import text
         async with AsyncSessionLocal() as session:
             base_sql = """
-                SELECT client_id, client_name,
-                       COUNT(order_id) as nb_commandes,
-                       SUM(amount) as ca_total
-                FROM sale_orders
-                WHERE state IN ('sale', 'done')
+                SELECT o.client_id, o.client_name,
+                       COUNT(o.order_id) as nb_commandes,
+                       SUM(o.amount) as ca_total,
+                       MAX(COALESCE(NULLIF(c.country, ''), 'Autres/non renseigné')) as pays
+                FROM sale_orders o
+                LEFT JOIN clients c ON o.client_id = c.client_id
+                WHERE o.state IN ('sale', 'done')
             """
             params: dict = {}
             if year is not None:
-                base_sql += " AND substr(date_order, 1, 4) = :year"
+                base_sql += " AND substr(o.date_order, 1, 4) = :year"
                 params["year"] = str(year)
-            base_sql += " GROUP BY client_id, client_name ORDER BY ca_total DESC LIMIT :limit"
+            base_sql += " GROUP BY o.client_id, o.client_name ORDER BY ca_total DESC LIMIT :limit"
             params["limit"] = limit
             result = await session.execute(text(base_sql), params)
             return [
@@ -238,6 +240,7 @@ class LocalCRMAdapter(CRMRepository):
                     "client": row[1],
                     "nb_commandes": row[2] or 0,
                     "ca_total_xof": float(row[3] or 0),
+                    "pays": row[4],
                 }
                 for row in result.fetchall()
             ]
@@ -994,6 +997,171 @@ class LocalCRMAdapter(CRMRepository):
                 }
                 for r in rows
             ]
+
+    # ---- Normalisation des stades d'opportunité (les libellés Odoo varient :
+    #      "6-Gagné"/"Won", "7-Perdu"/"Perdu", "1-Qualification"/"Qualified"…) ----
+    _STAGE_CANON = [
+        ("gagn|won", "__won__"),
+        ("perdu|lost", "__lost__"),
+        ("annul|cancel", "__cancelled__"),
+        ("suspend", "__suspended__"),
+        ("new|prospect", "Prospection"),
+        ("qualif", "Qualification"),
+        ("montage", "Montage"),
+        ("transmise", "Transmise"),
+        ("proposition", "Proposition"),
+        ("n[ée]gociation", "Négociation"),
+        ("contractualisation", "Contractualisation"),
+    ]
+    # Ordre d'affichage du pipeline ouvert (celui du cockpit)
+    OPEN_STAGE_ORDER = [
+        "Prospection", "Qualification", "Montage", "Transmise",
+        "Proposition", "Négociation", "Contractualisation",
+    ]
+
+    @classmethod
+    def _canon_stage(cls, stage: str) -> str:
+        import re
+        s = (stage or "").strip().lower()
+        for pattern, canon in cls._STAGE_CANON:
+            if re.search(pattern, s):
+                return canon
+        return "Autre"
+
+    async def get_open_pipeline_stats(self) -> dict:
+        """Pipeline OUVERT uniquement (exclut gagné/perdu/annulé/suspendu), stades normalisés."""
+        from sqlalchemy import text
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(text("""
+                SELECT stage, COUNT(*), SUM(expected_revenue),
+                       SUM(expected_revenue * probability / 100),
+                       SUM(CASE WHEN created_at IS NOT NULL
+                                 AND julianday('now') - julianday(created_at) > 365
+                            THEN 1 ELSE 0 END)
+                FROM opportunities GROUP BY stage
+            """))).fetchall()
+
+        closed = {"__won__", "__lost__", "__cancelled__", "__suspended__"}
+        by_stage: dict[str, dict] = {}
+        total_nb = total_brut = total_pondere = total_vieilles = 0
+        for stage, nb, brut, pondere, vieilles in rows:
+            canon = self._canon_stage(stage)
+            if canon in closed:
+                continue
+            entry = by_stage.setdefault(canon, {"stade": canon, "nb": 0, "ca_brut_xof": 0, "ca_pondere_xof": 0})
+            entry["nb"] += nb
+            entry["ca_brut_xof"] += round(brut or 0)
+            entry["ca_pondere_xof"] += round(pondere or 0)
+            total_nb += nb
+            total_brut += round(brut or 0)
+            total_pondere += round(pondere or 0)
+            total_vieilles += vieilles or 0
+
+        ordered = [by_stage[s] for s in self.OPEN_STAGE_ORDER if s in by_stage]
+        ordered += [v for k, v in by_stage.items() if k not in self.OPEN_STAGE_ORDER]
+        return {
+            "total_opportunites": total_nb,
+            "ca_brut_xof": total_brut,
+            "ca_pondere_xof": total_pondere,
+            "plus_un_an_nb": int(total_vieilles),
+            "plus_un_an_pct": round(total_vieilles / total_nb * 100) if total_nb else 0,
+            "par_stade": ordered,
+        }
+
+    async def get_win_rate(self) -> dict:
+        """Taux de transformation réel : opportunités gagnées vs perdues (historique complet)."""
+        from sqlalchemy import text
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(text(
+                "SELECT stage, COUNT(*), SUM(expected_revenue) FROM opportunities GROUP BY stage"
+            ))).fetchall()
+
+        won_nb = lost_nb = 0
+        won_val = lost_val = 0.0
+        for stage, nb, val in rows:
+            canon = self._canon_stage(stage)
+            if canon == "__won__":
+                won_nb += nb
+                won_val += val or 0
+            elif canon == "__lost__":
+                lost_nb += nb
+                lost_val += val or 0
+
+        closed = won_nb + lost_nb
+        closed_val = won_val + lost_val
+        return {
+            "gagnees_nb": won_nb,
+            "perdues_nb": lost_nb,
+            "taux_nb_pct": round(won_nb / closed * 100, 1) if closed else 0,
+            "gagnees_valeur_xof": round(won_val),
+            "perdues_valeur_xof": round(lost_val),
+            "taux_valeur_pct": round(won_val / closed_val * 100, 1) if closed_val else 0,
+        }
+
+    async def get_clients_by_country(self) -> list[dict]:
+        """Répartition des clients par pays (le cockpit affiche le nb de clients)."""
+        from sqlalchemy import text
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(text("""
+                SELECT COALESCE(NULLIF(country, ''), 'Autres/non renseigné') as pays,
+                       COUNT(*) as nb_clients
+                FROM clients GROUP BY pays ORDER BY nb_clients DESC
+            """))).fetchall()
+        # Regroupe le null avec les petits pays sous « Autres/non renseigné »
+        top = [{"pays": r[0], "nb_clients": r[1]} for r in rows if r[0] != "Autres/non renseigné"][:4]
+        autres = sum(r[1] for r in rows) - sum(t["nb_clients"] for t in top)
+        if autres > 0:
+            top.append({"pays": "Autres/non renseigné", "nb_clients": autres})
+        return top
+
+    async def get_monthly_revenue(self, year: int) -> list[dict]:
+        """Série CA commandé par mois pour une année (graphe d'évolution du dashboard)."""
+        from sqlalchemy import text
+        sql = text("""
+            SELECT strftime('%m', date_order) as mo,
+                   SUM(amount) as ca,
+                   COUNT(*) as nb
+            FROM sale_orders
+            WHERE state NOT IN ('cancel', 'draft')
+              AND strftime('%Y', date_order) = :year
+            GROUP BY mo ORDER BY mo
+        """)
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(sql, {"year": str(year)})).fetchall()
+        return [
+            {"mois": int(r[0]), "ca_xof": round(r[1] or 0), "nb_commandes": r[2]}
+            for r in rows
+        ]
+
+    async def list_opportunities(self, stage: str | None = None, limit: int = 50) -> list[dict]:
+        """Liste d'opportunités (kanban pipeline), triées par valeur pondérée décroissante."""
+        from sqlalchemy import text
+        sql = """
+            SELECT name, client_name, stage, expected_revenue, probability,
+                   salesperson_name, deadline, created_at
+            FROM opportunities
+            WHERE 1=1
+        """
+        params: dict = {"limit": limit}
+        if stage:
+            sql += " AND stage = :stage"
+            params["stage"] = stage
+        sql += " ORDER BY (expected_revenue * probability / 100) DESC LIMIT :limit"
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(text(sql), params)).fetchall()
+        return [
+            {
+                "opportunite": r[0],
+                "client": r[1],
+                "stade": r[2],
+                "revenu_attendu_xof": round(r[3] or 0),
+                "probabilite_pct": round(r[4] or 0),
+                "commercial": r[5] or "",
+                "deadline": str(r[6]) if r[6] else None,
+                "creee_le": str(r[7])[:10] if r[7] else None,
+            }
+            for r in rows
+        ]
 
     @staticmethod
     def _client_to_domain(m: ClientModel) -> Client:

@@ -30,7 +30,11 @@
       "Bash(curl -s -X POST http://127.0.0.1:8000/v1/auth/login -H 'Content-Type: application/json' -d '{\"email\":\"psoro@neuronestech.com\",\"password\":\"Stalker\"}')",
       "Read(//tmp/**)",
       "Bash(curl -s http://127.0.0.1:8000/v1/veille/feed?limit=100 -H 'Authorization: Bearer __CMDSUB_OUTPUT__')",
-      "Bash(python -m py_compile adapters/llm/claude_haiku_adapter.py modules/uc_veille/web_explorer.py)"
+      "Bash(python -m py_compile adapters/llm/claude_haiku_adapter.py modules/uc_veille/web_explorer.py)",
+      "Read(//d/Projets Neurone Tech/Projet AI/**)",
+      "PowerShell(Set-Location \"d:\\\\Projets Neurone Tech\\\\Projet AI\\\\neurones-ia\\\\frontend\"; npm ls playwright puppeteer 2>$null; Get-ChildItem \"$env:USERPROFILE\\\\AppData\\\\Local\\\\ms-playwright\" -ErrorAction SilentlyContinue | Select-Object -First 5 Name)",
+      "PowerShell($g = npm root -g; if \\(Test-Path \"$g\\\\playwright\"\\) { \"global playwright OK: $g\" } else { \"pas global\" }; Get-ChildItem \"C:\\\\Users\\\\SOROLA~1\\\\AppData\\\\Local\\\\Temp\\\\claude\" -Recurse -Directory -Filter \"playwright\" -ErrorAction SilentlyContinue | Select-Object -First 3 FullName)",
+      "Read(//c/Users/Soro Landry/AppData/Local/Temp/claude/**)"
     ]
   }
 }

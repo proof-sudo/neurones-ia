@@ -127,6 +127,23 @@ class UserModel(Base):
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class ModulePermissionModel(Base):
+    """Surcharge d'une cellule de la matrice module × rôle (écran Administration).
+
+    Table vide = matrice par défaut de config/permissions.py. Chaque ligne
+    remplace UNE cellule (view, role) — les défauts restent la référence pour
+    toutes les cellules non surchargées.
+    """
+    __tablename__ = "module_permissions"
+    __table_args__ = (Index("ix_module_perm_view_role", "view", "role", unique=True),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    view: Mapped[str] = mapped_column(String(50))
+    role: Mapped[str] = mapped_column(String(50))
+    allowed: Mapped[bool] = mapped_column(Boolean)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class ConversationModel(Base):
     __tablename__ = "conversations"
     __table_args__ = (
