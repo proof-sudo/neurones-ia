@@ -60,3 +60,4 @@ desktop.ini
 *.log
 backend/run_std*.log
 frontend/run_std*.log
+*.pdf

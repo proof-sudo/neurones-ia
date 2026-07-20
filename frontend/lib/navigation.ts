@@ -12,6 +12,7 @@ export const NAV_MODULES: NavModule[] = [
   { view: "tresorerie", icon: "◒", label: "Trésorerie & marges" },
   { view: "performance", icon: "◭", label: "Performances" },
   { view: "tenders", icon: "▦", label: "Appels d'offres" },
+  { view: "presales", icon: "❖", label: "Avant-vente" },
   { view: "veille", icon: "◔", label: "Veille" },
   { view: "crosssell", icon: "✚", label: "Montée en valeur" },
   { view: "portefeuille", icon: "◈", label: "Portefeuille" },
@@ -27,7 +28,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "Exécution commerciale",
-    views: ["tenders", "veille", "crosssell"],
+    views: ["tenders", "presales", "veille", "crosssell"],
   },
   {
     label: "Référentiel",
@@ -58,6 +59,7 @@ export const MODULE_ACCESS: ModuleAccess = {
   portefeuille: { admin: true, dg: true,  dir_commercial: true,  dir_operations: true,  presale: true,  dir_financier: true,  commercial: true },
   pipeline:     { admin: true, dg: true,  dir_commercial: true,  dir_operations: true,  presale: true,  dir_financier: false, commercial: true },
   tenders:      { admin: true, dg: true,  dir_commercial: true,  dir_operations: true,  presale: true,  dir_financier: false, commercial: true },
+  presales:     { admin: true, dg: true,  dir_commercial: false, dir_operations: true,  presale: true,  dir_financier: false, commercial: false },
   admin:        { admin: true, dg: false, dir_commercial: false, dir_operations: false, presale: false, dir_financier: false, commercial: false },
 };
 
