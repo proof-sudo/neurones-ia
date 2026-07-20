@@ -607,7 +607,7 @@ class ScoringPipeline:
     async def _match_cvs(
         self,
         profils_demandes: list[RequiredProfile],
-        ressources_demandees: list[str],
+        ressources_demandees: list[ExtractedItem],
         summary: str,
     ) -> list[Source]:
         """Cherche les CV dans la GED, UNE requête par profil demandé.
@@ -626,7 +626,7 @@ class ScoringPipeline:
             if q:
                 queries.append(q)
         if not queries:
-            queries = [r for r in ressources_demandees[:6] if r.strip()] \
+            queries = [r.texte for r in ressources_demandees[:6] if r.texte.strip()] \
                 or [f"ingénieur {summary[:200]}"]
 
         results = await asyncio.gather(

@@ -1,28 +1,36 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Poppins, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
-import { AppShell } from "@/components/AppShell";
 
-const inter = Inter({
+const poppins = Poppins({
+  variable: "--font-poppins",
   subsets: ["latin"],
-  variable: "--font-inter",
-  display: "swap",
+  weight: ["400", "500", "600", "700"],
+});
+
+const ibmPlexMono = IBM_Plex_Mono({
+  variable: "--font-ibm-plex-mono",
+  subsets: ["latin"],
+  weight: ["400", "500", "600"],
 });
 
 export const metadata: Metadata = {
-  title: "Neurones IA — Plateforme Intelligence",
-  description: "Plateforme IA interne — Neurones Technologies",
+  title: "Cockpit Commercial — Neurones Technologies",
+  description:
+    "Cockpit prédictif : forecast, trésorerie prévisionnelle, pipeline et prospection à partir des données Odoo.",
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
   return (
-    <html lang="fr" className={inter.variable} suppressHydrationWarning>
-      <body
-        className="h-dvh flex overflow-hidden antialiased text-slate-900"
-        style={{ background: "#f7f8fa" }}
-      >
-        <AppShell>{children}</AppShell>
-      </body>
+    <html
+      lang="fr"
+      className={`${poppins.variable} ${ibmPlexMono.variable} h-full`}
+    >
+      <body className="min-h-full">{children}</body>
     </html>
   );
 }

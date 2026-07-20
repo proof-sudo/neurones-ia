@@ -127,6 +127,23 @@ class UserModel(Base):
     last_login: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
+class ModulePermissionModel(Base):
+    """Surcharge d'une cellule de la matrice module × rôle (écran Administration).
+
+    Table vide = matrice par défaut de config/permissions.py. Chaque ligne
+    remplace UNE cellule (view, role) — les défauts restent la référence pour
+    toutes les cellules non surchargées.
+    """
+    __tablename__ = "module_permissions"
+    __table_args__ = (Index("ix_module_perm_view_role", "view", "role", unique=True),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    view: Mapped[str] = mapped_column(String(50))
+    role: Mapped[str] = mapped_column(String(50))
+    allowed: Mapped[bool] = mapped_column(Boolean)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class ConversationModel(Base):
     __tablename__ = "conversations"
     __table_args__ = (
@@ -182,6 +199,37 @@ class VeilleEntryModel(Base):
     deadline: Mapped[str] = mapped_column(String(100), default="")
     country: Mapped[str] = mapped_column(String(100), default="CI")
     relevance_score: Mapped[int] = mapped_column(Integer, default=0)  # 0-100
+
+    # ── Analyse IA S2I (agent Watch-Tracker) : signal → risque → offre ──────────
+    # Rempli par modules/uc_veille/classifier.py au moment du scan. ai_analyzed
+    # distingue une entrée traitée par Claude d'une entrée brute (repli front).
+    ai_analyzed: Mapped[bool] = mapped_column(Boolean, default=False)
+    signal_label: Mapped[str] = mapped_column(String(255), default="")
+    risque: Mapped[str] = mapped_column(String(500), default="")
+    offre: Mapped[str] = mapped_column(String(500), default="")
+    offre_short: Mapped[str] = mapped_column(String(100), default="")
+    priority: Mapped[str] = mapped_column(String(20), default="")   # CRITIQUE | ELEVEE | MOYENNE | ""
+    criticite: Mapped[int] = mapped_column(Integer, default=0)      # 0-100 (score IA argumenté)
+    organisation: Mapped[str] = mapped_column(String(255), default="")
+    justification: Mapped[str] = mapped_column(String(1000), default="")
+    origin: Mapped[str] = mapped_column(String(20), default="source")  # "source" | "web"
+    # Débriefing pré-généré au scan (Claude lit la page réelle) : affiché tel quel
+    # au clic, sans nouvelle génération ni lecture web. Vide = pas encore généré.
+    debrief: Mapped[str] = mapped_column(Text, default="")
+
+
+class VeilleConfigModel(Base):
+    """Configuration globale de l'agent Watch-Tracker (ligne unique, id=1).
+
+    Pilote « ce sur quoi l'agent se base » : thèmes prioritaires injectés dans le
+    prompt Claude, et bascule d'exploration web.
+    """
+    __tablename__ = "veille_config"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)  # singleton : toujours 1
+    themes: Mapped[str] = mapped_column(String(2000), default="")
+    web_search_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class OpportunityModel(Base):

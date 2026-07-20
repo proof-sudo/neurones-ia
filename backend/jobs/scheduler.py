@@ -14,6 +14,7 @@ def build_scheduler(
     ged_indexer: GEDIndexer,
     crm_repo: CRMRepository,
     odoo_sync_interval_hours: int = 2,
+    container=None,
 ) -> AsyncIOScheduler:
     from config.settings import settings
     scheduler = AsyncIOScheduler()
@@ -55,9 +56,10 @@ def build_scheduler(
 
     scheduler.add_job(
         _veille_scan_job,
+        args=[container],
         trigger=IntervalTrigger(hours=6),
         id="veille_scan",
-        name="Veille AO automatique",
+        name="Agent Watch-Tracker (veille AO + analyse Claude)",
         replace_existing=True,
         misfire_grace_time=300,
         coalesce=True,
@@ -97,9 +99,9 @@ async def _reset_monthly_budget():
     logger.info("Reset budget tokens mensuel")
 
 
-async def _veille_scan_job():
+async def _veille_scan_job(container=None):
     from modules.uc_veille.router import _run_scan
-    await _run_scan()
+    await _run_scan(container)
 
 
 async def _quarantine_purge_job():
