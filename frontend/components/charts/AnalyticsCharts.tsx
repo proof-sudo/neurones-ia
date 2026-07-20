@@ -117,10 +117,12 @@ export function HBarChart({
   label: string;
   color?: string;
 }) {
+  // Hauteur proportionnelle au nombre de barres pour les espacer (≈ 44 px / barre)
+  const chartHeight = Math.max(200, labels.length * 44 + 36);
   return (
-    <div className={HEIGHT}>
+    <div style={{ height: chartHeight }}>
       <Bar
-        data={{ labels, datasets: [{ label, data: values, backgroundColor: color, borderRadius: 5, barThickness: 20 }] }}
+        data={{ labels, datasets: [{ label, data: values, backgroundColor: color, borderRadius: 5, barThickness: 22 }] }}
         options={{
           indexAxis: "y",
           responsive: true,

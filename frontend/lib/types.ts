@@ -146,24 +146,6 @@ export interface Partner {
   statut: string;
 }
 
-// ---------- Appels d'offres ----------
-
-export type Urgency = "urgent" | "soon" | "";
-
-export interface Tender {
-  name: string;
-  client: string;
-  deadline: string;
-  urgency: Urgency;
-  progress: number;
-  status: string;
-  qualified: boolean;
-  cdcReceived: boolean;
-  montant: string;
-  commercial: string;
-  checklist: string[];
-}
-
 // ---------- Veille AO ----------
 
 export interface VeilleAO {

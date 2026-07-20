@@ -2,22 +2,94 @@
 
 import { useState } from "react";
 import { AiChip } from "@/components/ui/AiChip";
-import { Badge } from "@/components/ui/Badge";
 import { Panel, PanelHead } from "@/components/ui/Panel";
 import { KpiGaugeRow } from "@/components/ui/KpiGauge";
 import { ViewHeader } from "@/components/ui/ViewHeader";
+import { DetailPanel, DetailGrid, DetailItem } from "@/components/ui/DetailPanel";
 import {
   ForecastLineChart,
   StageDoughnut,
-  VBarChart,
 } from "@/components/charts/AnalyticsCharts";
-import { FORECAST_MONTHS, FORECAST_OPPS } from "@/lib/fixtures/forecast";
+import {
+  FORECAST_MONTHS,
+  FORECAST_OPPS,
+  buildForecastParClient,
+  type ForecastClient,
+} from "@/lib/fixtures/forecast";
 
 const fmt = (n: number) => Math.round(n).toLocaleString("fr-FR") + " M FCFA";
+
+const SCENARIO_TOOLTIP = [
+  "Pessimiste = ne retient que les opportunités à 50 % de probabilité ou plus, à leur valeur pondérée.",
+  "Réaliste = somme des valeurs d'opportunités pondérées par leur probabilité de signature (valeur × probabilité).",
+  "Optimiste = forecast réaliste, additionné de la moitié de la valeur des opportunités moins avancées (probabilité < 50 %).",
+  "Prochaine échéance = déduite de l'étape la plus avancée du client dans le pipeline (une négociation aboutit généralement sous 1 mois, une prospection sous 5 mois).",
+].join("\n");
+
+// Impayés connus, pesant dans la décision par client (données réelles de trésorerie).
+const IMPAYES_CONNUS: Record<string, string> = {
+  "Banque Africaine de Développement (BAD)": "1 682 M FCFA d’impayés (444 jours)",
+  "Orange Côte d’Ivoire": "314 M FCFA d’impayés (569 jours)",
+  "Orange Côte d'Ivoire": "314 M FCFA d’impayés (569 jours)",
+  "Orange Liberia": "273 M FCFA d’impayés (833 jours)",
+};
+
+/** Décision par règles sur données réelles (repli local, comme le mockup sans clé API). */
+function decisionClient(c: ForecastClient): { decision: React.ReactNode; action: string } {
+  const impaye = IMPAYES_CONNUS[c.client];
+  const oppRisque = c.opps.find((o) => o.risk);
+  if (impaye && oppRisque) {
+    return {
+      decision: (
+        <>
+          <b>Conditionner et requalifier.</b> Ce client cumule {impaye} et une opportunité obsolète (
+          {oppRisque.name}) — conditionner tout nouvel engagement au recouvrement, et requalifier
+          l&apos;opportunité à risque.
+        </>
+      ),
+      action:
+        "Organiser cette semaine un point recouvrement + revue d'opportunité avec le commercial en charge.",
+    };
+  }
+  if (impaye) {
+    return {
+      decision: (
+        <>
+          <b>Conditionner.</b> {fmt(c.pondere)} de forecast pondéré, mais {impaye} — sécuriser le
+          recouvrement avant d&apos;investir davantage commercialement.
+        </>
+      ),
+      action: "Lancer la relance de recouvrement avant toute nouvelle proposition.",
+    };
+  }
+  if (oppRisque) {
+    return {
+      decision: (
+        <>
+          <b>Requalifier.</b> {oppRisque.name} est signalée à risque/obsolète — sa probabilité
+          déclarée gonfle artificiellement le forecast de ce client.
+        </>
+      ),
+      action:
+        "Contacter le client cette semaine pour confirmer si le besoin existe encore ; sinon, clôturer l'opportunité.",
+    };
+  }
+  return {
+    decision: (
+      <>
+        <b>Sécuriser.</b> {fmt(c.pondere)} pondérés sans signal de risque ni impayé connu —
+        c&apos;est un forecast à défendre activement.
+      </>
+    ),
+    action:
+      "Fixer la prochaine étape avec le client (rendez-vous ou envoi de proposition) sous 7 jours pour maintenir le rythme du cycle de vente (79 jours en moyenne).",
+  };
+}
 
 export function ForecastView() {
   const [analysis, setAnalysis] = useState(false);
   const [analyzing, setAnalyzing] = useState(false);
+  const [selected, setSelected] = useState<string | null>(null);
 
   const opps = FORECAST_OPPS;
   const wSum = (arr: typeof opps) => arr.reduce((s, o) => s + (o.val * o.prob) / 100, 0);
@@ -44,23 +116,19 @@ export function ForecastView() {
   opps.forEach((o) => (stageTotals[o.stage] = (stageTotals[o.stage] || 0) + (o.val * o.prob) / 100));
   const stageEntries = Object.entries(stageTotals).sort((a, b) => b[1] - a[1]);
 
-  // Répartition par commercial
-  const comTotals: Record<string, number> = {};
-  opps.forEach((o) => (comTotals[o.com] = (comTotals[o.com] || 0) + (o.val * o.prob) / 100));
-  const comEntries = Object.entries(comTotals).sort((a, b) => b[1] - a[1]);
-
+  const clients = buildForecastParClient();
   const sortedOpps = [...opps].sort((a, b) => b.val * b.prob - a.val * a.prob);
-
   const topOpp = sortedOpps[0];
   const topShare = Math.round(((topOpp.val * topOpp.prob) / 100 / realiste) * 100);
   const topStage = stageEntries[0];
   const topStageShare = Math.round((topStage[1] / realiste) * 100);
 
+  const selectedClient = clients.find((c) => c.client === selected) ?? null;
+  const selectedDecision = selectedClient ? decisionClient(selectedClient) : null;
+
   function genererAnalyse() {
     setAnalyzing(true);
     setAnalysis(false);
-    // Repli local sur les données déjà chargées (mêmes chiffres que les KPI et
-    // le graphique ci-dessous) ; le vrai LLM se branchera côté serveur.
     setTimeout(() => {
       setAnalysis(true);
       setAnalyzing(false);
@@ -128,7 +196,16 @@ export function ForecastView() {
 
       <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
         <Panel>
-          <PanelHead title="Projection à 6 mois — 3 scénarios">
+          <PanelHead
+            title={
+              <span className="inline-flex items-center gap-1.5">
+                Projection à 6 mois — 3 scénarios
+                <span className="cursor-help text-[13px] font-normal text-muted" title={SCENARIO_TOOLTIP}>
+                  ⓘ
+                </span>
+              </span>
+            }
+          >
             <AiChip>pessimiste / réaliste / optimiste</AiChip>
           </PanelHead>
           <ForecastLineChart labels={FORECAST_MONTHS} optimiste={bOpti} realiste={bReal} pessimiste={bPess} />
@@ -139,46 +216,58 @@ export function ForecastView() {
         </Panel>
       </div>
 
-      <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
-        <Panel>
-          <PanelHead title="Contribution par commercial" />
-          <VBarChart
-            labels={comEntries.map((e) => e[0])}
-            values={comEntries.map((e) => Math.round(e[1]))}
-            label="Forecast pondéré (M FCFA)"
-          />
-        </Panel>
-        <Panel>
-          <PanelHead title="Méthodologie IA" />
-          <div className="flex flex-col gap-2.5 text-[12.5px] leading-relaxed text-text">
-            <p>
-              <b>Réaliste</b> = somme des valeurs d&apos;opportunités pondérées par leur
-              probabilité de signature (valeur × probabilité).
-            </p>
-            <p>
-              <b>Pessimiste</b> = ne retient que les opportunités à 50 % de probabilité ou
-              plus, à leur valeur pondérée.
-            </p>
-            <p>
-              <b>Optimiste</b> = forecast réaliste, additionné de la moitié de la valeur
-              des opportunités moins avancées (probabilité &lt; 50 %).
-            </p>
-            <p>
-              <b>Clôture estimée</b> déduite de l&apos;étape actuelle du pipeline (une
-              négociation aboutit généralement sous 1 mois, une opportunité en prospection
-              sous 5 mois).
-            </p>
-          </div>
-        </Panel>
-      </div>
+      <DetailPanel
+        open={!!selectedClient}
+        title={selectedClient ? `Décision — ${selectedClient.client}` : ""}
+        onClose={() => setSelected(null)}
+      >
+        {selectedClient && selectedDecision && (
+          <DetailGrid>
+            <DetailItem k="Valeur totale">{fmt(selectedClient.total)}</DetailItem>
+            <DetailItem k="Valeur pondérée" valueClassName="text-ai">
+              {fmt(selectedClient.pondere)}
+            </DetailItem>
+            <DetailItem k="Dont à risque" valueClassName={selectedClient.risque > 0 ? "text-bad" : "text-good"}>
+              {selectedClient.risque > 0 ? fmt(selectedClient.risque) : "aucune"}
+            </DetailItem>
+            <DetailItem k="Prochaine échéance">{FORECAST_MONTHS[Math.min(selectedClient.minOffset, 5)]}</DetailItem>
+            <DetailItem k="Opportunités réelles de ce client" full valueClassName="text-[12.5px] font-medium leading-relaxed">
+              <div className="flex flex-col gap-1">
+                {selectedClient.opps.map((o, i) => (
+                  <div key={i}>
+                    {o.name} — {o.val} M FCFA ({o.prob}%, {o.stage}
+                    {o.risk && <b className="text-bad"> · à risque</b>})
+                  </div>
+                ))}
+              </div>
+            </DetailItem>
+            <DetailItem k="Décision recommandée (IA)" full valueClassName="text-[12.5px] font-medium leading-relaxed">
+              <div>{selectedDecision.decision}</div>
+              <div className="mt-1.5">
+                <b>Première action :</b> {selectedDecision.action}
+              </div>
+              <div className="mt-2 font-mono text-[10px] leading-relaxed text-muted">
+                Généré en mode simplifié (règles sur données réelles) — la lecture rédigée
+                dynamiquement se branche côté serveur.
+              </div>
+            </DetailItem>
+          </DetailGrid>
+        )}
+      </DetailPanel>
 
-      <div className="rounded-card border border-line bg-panel p-5">
-        <PanelHead title="Contribution par opportunité" />
+      <Panel>
+        <PanelHead title="Forecast par client">
+          <AiChip>cliquez sur un client pour la décision IA</AiChip>
+        </PanelHead>
+        <div className="mb-3 text-[12px] text-muted">
+          Chaque ligne agrège les vraies opportunités du pipeline pour ce client. Cliquez sur un
+          client : le cadre de décision s&apos;ouvre au-dessus, entre la projection et ce tableau.
+        </div>
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-[12.5px]">
             <thead>
               <tr>
-                {["Opportunité", "Client", "Étape", "Valeur", "Probabilité", "Valeur pondérée", "Clôture estimée"].map((h) => (
+                {["Client", "Opportunités", "Valeur totale", "Valeur pondérée", "Dont à risque", "Prochaine échéance"].map((h) => (
                   <th key={h} className="border-b border-line px-2 pb-2 text-left text-[11px] font-medium uppercase tracking-[0.05em] text-muted">
                     {h}
                   </th>
@@ -186,21 +275,28 @@ export function ForecastView() {
               </tr>
             </thead>
             <tbody>
-              {sortedOpps.map((o, i) => (
-                <tr key={i} className="border-b border-line last:border-none">
-                  <td className="px-2 py-2.5 text-text">{o.name}</td>
-                  <td className="px-2 py-2.5">{o.client}</td>
-                  <td className="px-2 py-2.5"><Badge variant="warm">{o.stage}</Badge></td>
-                  <td className="px-2 py-2.5 font-mono">{o.val} M FCFA</td>
-                  <td className="px-2 py-2.5 font-mono">{o.prob}%</td>
-                  <td className="px-2 py-2.5 font-mono text-ai">{Math.round((o.val * o.prob) / 100)} M FCFA</td>
-                  <td className="px-2 py-2.5">{FORECAST_MONTHS[Math.min(o.offset, 5)]}</td>
+              {clients.map((c) => (
+                <tr
+                  key={c.client}
+                  onClick={() => setSelected((cur) => (cur === c.client ? null : c.client))}
+                  className={`cursor-pointer border-b border-line last:border-none transition-colors hover:bg-panel-2 ${
+                    selected === c.client ? "bg-panel-2" : ""
+                  }`}
+                >
+                  <td className="px-2 py-2.5 font-medium text-text">{c.client}</td>
+                  <td className="px-2 py-2.5">{c.opps.length}</td>
+                  <td className="px-2 py-2.5 font-mono">{fmt(c.total)}</td>
+                  <td className="px-2 py-2.5 font-mono text-ai">{fmt(c.pondere)}</td>
+                  <td className={`px-2 py-2.5 font-mono ${c.risque > 0 ? "text-bad" : "text-good"}`}>
+                    {c.risque > 0 ? fmt(c.risque) : "aucune"}
+                  </td>
+                  <td className="px-2 py-2.5">{FORECAST_MONTHS[Math.min(c.minOffset, 5)]}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-      </div>
+      </Panel>
     </>
   );
 }

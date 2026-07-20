@@ -5,14 +5,10 @@ import { clsx } from "clsx";
 import { AiChip } from "@/components/ui/AiChip";
 import { Panel, PanelHead } from "@/components/ui/Panel";
 import { CaChart } from "@/components/charts/DashboardCharts";
-import { FaitCard } from "./FaitCard";
 import { fmtInt, fmtM, fmtPct } from "@/lib/format";
-import type {
-  CountryClients,
-  DashboardKpis,
-  SalespersonRevenue,
-  TopClientRow,
-} from "@/lib/api/dashboard";
+import { FORECAST_OPPS, VIGILANCE_IMPAYES } from "@/lib/fixtures/forecast";
+import { EXPOSITION_FOURNISSEURS } from "@/lib/fixtures/partners";
+import type { DashboardKpis, SalespersonRevenue } from "@/lib/api/dashboard";
 import type { PeriodKey } from "@/lib/types";
 
 const MONTH_LABELS = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sept", "Oct", "Nov", "Déc"];
@@ -32,12 +28,59 @@ const DELTA_CLASS: Record<DeltaVariant, string> = {
   none: "text-muted",
 };
 
-const SELECT_CLASS =
-  "cursor-pointer rounded-[9px] border border-line bg-panel px-2.5 py-2 font-mono text-xs text-text focus:border-ai focus:outline-none";
-
 function sum(arr: number[]): number {
   return arr.reduce((a, b) => a + b, 0);
 }
+
+// ---- Points de vigilance (données réelles, calculées une fois) ----
+const IMPAYE_CRITIQUE = VIGILANCE_IMPAYES[0]; // le plus ancien
+const OPP_CRITIQUE =
+  [...FORECAST_OPPS].filter((o) => o.risk).sort((a, b) => b.val * b.prob - a.val * a.prob)[0] ??
+  [...FORECAST_OPPS].sort((a, b) => b.val * b.prob - a.val * a.prob)[0];
+const FOURN_CRITIQUE = EXPOSITION_FOURNISSEURS[0]; // exposition la plus forte
+
+const VIGILANCE_DETAILS: Record<string, { title: string; items: [string, string][] }> = {
+  faitImpaye: {
+    title: `Détail — Impayé ${IMPAYE_CRITIQUE.client}`,
+    items: [
+      ["Montant échu", `${IMPAYE_CRITIQUE.montant} M FCFA`],
+      ["Retard", `${IMPAYE_CRITIQUE.jours} jours — le plus ancien du portefeuille`],
+      ["Pourquoi c’est critique", IMPAYE_CRITIQUE.contexte],
+      ["Action recommandée", "Plan de recouvrement d’urgence sous 5 jours (DAF + Direction Commerciale), avant provision pour créance douteuse."],
+    ],
+  },
+  faitOpportunite: {
+    title: `Détail — ${OPP_CRITIQUE.name}`,
+    items: [
+      ["Client", OPP_CRITIQUE.client],
+      ["Montant", `${OPP_CRITIQUE.val} M FCFA (probabilité déclarée : ${OPP_CRITIQUE.prob}%)`],
+      ["Étape du pipeline", OPP_CRITIQUE.stage],
+      ["Commercial", OPP_CRITIQUE.com || "non renseigné"],
+      [
+        "Pourquoi c’est à risque",
+        OPP_CRITIQUE.age
+          ? `Ancienneté de ${OPP_CRITIQUE.age} — bien au-delà du cycle de vente réel moyen (79 jours) : la probabilité déclarée est probablement optimiste.`
+          : "Plus grosse contribution pondérée du forecast — à sécuriser en priorité.",
+      ],
+      [
+        "Action recommandée",
+        OPP_CRITIQUE.risk
+          ? "Requalifier ou clôturer cette opportunité pour fiabiliser le forecast."
+          : "Suivre activement vers la signature.",
+      ],
+    ],
+  },
+  faitFournisseur: {
+    title: `Détail — Exposition fournisseur : ${FOURN_CRITIQUE.name}`,
+    items: [
+      ["Montant commandé (12 derniers mois)", `${FOURN_CRITIQUE.expo12m} M FCFA — la plus forte exposition du portefeuille fournisseurs`],
+      ["Commandes sur la période", `${FOURN_CRITIQUE.cmd12m} bons de commande`],
+      ["Pourquoi c’est critique", "Le reste à payer fournisseurs global s'élève à 18,27 Md FCFA (849 dossiers). Dans un contexte de trésorerie tendue (10,86 Md FCFA d'impayés clients), un retard de paiement envers ce fournisseur clé mettrait en danger l'approvisionnement de la majorité des projets en cours."],
+      ["Limite de données", "La dette exacte par fournisseur n'est pas ventilée dans les données actuelles — l'exposition affichée est le montant commandé sur 12 mois, meilleur indicateur réel disponible."],
+      ["Action recommandée", `Vérifier dans Odoo l'encours réel de paiement envers ${FOURN_CRITIQUE.name} et sécuriser en priorité cette relation d'approvisionnement.`],
+    ],
+  },
+};
 
 function deltaTxt(cur: number, prev: number, suffix: string): { txt: string; variant: DeltaVariant } {
   if (prev <= 0) return { txt: suffix, variant: "none" };
@@ -50,18 +93,12 @@ function deltaTxt(cur: number, prev: number, suffix: string): { txt: string; var
 
 export function DashboardLive({
   kpis,
-  byCountry,
   bySalesperson,
-  topClients,
 }: {
   kpis: DashboardKpis;
-  byCountry: CountryClients[];
   bySalesperson: SalespersonRevenue[];
-  topClients: TopClientRow[];
 }) {
   const [period, setPeriod] = useState<PeriodKey>("trimestre");
-  const [commercial, setCommercial] = useState("");
-  const [pays, setPays] = useState("");
   const [openDetail, setOpenDetail] = useState<string | null>(null);
   const [projLoading, setProjLoading] = useState(false);
   const [projShown, setProjShown] = useState(false);
@@ -121,44 +158,18 @@ export function DashboardLive({
     };
   }, [period, caByMonth, caByMonthPrev, lastMonthIdx, quarter, quarterMonths, y, kpis.year.revenue_xof]);
 
-  // ---- Filtre commercial : la gauge CA affiche le CA du commercial (mockup) ----
-  const totalTopSellers = sum(bySalesperson.slice(0, 5).map((s) => s.ca_total_xof));
-  const selectedSeller = bySalesperson.find((s) => s.commercial === commercial);
-  const caGauge = selectedSeller
-    ? {
-        label: `CA — ${selectedSeller.commercial}`,
-        value: fmtM(selectedSeller.ca_total_xof),
-        delta: `part du CA des 5 meilleurs commerciaux : ${Math.round((selectedSeller.ca_total_xof / totalTopSellers) * 100)} %`,
-        variant: "none" as DeltaVariant,
-      }
-    : {
-        label: periodCalc.caLabel,
-        value: periodCalc.ca,
-        delta: periodCalc.caDelta.txt,
-        variant: periodCalc.caDelta.variant,
-      };
+  // ---- Jauge CA : CA de la période sélectionnée ----
+  const caGauge = {
+    label: periodCalc.caLabel,
+    value: periodCalc.ca,
+    delta: periodCalc.caDelta.txt,
+    variant: periodCalc.caDelta.variant,
+  };
 
   // ---- Rythme vs N-1 (comparable YTD) ----
   const ytdMonths = Array.from({ length: lastMonthIdx + 1 }, (_, i) => i);
   const ytdPrev = sum(ytdMonths.map((i) => caByMonthPrev[i]));
   const rythme = deltaTxt(kpis.year.revenue_xof, ytdPrev, "");
-
-  // ---- Top clients filtrés par pays (mockup) ----
-  const filteredClients = pays ? topClients.filter((c) => c.pays === pays) : topClients;
-  const clientsShown = filteredClients.length ? filteredClients : topClients;
-
-  // ---- Faits marquants (port de renderApercuRapide, données réelles) ----
-  const totalClientsPays = byCountry.reduce((a, c) => a + c.nb_clients, 0);
-  const paysFait = pays
-    ? byCountry.find((c) => c.pays === pays)
-    : [...byCountry].sort((a, b) => b.nb_clients - a.nb_clients)[0];
-  const paysPct = paysFait && totalClientsPays
-    ? Math.round((paysFait.nb_clients / totalClientsPays) * 100)
-    : 0;
-  const comFait = commercial
-    ? bySalesperson.find((s) => s.commercial === commercial)
-    : bySalesperson[0];
-  const clientFait = clientsShown[0];
 
   // ---- Drill-down par gauge : détails réels (mêmes emplacements que le mockup) ----
   // Calcul direct (léger) — le React Compiler mémoïse lui-même.
@@ -180,6 +191,7 @@ export function DashboardLive({
     const w = kpis.win_rate;
     const m = kpis.marges;
     return {
+      ...VIGILANCE_DETAILS,
       ca: {
         title: "Détail — CA commandé",
         items: [
@@ -248,59 +260,15 @@ export function DashboardLive({
     };
   })();
 
-  // ---- Détails des faits marquants (données réelles disponibles) ----
-  details.faitPays = {
-    title: `Détail — Clients réels en ${paysFait?.pays ?? "—"}`,
-    items: paysFait
-      ? [
-          ["Nombre de clients", fmtInt(paysFait.nb_clients)] as [string, string],
-          ["Part des clients", `${paysPct} %`] as [string, string],
-        ].concat(
-          topClients
-            .filter((c) => c.pays === paysFait.pays)
-            .slice(0, 4)
-            .map((c) => [c.client, fmtM(c.ca_total_xof)] as [string, string]),
-        )
-      : [["Aucun pays dans les données actuelles", "—"]],
-  };
-  details.faitCommercial = {
-    title: `Détail — CA apporté par ${comFait?.commercial ?? "—"}`,
-    items: comFait
-      ? [
-          ["CA total réel apporté (sale_orders Odoo)", fmtM(comFait.ca_total_xof)],
-          [
-            "Part du CA des 5 meilleurs commerciaux",
-            totalTopSellers
-              ? `${Math.round((comFait.ca_total_xof / totalTopSellers) * 100)} %`
-              : "—",
-          ],
-        ]
-      : [["Aucun commercial dans les données actuelles", "—"]],
-  };
-  details.faitClient = {
-    title: `Détail — Montant des projets réalisés par ${clientFait?.client ?? "—"}`,
-    items: clientFait
-      ? [
-          ["Montant total réel (CA commandé cumulé)", fmtM(clientFait.ca_total_xof)],
-          ["Pays", clientFait.pays || "non renseigné"],
-        ]
-      : [["Aucun client dans les données actuelles", "—"]],
-  };
-
   // ---- Ligne de statut des filtres (mockup) ----
   const statusParts: string[] = [];
   if (period !== "trimestre") statusParts.push(`période : ${PERIODS.find((p) => p.key === period)!.label}`);
-  if (commercial) statusParts.push(`commercial : ${commercial}`);
-  if (pays) statusParts.push(`pays : ${pays}`);
 
   function resetFilters() {
     setPeriod("trimestre");
-    setCommercial("");
-    setPays("");
   }
 
   const detail = openDetail ? details[openDetail] : null;
-  const sellers = bySalesperson.slice(0, 5);
   const p = kpis.open_pipeline;
 
   const projection = {
@@ -355,6 +323,33 @@ export function DashboardLive({
     },
   ];
 
+  const vigilance: { key: string; color: string; label: string; value: string; valueSize: string; delta: string }[] = [
+    {
+      key: "faitImpaye",
+      color: "var(--color-bad)",
+      label: "⚠ Impayé le plus critique",
+      value: IMPAYE_CRITIQUE.client,
+      valueSize: "16px",
+      delta: `${IMPAYE_CRITIQUE.montant} M FCFA — ${IMPAYE_CRITIQUE.jours} jours de retard`,
+    },
+    {
+      key: "faitOpportunite",
+      color: "var(--color-warn)",
+      label: "⚠ Opportunité la plus à risque",
+      value: OPP_CRITIQUE.name,
+      valueSize: "15px",
+      delta: `${OPP_CRITIQUE.client} — ${OPP_CRITIQUE.val} M FCFA${OPP_CRITIQUE.risk ? " (obsolète)" : ""}`,
+    },
+    {
+      key: "faitFournisseur",
+      color: "var(--color-bad)",
+      label: "⚠ Exposition fournisseur la plus forte",
+      value: FOURN_CRITIQUE.name,
+      valueSize: "16px",
+      delta: `${FOURN_CRITIQUE.expo12m} M FCFA commandés sur 12 mois`,
+    },
+  ];
+
   return (
     <>
       {/* ===== HEADER (structure mockup) ===== */}
@@ -371,18 +366,6 @@ export function DashboardLive({
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <select className={SELECT_CLASS} value={commercial} onChange={(e) => setCommercial(e.target.value)}>
-            <option value="">Tous les commerciaux</option>
-            {sellers.map((s) => (
-              <option key={s.commercial}>{s.commercial}</option>
-            ))}
-          </select>
-          <select className={SELECT_CLASS} value={pays} onChange={(e) => setPays(e.target.value)}>
-            <option value="">Tous les pays</option>
-            {byCountry.map((c) => (
-              <option key={c.pays}>{c.pays}</option>
-            ))}
-          </select>
           <div className="flex gap-1 rounded-[10px] border border-line bg-panel p-1">
             {PERIODS.map((pp) => (
               <button
@@ -446,8 +429,8 @@ export function DashboardLive({
         </div>
       )}
 
-      {/* ===== CHART CA + FAITS MARQUANTS ===== */}
-      <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-[1.4fr_1fr]">
+      {/* ===== CHART CA + POINTS DE VIGILANCE (grid2 mockup) ===== */}
+      <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Panel>
           <PanelHead title="Évolution du CA — réalisé">
             <AiChip>Données réelles Odoo (commandes)</AiChip>
@@ -472,38 +455,23 @@ export function DashboardLive({
           />
         </Panel>
         <Panel>
-          <PanelHead title="Faits marquants" />
+          <PanelHead title="Points de vigilance" />
           <div className="flex flex-col gap-3">
-            <FaitCard
-              topColor="var(--color-ai)"
-              label={pays ? "Pays sélectionné" : "Top pays"}
-              value={paysFait?.pays ?? "—"}
-              delta={`${paysPct}% des clients`}
-              deltaClass="text-muted"
-              onClick={() =>
-                setOpenDetail((cur) => (cur === "faitPays" ? null : "faitPays"))
-              }
-            />
-            <FaitCard
-              topColor="var(--color-good)"
-              label={commercial ? "Commercial sélectionné" : "Top commercial"}
-              value={comFait?.commercial ?? "—"}
-              delta={comFait ? fmtM(comFait.ca_total_xof) : "—"}
-              deltaClass="text-good"
-              onClick={() =>
-                setOpenDetail((cur) => (cur === "faitCommercial" ? null : "faitCommercial"))
-              }
-            />
-            <FaitCard
-              topColor="var(--color-warn)"
-              label={pays ? `Top client — ${pays}` : "Top client"}
-              value={clientFait?.client ?? "—"}
-              delta={clientFait ? `${fmtM(clientFait.ca_total_xof)} cumulés` : "—"}
-              deltaClass="text-muted"
-              onClick={() =>
-                setOpenDetail((cur) => (cur === "faitClient" ? null : "faitClient"))
-              }
-            />
+            {vigilance.map((v) => (
+              <button
+                key={v.key}
+                onClick={() => setOpenDetail((cur) => (cur === v.key ? null : v.key))}
+                className="group relative cursor-pointer overflow-hidden rounded-card border border-line bg-panel-2 px-4 pb-3.5 pt-4 text-left transition hover:-translate-y-px hover:border-[#39466B]"
+              >
+                <span className="absolute left-0 top-0 h-0.5 w-full opacity-70" style={{ background: v.color }} />
+                <div className="mb-1.5 text-[11.5px] uppercase tracking-[0.06em] text-muted">{v.label}</div>
+                <div className="font-semibold leading-tight text-text" style={{ fontSize: v.valueSize }}>
+                  {v.value}
+                </div>
+                <div className="mt-1 font-mono text-xs text-bad">{v.delta}</div>
+                <div className="absolute bottom-2.5 right-3 font-mono text-[9.5px] text-[#3A4668]">détail ↓</div>
+              </button>
+            ))}
           </div>
         </Panel>
       </div>

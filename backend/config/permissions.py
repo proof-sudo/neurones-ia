@@ -46,7 +46,6 @@ DEFAULT_MODULE_ACCESS: dict[str, dict[str, bool]] = {
     "veille-ao":     {"dg": False, "dir_commercial": True,  "dir_operations": False, "presale": True,  "dir_financier": False, "commercial": False},
     "crosssell":     {"dg": False, "dir_commercial": True,  "dir_operations": False, "presale": False, "dir_financier": False, "commercial": True},
     "portefeuille":  {"dg": True,  "dir_commercial": True,  "dir_operations": True,  "presale": True,  "dir_financier": True,  "commercial": True},
-    "tenders":       {"dg": True,  "dir_commercial": True,  "dir_operations": True,  "presale": True,  "dir_financier": False, "commercial": True},
     "presales":      {"dg": True,  "dir_commercial": False, "dir_operations": True,  "presale": True,  "dir_financier": False, "commercial": False},
     "offres":        {"dg": False, "dir_commercial": True,  "dir_operations": False, "presale": True,  "dir_financier": False, "commercial": True},
     "couts":         {"dg": False, "dir_commercial": True,  "dir_operations": True,  "presale": True,  "dir_financier": True,  "commercial": False},

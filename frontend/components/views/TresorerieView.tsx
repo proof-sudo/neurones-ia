@@ -6,8 +6,59 @@ import { AiChip } from "@/components/ui/AiChip";
 import { Panel, PanelHead } from "@/components/ui/Panel";
 import { KpiGauge } from "@/components/ui/KpiGauge";
 import { ViewHeader } from "@/components/ui/ViewHeader";
+import { DetailPanel, DetailGrid, DetailItem } from "@/components/ui/DetailPanel";
 import { TresoLineChart, VBarChart } from "@/components/charts/AnalyticsCharts";
-import { FORECAST_MONTHS, FORECAST_OPPS } from "@/lib/fixtures/forecast";
+import {
+  FORECAST_MONTHS,
+  FORECAST_OPPS,
+  IMPAYES_PAR_CLIENT,
+  TOTAL_IMPAYES,
+  severiteImpaye,
+  type Impaye,
+} from "@/lib/fixtures/forecast";
+
+const SIMULATEUR_TOOLTIP =
+  "Le solde de départ et les charges fixes ci-dessous sont des hypothèses illustratives que vous pouvez ajuster — ce ne sont pas des chiffres réels d'Odoo. Utilisez ce simulateur pour tester des scénarios, pas comme donnée de référence.";
+
+/** Décision de recouvrement par règles sur le retard réel (repli local, comme le mockup). */
+function decisionRecouvrement(i: Impaye): { decision: React.ReactNode; action: string } {
+  if (i.jours > 700) {
+    return {
+      decision: (
+        <>
+          <b>Recouvrement d&apos;urgence.</b> {i.jours} jours de retard — c&apos;est l&apos;impayé le
+          plus ancien du portefeuille, proche du seuil où une créance devient comptablement
+          irrécouvrable.
+        </>
+      ),
+      action:
+        "Escalade immédiate (Direction Financière + Direction Commerciale) sous 5 jours, avant provision pour créance douteuse.",
+    };
+  }
+  if (i.jours > 400) {
+    return {
+      decision: (
+        <>
+          <b>Plan de recouvrement structuré.</b> Montant significatif ({i.montant} M FCFA) en
+          souffrance depuis plus d&apos;un an
+          {i.souffrance ? `, dont ${i.souffrance} M FCFA depuis ${i.jours} jours` : ""} — nécessite
+          un suivi dédié, pas une simple relance.
+        </>
+      ),
+      action:
+        "Mettre en place une cellule de recouvrement dédiée avec échéancier formel sous 15 jours.",
+    };
+  }
+  return {
+    decision: (
+      <>
+        <b>Relance active.</b> {i.jours} jours de retard — encore dans une fenêtre où une relance
+        ferme peut suffire.
+      </>
+    ),
+    action: "Relance formelle sous 7 jours, avant que le dossier ne s'aggrave.",
+  };
+}
 
 const INPUT_CLASS =
   "w-full rounded-[9px] border border-line bg-panel px-2.5 py-2 font-mono text-xs text-text focus:border-ai focus:outline-none";
@@ -21,6 +72,11 @@ const INPUTS = [
 
 export function TresorerieView() {
   const [v, setV] = useState<Record<string, number>>({ solde: 1500, charges: 700, marge: 30, delai: 30 });
+  const [selectedImpaye, setSelectedImpaye] = useState<string | null>(null);
+
+  const impaye = IMPAYES_PAR_CLIENT.find((i) => i.client === selectedImpaye) ?? null;
+  const decision = impaye ? decisionRecouvrement(impaye) : null;
+  const impayeSev = impaye ? severiteImpaye(impaye.jours) : null;
 
   const calc = useMemo(() => {
     const bReal = new Array(6).fill(0);
@@ -65,6 +121,83 @@ export function TresorerieView() {
         <AiChip>simulation ajustable</AiChip>
       </ViewHeader>
 
+      <DetailPanel
+        open={!!impaye}
+        title={impaye ? `Décision recouvrement — ${impaye.client}` : ""}
+        onClose={() => setSelectedImpaye(null)}
+      >
+        {impaye && decision && impayeSev && (
+          <DetailGrid>
+            <DetailItem k="Montant échu">{impaye.montant} M FCFA</DetailItem>
+            <DetailItem k="Retard" valueClassName="text-bad">
+              {impaye.jours} jours
+            </DetailItem>
+            <DetailItem k="Sévérité">
+              <span style={{ color: impayeSev.color }}>{impayeSev.label}</span>
+            </DetailItem>
+            <DetailItem k={`Part du total impayés (${(TOTAL_IMPAYES / 1000).toFixed(2)} Md FCFA)`}>
+              {((impaye.montant / TOTAL_IMPAYES) * 100).toFixed(1)}%
+            </DetailItem>
+            <DetailItem k="Décision recommandée" full valueClassName="text-[12.5px] font-medium leading-relaxed">
+              {decision.decision}
+            </DetailItem>
+            <DetailItem k="Première action" full valueClassName="text-[12.5px] font-medium leading-relaxed">
+              {decision.action}
+            </DetailItem>
+          </DetailGrid>
+        )}
+      </DetailPanel>
+
+      <Panel className="mb-4">
+        <PanelHead title="Impayés par client">
+          <AiChip>cliquez sur un client pour la décision de recouvrement</AiChip>
+        </PanelHead>
+        <div className="mb-3 text-[12px] text-muted">
+          Les 3 impayés réels les plus critiques du portefeuille (sur {(TOTAL_IMPAYES / 1000).toFixed(2)} Md
+          FCFA d&apos;impayés échus au total, 842 factures). Cliquez sur un client pour la décision.
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full border-collapse text-[12.5px]">
+            <thead>
+              <tr>
+                {["Client", "Montant échu", "Retard", "Sévérité"].map((h) => (
+                  <th key={h} className="border-b border-line px-2 pb-2 text-left text-[11px] font-medium uppercase tracking-[0.05em] text-muted">
+                    {h}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {IMPAYES_PAR_CLIENT.map((i) => {
+                const sev = severiteImpaye(i.jours);
+                return (
+                  <tr
+                    key={i.client}
+                    onClick={() => setSelectedImpaye((cur) => (cur === i.client ? null : i.client))}
+                    className={clsx(
+                      "cursor-pointer border-b border-line last:border-none transition-colors hover:bg-panel-2",
+                      selectedImpaye === i.client && "bg-panel-2",
+                    )}
+                  >
+                    <td className="px-2 py-2.5 font-medium text-text">{i.client}</td>
+                    <td className="px-2 py-2.5 font-mono">{i.montant} M FCFA</td>
+                    <td className="px-2 py-2.5 font-mono text-bad">{i.jours} jours</td>
+                    <td className="px-2 py-2.5">
+                      <span
+                        className="inline-block rounded-full px-2 py-0.5 text-[10.5px] font-medium text-white"
+                        style={{ backgroundColor: sev.color }}
+                      >
+                        {sev.label}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </Panel>
+
       <div className="mb-[22px] grid grid-cols-2 gap-3.5 xl:grid-cols-4">
         <KpiGauge
           color="var(--color-good)"
@@ -107,9 +240,18 @@ export function TresorerieView() {
         </Panel>
       </div>
 
-      <Panel className="mb-4">
-        <PanelHead title="Hypothèses de simulation">
-          <AiChip>ajustez pour tester un scénario</AiChip>
+      <Panel className="mb-4 border-l-[3px] border-l-warn">
+        <PanelHead
+          title={
+            <span className="inline-flex items-center gap-1.5">
+              Simulateur exploratoire
+              <span className="cursor-help text-[13px] font-normal text-muted" title={SIMULATEUR_TOOLTIP}>
+                ⓘ
+              </span>
+            </span>
+          }
+        >
+          <AiChip>hypothèses ajustables, non réelles</AiChip>
         </PanelHead>
         <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
           {INPUTS.map((inp) => (
@@ -127,7 +269,7 @@ export function TresorerieView() {
       </Panel>
 
       <div className="rounded-card border border-line bg-panel p-5">
-        <PanelHead title="Détail mensuel" />
+        <PanelHead title="Détail mensuel (simulation)" />
         <div className="overflow-x-auto">
           <table className="w-full border-collapse text-[12.5px]">
             <thead>

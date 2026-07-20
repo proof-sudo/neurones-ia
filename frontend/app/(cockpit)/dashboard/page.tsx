@@ -26,9 +26,7 @@ export default async function DashboardPage() {
   return (
     <DashboardLive
       kpis={data.kpis}
-      byCountry={data.byCountry}
       bySalesperson={data.bySalesperson}
-      topClients={data.topClients}
     />
   );
 }
