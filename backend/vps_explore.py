@@ -2,9 +2,7 @@
 import paramiko
 import sys
 
-HOST = "187.127.228.104"
-USER = "root"
-PASS = "&RE1KN&.#rLzQ0?M"
+from vps_config import VPS_HOST as HOST, VPS_USER as USER, VPS_PASS as PASS
 
 def run(client, cmd):
     stdin, stdout, stderr = client.exec_command(cmd, timeout=30)

@@ -7,10 +7,7 @@ import io
 import time
 from pathlib import Path
 
-VPS_HOST = "187.127.228.104"
-VPS_USER = "root"
-VPS_PASS = "&RE1KN&.#rLzQ0?M"
-REMOTE_DIR = "/opt/neurones-ia"
+from vps_config import VPS_HOST, VPS_USER, VPS_PASS, REMOTE_DIR
 PROJECT_ROOT = Path(__file__).parent.parent
 
 
@@ -120,8 +117,8 @@ def main():
     log(f"Frontend : http://ia.neuronestech.com (après DNS) ou http://{VPS_HOST}:3001")
     log(f"Backend  : http://ia.neuronestech.com/api/v1 ou http://{VPS_HOST}:8000/v1")
     log("\nPROCHAINES ÉTAPES :")
-    log("1. Pointer ia.neuronestech.com → 187.127.228.104 dans votre DNS")
-    log("2. ssh root@187.127.228.104")
+    log(f"1. Pointer ia.neuronestech.com → {VPS_HOST} dans votre DNS")
+    log(f"2. ssh root@{VPS_HOST}")
     log("   cd /opt/neurones-ia")
     log("   docker compose exec backend python scripts/run_full_sync.py")
     log("   docker compose exec backend python scripts/initial_ingest.py")

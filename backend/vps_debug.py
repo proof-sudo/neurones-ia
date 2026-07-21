@@ -1,9 +1,7 @@
 """Debug du build frontend sur VPS."""
 import paramiko, sys
 
-VPS_HOST = "187.127.228.104"
-VPS_USER = "root"
-VPS_PASS = "&RE1KN&.#rLzQ0?M"
+from vps_config import VPS_HOST, VPS_USER, VPS_PASS
 
 def run(client, cmd, timeout=60):
     stdin, stdout, stderr = client.exec_command(cmd, timeout=timeout)

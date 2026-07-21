@@ -3,6 +3,7 @@
 .env
 backend/.env
 backend/.env.prod
+backend/.env.vps
 *.env.local
 docker-compose.override.yml
 # ── Data / volumes Docker (trop lourds, hors-repo) ─────────────────────────

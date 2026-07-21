@@ -5,10 +5,7 @@ import paramiko, time, sys
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 from pathlib import Path
 
-VPS_HOST = "187.127.228.104"
-VPS_USER = "root"
-VPS_PASS = "&RE1KN&.#rLzQ0?M"
-REMOTE_DIR = "/opt/neurones-ia"
+from vps_config import VPS_HOST, VPS_USER, VPS_PASS, REMOTE_DIR
 PROJECT_ROOT = Path(__file__).parent.parent
 
 def run(client, cmd, timeout=60):
@@ -56,7 +53,7 @@ run(client,
 print("   Sync lance -> /tmp/odoo_sync.log")
 
 # ─── 4. Rebuild frontend avec URL IP ──────────────────────────────────────
-print("[4] Lancement rebuild frontend (URL: http://187.127.228.104:8080/api/v1)...")
+print(f"[4] Lancement rebuild frontend (URL: http://{VPS_HOST}:8080/api/v1)...")
 run(client,
     f"cd {REMOTE_DIR} && "
     f"nohup docker compose build frontend > /tmp/frontend_rebuild.log 2>&1 &",
@@ -114,4 +111,4 @@ print(out)
 sftp.close()
 client.close()
 print("\n=== DONE ===")
-print("Application accessible sur: http://187.127.228.104:8080")
+print(f"Application accessible sur: http://{VPS_HOST}:8080")
