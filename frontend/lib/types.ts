@@ -135,6 +135,12 @@ export type KanbanData = Record<string, KanbanCard[]>;
 
 // ---------- Partenaires ----------
 
+export interface PartnerOrder {
+  ref: string;
+  montant: number;
+  date: string;
+}
+
 export interface Partner {
   name: string;
   type: string;
@@ -144,6 +150,10 @@ export interface Partner {
   caGenere: number;
   contact: string;
   statut: string;
+  /** Date de la dernière commande (bon de commande réel) — sert au statut « Dormant » et à l'activité. */
+  derniereCommande: string;
+  /** Historique réel des commandes (purchase_orders). */
+  commandes: PartnerOrder[];
 }
 
 // ---------- Veille AO ----------
