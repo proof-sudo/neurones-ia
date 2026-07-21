@@ -2,7 +2,7 @@
 import paramiko, time
 from pathlib import Path
 
-from vps_config import VPS_HOST, VPS_USER, VPS_PASS, REMOTE_DIR
+from vps_config import REMOTE_DIR, ssh_connect
 PROJECT_ROOT = Path(__file__).parent.parent
 
 def run(client, cmd, timeout=30):
@@ -14,7 +14,7 @@ def run(client, cmd, timeout=30):
 
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-client.connect(VPS_HOST, username=VPS_USER, password=VPS_PASS, timeout=15)
+ssh_connect(client)
 sftp = client.open_sftp()
 
 # Upload Dockerfile corrige

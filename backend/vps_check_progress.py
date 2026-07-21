@@ -2,7 +2,7 @@
 import paramiko, sys, time
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
-from vps_config import VPS_HOST, VPS_USER, VPS_PASS, REMOTE_DIR
+from vps_config import REMOTE_DIR, ssh_connect
 
 def run(client, cmd, timeout=30):
     stdin, stdout, stderr = client.exec_command(cmd, timeout=timeout)
@@ -13,7 +13,7 @@ def run(client, cmd, timeout=30):
 
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-client.connect(VPS_HOST, username=VPS_USER, password=VPS_PASS, timeout=15)
+ssh_connect(client)
 
 print("=== SYNC ODOO (log complet) ===")
 out, _ = run(client, "cat /tmp/sync.log 2>/dev/null || echo 'log absent'")
