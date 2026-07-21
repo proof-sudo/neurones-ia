@@ -78,6 +78,12 @@ services:
     environment:
       - PORT=3000
       - HOSTNAME=0.0.0.0
+      # Appels SERVEUR (login, Server Actions, backendFetch) : joignent le backend
+      # via le DNS interne Compose. NEXT_PUBLIC_API_URL (build-arg) ne couvre que
+      # les appels client relatifs routés par nginx ; côté serveur il faut cette URL
+      # absolue, sinon le défaut http://localhost:8000 vise le conteneur frontend
+      # lui-même → « backend injoignable » sur la page de connexion.
+      - BACKEND_URL=http://backend:8000
     ports:
       - "127.0.0.1:3001:3000"
     depends_on:

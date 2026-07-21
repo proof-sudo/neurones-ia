@@ -57,6 +57,9 @@ services:
     environment:
       - PORT=3000
       - HOSTNAME=0.0.0.0
+      # Appels serveur (login/Server Actions) → backend via DNS Compose, comme en
+      # prod. Sans ça, le défaut localhost:8000 viserait le conteneur frontend.
+      - BACKEND_URL=http://backend:8000
     ports:
       - "3000:3000"
     depends_on:
