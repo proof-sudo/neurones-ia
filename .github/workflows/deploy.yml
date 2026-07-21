@@ -102,13 +102,13 @@ jobs:
       # Le runner a besoin du docker-compose.yml pour l'envoyer au VPS (remplace le git pull).
       - uses: actions/checkout@v4
 
-      - name: Upload docker-compose.yml to VPS
+      - name: Upload docker-compose.yml + nginx.neurones-ia.conf to VPS
         uses: appleboy/scp-action@v1
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
-          source: docker-compose.yml
+          source: docker-compose.yml,nginx.neurones-ia.conf
           target: ${{ secrets.VPS_DEPLOY_PATH }}
 
       - name: Deploy via SSH
@@ -131,6 +131,24 @@ jobs:
             cd "${{ secrets.VPS_DEPLOY_PATH }}"
 
             echo "🚀 Déploiement de ${IMAGE_TAG} démarré $(date)"
+
+            # Sync + reload nginx si sa config a changé — auparavant une étape manuelle
+            # (cp + nginx -t + reload), oubliable après un fix comme /api/copilot vs
+            # /api/backend/* mal routé. Sauvegarde/restauration si la nouvelle config
+            # échoue au test : jamais de reload avec une config invalide, jamais de
+            # fichier cassé laissé en place pour un futur restart manuel.
+            if [ -f nginx.neurones-ia.conf ]; then
+              cp /etc/nginx/sites-available/neurones-ia /etc/nginx/sites-available/neurones-ia.bak 2>/dev/null || true
+              cp nginx.neurones-ia.conf /etc/nginx/sites-available/neurones-ia
+              ln -sf /etc/nginx/sites-available/neurones-ia /etc/nginx/sites-enabled/neurones-ia
+              if nginx -t; then
+                systemctl reload nginx
+                echo "✅ nginx rechargé"
+              else
+                echo "⚠️  nginx -t a échoué — config restaurée, PAS de reload"
+                cp /etc/nginx/sites-available/neurones-ia.bak /etc/nginx/sites-available/neurones-ia 2>/dev/null || true
+              fi
+            fi
 
             # Auth GHCR (pull des images privées). Le PAT (read:packages) est
             # injecté via stdin, jamais écrit dans un fichier ni loggé.
