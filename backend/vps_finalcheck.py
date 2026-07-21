@@ -3,10 +3,7 @@ import paramiko, time, sys
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 from pathlib import Path
 
-VPS_HOST = "187.127.228.104"
-VPS_USER = "root"
-VPS_PASS = "&RE1KN&.#rLzQ0?M"
-REMOTE_DIR = "/opt/neurones-ia"
+from vps_config import REMOTE_DIR, ssh_connect
 
 def run(client, cmd, timeout=30):
     stdin, stdout, stderr = client.exec_command(cmd, timeout=timeout)
@@ -17,7 +14,7 @@ def run(client, cmd, timeout=30):
 
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-client.connect(VPS_HOST, username=VPS_USER, password=VPS_PASS, timeout=15)
+ssh_connect(client)
 sftp = client.open_sftp()
 
 # Test backend depuis l'hote VPS (pas depuis l'interieur du container)

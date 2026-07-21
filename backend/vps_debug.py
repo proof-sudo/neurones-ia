@@ -1,9 +1,7 @@
 """Debug du build frontend sur VPS."""
 import paramiko, sys
 
-VPS_HOST = "187.127.228.104"
-VPS_USER = "root"
-VPS_PASS = "&RE1KN&.#rLzQ0?M"
+from vps_config import ssh_connect
 
 def run(client, cmd, timeout=60):
     stdin, stdout, stderr = client.exec_command(cmd, timeout=timeout)
@@ -13,7 +11,7 @@ def run(client, cmd, timeout=60):
 
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-client.connect(VPS_HOST, username=VPS_USER, password=VPS_PASS, timeout=15)
+ssh_connect(client)
 
 # Voir le log complet du build frontend (erreur npm ci)
 print("=== LOG COMPLET (grep npm ci error) ===")

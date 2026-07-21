@@ -1,9 +1,7 @@
 """Inspecte la config nginx et la structure de l'app existante."""
 import paramiko
 
-HOST = "187.127.228.104"
-USER = "root"
-PASS = "&RE1KN&.#rLzQ0?M"
+from vps_config import ssh_connect
 
 def run(client, cmd):
     stdin, stdout, stderr = client.exec_command(cmd, timeout=30)
@@ -13,7 +11,7 @@ def run(client, cmd):
 
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-client.connect(HOST, username=USER, password=PASS, timeout=15)
+ssh_connect(client)
 
 sections = [
     ("Nginx sites-available", "ls -la /etc/nginx/sites-available/"),

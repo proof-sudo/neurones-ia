@@ -79,7 +79,7 @@ Quand `dev` est stable et testé :
 1. Ouvrir une **PR `dev` → `main`** sur GitHub
 2. Faire valider par le responsable technique
 3. Merger → **le déploiement se déclenche automatiquement en moins de 2 minutes**
-4. Vérifier sur [http://187.127.228.104:8080](http://187.127.228.104:8080) que tout fonctionne
+4. Vérifier sur [http://76.13.51.87:8080](http://76.13.51.87:8080) que tout fonctionne
 
 ---
 
@@ -147,4 +147,4 @@ git push --force-with-lease origin feature/ma-feature
 |---|---|
 | Responsable technique | dtraore@neuronestech.com |
 | Repo GitHub | github.com/proof-sudo/neurones-ia |
-| Application (préprod) | http://187.127.228.104:8080 |
+| Application (préprod) | http://76.13.51.87:8080 |

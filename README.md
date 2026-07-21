@@ -744,6 +744,6 @@ feature/ma-feature  →  dev  →  main  →  déploiement automatique VPS
 | Rôle | Contact |
 |---|---|
 | Responsable technique | dtraore@neuronestech.com |
-| Application (préprod) | http://187.127.228.104:8080 |
+| Application (préprod) | http://76.13.51.87:8080 |
 | Repo GitHub | https://github.com/proof-sudo/neurones-ia |
 | Odoo (production) | https://odoo.neuronestech.com |

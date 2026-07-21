@@ -2,9 +2,7 @@
 import paramiko
 import sys
 
-HOST = "187.127.228.104"
-USER = "root"
-PASS = "&RE1KN&.#rLzQ0?M"
+from vps_config import VPS_HOST as HOST, ssh_connect
 
 def run(client, cmd):
     stdin, stdout, stderr = client.exec_command(cmd, timeout=30)
@@ -14,7 +12,7 @@ def run(client, cmd):
 
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-client.connect(HOST, username=USER, password=PASS, timeout=15)
+ssh_connect(client)
 print("[OK] Connecte au VPS", HOST)
 
 sections = [

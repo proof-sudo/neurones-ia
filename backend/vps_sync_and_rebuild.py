@@ -8,10 +8,7 @@ import paramiko, time, sys, io
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 from pathlib import Path
 
-VPS_HOST = "187.127.228.104"
-VPS_USER = "root"
-VPS_PASS = "&RE1KN&.#rLzQ0?M"
-REMOTE_DIR = "/opt/neurones-ia"
+from vps_config import VPS_HOST, REMOTE_DIR, ssh_connect
 PROJECT_ROOT = Path(__file__).parent.parent
 
 def run(client, cmd, timeout=30):
@@ -23,7 +20,7 @@ def run(client, cmd, timeout=30):
 
 client = paramiko.SSHClient()
 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-client.connect(VPS_HOST, username=VPS_USER, password=VPS_PASS, timeout=15)
+ssh_connect(client)
 sftp = client.open_sftp()
 
 # ─── 1. Ecrire le script de sync sur le VPS ──────────────────────────────
@@ -113,4 +110,4 @@ print(f"   http://localhost:8080/api/v1/health: {h3}")
 sftp.close()
 client.close()
 print("\n=== DONE ===")
-print("URL de test: http://187.127.228.104:8080")
+print(f"URL de test: http://{VPS_HOST}:8080")
