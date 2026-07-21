@@ -5,7 +5,7 @@ from datetime import datetime
 from adapters.crm.odoo_adapter import OdooAdapter
 from db.database import AsyncSessionLocal
 from db.models import ClientModel, InvoiceModel, ProjectModel, SaleOrderModel, PurchaseOrderModel, OpportunityModel, DossierModel
-from sqlalchemy import select
+from sqlalchemy import select, text
 from config.settings import settings
 
 logger = logging.getLogger(__name__)
@@ -456,7 +456,20 @@ async def run_odoo_sync(force_full: bool = False):
                 lines = lines_by_order.get(so["id"], [])
                 currency = _get_odoo_name(so.get("currency_id"), "XOF")
                 amount_xof = _to_xof(float(so.get("amount_total", 0)), currency, rates)
-                existing = await session.get(SaleOrderModel, order_id)
+                try:
+                    existing = await session.get(SaleOrderModel, order_id)
+                except json.JSONDecodeError as e:
+                    # order_lines corrompu en base (donnée historique non-JSON) : on répare
+                    # la ligne au lieu de laisser planter toute la sync.
+                    logger.warning(
+                        "order_lines corrompu pour %s, réparation automatique (reset) : %s",
+                        order_id, e,
+                    )
+                    await session.execute(
+                        text("UPDATE sale_orders SET order_lines = '[]' WHERE order_id = :oid"),
+                        {"oid": order_id},
+                    )
+                    existing = await session.get(SaleOrderModel, order_id)
                 if existing:
                     existing.state = so.get("state", "sale")
                     existing.amount = amount_xof
