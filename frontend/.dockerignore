@@ -1,0 +1,21 @@
+# Dépendances et artefacts reconstruits dans l'image
+node_modules
+.next
+out
+
+# Git / CI
+.git
+.github
+
+# Variables d'env LOCALES : ne jamais embarquer .env.local (pointe sur
+# localhost:8000 en dev) dans l'image de prod. L'URL API est injectée au
+# build via l'ARG NEXT_PUBLIC_API_URL.
+.env*.local
+
+# Divers
+Dockerfile
+.dockerignore
+npm-debug.log*
+*.log
+.DS_Store
+README.md
