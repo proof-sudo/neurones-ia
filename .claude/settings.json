@@ -47,7 +47,8 @@
       "Bash(rm -rf \"app/\\(cockpit\\)/tenders\")",
       "Bash(rm -f \"components/views/TendersView.tsx\")",
       "Bash(rm -f \"lib/fixtures/tenders.ts\")",
-      "Bash(docker version *)"
+      "Bash(docker version *)",
+      "Bash(python -m py_compile modules/uc_forecast/aggregation.py modules/uc_forecast/narratif.py modules/uc_forecast/decision_client.py api/v1/dashboard.py)"
     ]
   }
 }

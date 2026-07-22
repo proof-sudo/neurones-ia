@@ -123,15 +123,10 @@ export function AuthScreen({
           className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-[rgba(5,8,16,0.72)] px-5 py-10 backdrop-blur-[2px]"
         >
           <div className="mb-10 w-full max-w-[480px] rounded-2xl border border-line border-l-[3px] border-l-ai bg-panel p-6">
-            <h2 className="text-[16px]">✺ Sales IA vous attend</h2>
+            <h2 className="text-[16px]">✺ Bienvenue</h2>
             <div className="mt-2.5 mb-2.5 text-[12.5px] text-muted">
-              Bienvenue, <b className="text-text">{welcome.profile.nom}</b>. Voici ce que
-              Sales IA a préparé pour vous aujourd&apos;hui :
-            </div>
-            <div className="rounded-lg border border-line border-l-2 border-l-ai bg-panel-2 px-3.5 py-3 text-[12px] leading-relaxed text-text">
-              {welcome.profile.ai
-                ? `◆ ${welcome.profile.ai}`
-                : "Aucun signal prioritaire particulier détecté pour ce profil pour l'instant — votre espace est prêt."}
+              Bienvenue, <b className="text-text">{welcome.profile.nom}</b>. Votre briefing IA du
+              jour vous attend dans votre espace.
             </div>
             <button
               onClick={enterCockpit}

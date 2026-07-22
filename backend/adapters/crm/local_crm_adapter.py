@@ -425,12 +425,18 @@ class LocalCRMAdapter(CRMRepository):
             sql_seller = """
                 SELECT salesperson_name, COUNT(*) as nb, SUM(expected_revenue) as ca_brut
                 FROM opportunities WHERE salesperson_name != ''
-                GROUP BY salesperson_name ORDER BY ca_brut DESC LIMIT 10
+                GROUP BY salesperson_name ORDER BY ca_brut DESC LIMIT 30
             """
-            sellers = [
+            raw_sellers = [
                 {"commercial": row[0], "nb_opportunites": row[1], "ca_potentiel_xof": round(row[2] or 0)}
                 for row in (await session.execute(text(sql_seller))).fetchall()
             ]
+            # Un même commercial existe parfois sous 2 casses différentes dans Odoo
+            # (ex. "Segui Mireille KOUADIO" / "SEGUI MIREILLE KOUADIO") — fusion par
+            # nom normalisé pour ne pas scinder ses statistiques en deux lignes.
+            sellers = self._merge_by_normalized_name(
+                raw_sellers, sum_keys=["nb_opportunites", "ca_potentiel_xof"],
+            )[:10]
         return {
             "total_opportunités": total_nb,
             "ca_potentiel_brut_xof": total_brut,
@@ -491,16 +497,23 @@ class LocalCRMAdapter(CRMRepository):
         async with AsyncSessionLocal() as session:
             result = await session.execute(text(sql), params)
             rows = result.fetchall()
-        return [
+        raw = [
             {
                 "commercial": r[0],
                 "ca_total_xof": round(r[1] or 0),
                 "nb_commandes": r[2],
                 "nb_clients_distincts": r[3],
-                "panier_moyen_xof": round((r[1] or 0) / r[2]) if r[2] else 0,
             }
             for r in rows
         ]
+        # Un même commercial existe parfois sous 2 casses différentes dans Odoo —
+        # fusion par nom normalisé pour ne pas scinder ses statistiques en deux lignes.
+        merged = self._merge_by_normalized_name(
+            raw, sum_keys=["ca_total_xof", "nb_commandes", "nb_clients_distincts"],
+        )
+        for m in merged:
+            m["panier_moyen_xof"] = round(m["ca_total_xof"] / m["nb_commandes"]) if m["nb_commandes"] else 0
+        return merged
 
     async def score_client_risk(self, client_id: str | None = None, limit: int = 20) -> list[dict]:
         async with AsyncSessionLocal() as session:
@@ -1028,6 +1041,37 @@ class LocalCRMAdapter(CRMRepository):
                 return canon
         return "Autre"
 
+    @staticmethod
+    def _normalize_name(name: str) -> str:
+        """Clé de fusion insensible à la casse/aux espaces — un même commercial
+        existe parfois sous plusieurs variantes de casse dans Odoo
+        (ex. "Segui Mireille KOUADIO" / "SEGUI MIREILLE KOUADIO")."""
+        import re
+        return re.sub(r"\s+", " ", (name or "").strip().upper())
+
+    @classmethod
+    def _merge_by_normalized_name(cls, rows: list[dict], *, sum_keys: list[str], name_key: str = "commercial") -> list[dict]:
+        """Fusionne les lignes dont le nom ne diffère que par la casse/espaces,
+        en sommant `sum_keys` et en gardant comme libellé la variante la plus
+        fréquente (approximée par la plus grosse valeur du premier sum_key)."""
+        merged: dict[str, dict] = {}
+        for row in rows:
+            key = cls._normalize_name(row[name_key])
+            if key not in merged:
+                merged[key] = {**row, "_display_weight": row[sum_keys[0]]}
+                continue
+            m = merged[key]
+            for sk in sum_keys:
+                m[sk] = m[sk] + row[sk]
+            if row[sum_keys[0]] > m["_display_weight"]:
+                m[name_key] = row[name_key]
+                m["_display_weight"] = row[sum_keys[0]]
+        result = list(merged.values())
+        for r in result:
+            del r["_display_weight"]
+        result.sort(key=lambda r: r[sum_keys[0]], reverse=True)
+        return result
+
     async def get_open_pipeline_stats(self) -> dict:
         """Pipeline OUVERT uniquement (exclut gagné/perdu/annulé/suspendu), stades normalisés."""
         from sqlalchemy import text
@@ -1097,6 +1141,165 @@ class LocalCRMAdapter(CRMRepository):
             "perdues_valeur_xof": round(lost_val),
             "taux_valeur_pct": round(won_val / closed_val * 100, 1) if closed_val else 0,
         }
+
+    async def get_lost_deals(self, limit: int = 20) -> dict:
+        """Opportunités perdues (historique) : top N + agrégats par client et par commercial."""
+        from sqlalchemy import text
+        sql = "SELECT name, client_name, stage, expected_revenue, salesperson_name FROM opportunities"
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(text(sql))).fetchall()
+
+        lost = [
+            {
+                "name": r[0],
+                "client": r[1] or "—",
+                "montant_xof": round(r[3] or 0),
+                "commercial": r[4] or "",
+            }
+            for r in rows if self._canon_stage(r[2]) == "__lost__"
+        ]
+
+        by_client: dict[str, dict] = {}
+        for d in lost:
+            c = by_client.setdefault(d["client"], {"client": d["client"], "nb": 0, "montant_xof": 0})
+            c["nb"] += 1
+            c["montant_xof"] += d["montant_xof"]
+
+        by_commercial_raw: dict[str, dict] = {}
+        for d in lost:
+            if not d["commercial"]:
+                continue
+            c = by_commercial_raw.setdefault(d["commercial"], {"commercial": d["commercial"], "nb": 0, "montant_xof": 0})
+            c["nb"] += 1
+            c["montant_xof"] += d["montant_xof"]
+        # Un même commercial existe parfois sous 2 casses différentes dans Odoo —
+        # fusion par nom normalisé pour ne pas scinder ses statistiques en deux lignes.
+        by_commercial = self._merge_by_normalized_name(
+            list(by_commercial_raw.values()), sum_keys=["montant_xof", "nb"],
+        )
+
+        top_deals = sorted(lost, key=lambda d: d["montant_xof"], reverse=True)[:limit]
+        return {
+            "nb_total": len(lost),
+            "montant_total_xof": sum(d["montant_xof"] for d in lost),
+            "top_deals": top_deals,
+            "by_client": sorted(by_client.values(), key=lambda c: c["montant_xof"], reverse=True),
+            "by_commercial": by_commercial,
+        }
+
+    async def get_order_lines(self, limit: int = 20000) -> list[dict]:
+        """Lignes de commande réelles (sale_orders non annulées). Pas de tri par
+        date/LIMIT restrictif utile ici : les analyses transversales (montée en
+        valeur) ont besoin de voir aussi les commandes anciennes (obsolescence)."""
+        from sqlalchemy import text
+        sql = """
+            SELECT o.client_id, o.client_name,
+                   json_extract(j.value, '$.product') as product,
+                   CAST(json_extract(j.value, '$.subtotal') AS REAL) as subtotal,
+                   o.date_order
+            FROM sale_orders o, json_each(o.order_lines) j
+            WHERE o.state NOT IN ('cancel', 'draft')
+              AND json_extract(j.value, '$.product') IS NOT NULL
+            LIMIT :limit
+        """
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(text(sql), {"limit": limit})).fetchall()
+        return [
+            {
+                "client_id": r[0],
+                "client": r[1] or "—",
+                "product": r[2],
+                "subtotal_xof": r[3] or 0,
+                "date_order": r[4],
+            }
+            for r in rows
+        ]
+
+    async def get_top_suppliers(self, limit: int = 20) -> list[dict]:
+        """Fournisseurs réels (purchase_orders, synchronisés depuis Odoo)."""
+        from sqlalchemy import text
+        sql = """
+            SELECT client_name, SUM(amount), COUNT(*), MAX(date_order)
+            FROM purchase_orders
+            WHERE client_name IS NOT NULL AND client_name != ''
+            GROUP BY client_name
+            ORDER BY SUM(amount) DESC
+            LIMIT :limit
+        """
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(text(sql), {"limit": limit})).fetchall()
+            suppliers = []
+            for name, total, nb, last_date in rows:
+                detail_sql = """
+                    SELECT name, amount, date_order FROM purchase_orders
+                    WHERE client_name = :name
+                    ORDER BY date_order DESC LIMIT 5
+                """
+                detail_rows = (await session.execute(text(detail_sql), {"name": name})).fetchall()
+                suppliers.append({
+                    "name": name,
+                    "montant_total_xof": round(total or 0),
+                    "nb_commandes": nb,
+                    "derniere_commande": last_date[:10] if last_date else None,
+                    "commandes_recentes": [
+                        {"ref": r[0], "montant_xof": round(r[1] or 0), "date": r[2][:10] if r[2] else None}
+                        for r in detail_rows
+                    ],
+                })
+        return suppliers
+
+    async def get_client_portfolio(self, limit: int = 50) -> list[dict]:
+        """Portefeuille clients réel, agrégé sur la table dossiers (CA, backlog,
+        reste à encaisser, nb dossiers) — enrichi du secteur/contact quand la
+        fiche client correspondante existe (jointure par nom, best-effort)."""
+        from sqlalchemy import text
+        # CA par dossier = définitif s'il est arrêté, sinon provisoire (estimation) —
+        # jamais les deux additionnés (même dossier, pas deux CA distincts à cumuler).
+        ca_expr = "CASE WHEN ca_definitif > 0 THEN ca_definitif ELSE ca_provisoire END"
+        sql = f"""
+            SELECT client_name,
+                   COUNT(*) as nb_dossiers,
+                   SUM({ca_expr}) as ca_total,
+                   SUM(reste_a_encaisser) as reste_a_encaisser_total,
+                   SUM(backlog) as backlog_total,
+                   MIN(date_creation) as premiere_commande,
+                   MAX(date_creation) as derniere_commande
+            FROM dossiers
+            WHERE client_name IS NOT NULL AND client_name != ''
+            GROUP BY client_name
+            ORDER BY SUM({ca_expr}) DESC
+            LIMIT :limit
+        """
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(text(sql), {"limit": limit})).fetchall()
+            result = []
+            for r in rows:
+                client_row = (await session.execute(
+                    text("SELECT sector, contact_email, phone FROM clients WHERE name = :name LIMIT 1"),
+                    {"name": r[0]},
+                )).fetchone()
+                proj_row = (await session.execute(
+                    text("""
+                        SELECT project_name FROM dossiers
+                        WHERE client_name = :name AND project_name IS NOT NULL AND project_name != ''
+                        ORDER BY date_creation DESC LIMIT 1
+                    """),
+                    {"name": r[0]},
+                )).fetchone()
+                result.append({
+                    "client": r[0],
+                    "nb_dossiers": r[1],
+                    "ca_total_xof": round(r[2] or 0),
+                    "reste_a_encaisser_xof": round(r[3] or 0),
+                    "backlog_xof": round(r[4] or 0),
+                    "premiere_commande": r[5][:10] if r[5] else None,
+                    "derniere_commande": r[6][:10] if r[6] else None,
+                    "secteur": client_row[0] if client_row else None,
+                    "contact_email": client_row[1] if client_row else None,
+                    "telephone": client_row[2] if client_row else None,
+                    "dernier_projet": proj_row[0] if proj_row else None,
+                })
+        return result
 
     async def get_clients_by_country(self) -> list[dict]:
         """Répartition des clients par pays (le cockpit affiche le nb de clients)."""

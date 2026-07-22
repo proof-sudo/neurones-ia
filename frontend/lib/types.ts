@@ -17,8 +17,6 @@ export interface Profile {
   icon: string;
   initiales: string;
   focus: string;
-  /** Accroche IA optionnelle affichée sur la carte de profil */
-  ai?: string;
 }
 
 /** Un module = une vue = une route de la sidebar */

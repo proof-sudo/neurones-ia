@@ -500,6 +500,18 @@ class OdooAdapter(CRMRepository):
     async def get_quarterly_forecast(self, year: int | None = None) -> dict:
         return {}
 
+    async def get_lost_deals(self, limit: int = 20) -> dict:
+        return {}
+
+    async def get_order_lines(self, limit: int = 20000) -> list[dict]:
+        return []
+
+    async def get_top_suppliers(self, limit: int = 20) -> list[dict]:
+        return []
+
+    async def get_client_portfolio(self, limit: int = 50) -> list[dict]:
+        return []
+
     async def get_cross_sell_opportunities(self, product_anchor: str, product_target: str | None = None, limit: int = 20) -> list[dict]:
         return []
 

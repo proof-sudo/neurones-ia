@@ -18,7 +18,6 @@ export const PROFILES: Profile[] = [
     icon: "◆",
     initiales: "DG",
     focus: "Pilotage stratégique de l'entreprise.",
-    ai: "Priorité réelle cette semaine : 10,86 Md FCFA d'impayés échus et une décision GO/NO-BID en attente (briefing IA).",
   },
   {
     role: "dir_commercial",
@@ -27,7 +26,6 @@ export const PROFILES: Profile[] = [
     icon: "◧",
     initiales: "DC",
     focus: "Pilotage commercial complet : pipeline, clients, offres.",
-    ai: "Pipeline réel de 107 677 M FCFA sur 3 050 opportunités, dont 34 % obsolètes (>1 an) à nettoyer en priorité.",
   },
   {
     role: "dir_operations",
@@ -36,7 +34,6 @@ export const PROFILES: Profile[] = [
     icon: "▥",
     initiales: "DO",
     focus: "Exécution des projets, appels d'offres et fournisseurs.",
-    ai: "5 appels d'offres réels à qualifier ou clôturer, dont 4 avec échéance déjà dépassée dans le CRM.",
   },
   {
     role: "presale",
@@ -46,7 +43,6 @@ export const PROFILES: Profile[] = [
     initiales: "AV",
     focus:
       "Qualification des appels d'offres et préparation des réponses techniques.",
-    ai: "1 décision GO/NO-BID en attente et 1 seul AO du portefeuille avec échéance encore valide (CNPS, 15 jours).",
   },
   {
     role: "dir_financier",
@@ -55,7 +51,6 @@ export const PROFILES: Profile[] = [
     icon: "◒",
     initiales: "DF",
     focus: "Trésorerie, marges et recouvrement.",
-    ai: "Alerte réelle : impayés échus (10,86 Md FCFA) représentent 2,86× le CA facturé YTD — recouvrement prioritaire.",
   },
   {
     role: "commercial",

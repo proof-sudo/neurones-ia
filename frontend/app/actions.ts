@@ -194,3 +194,316 @@ export async function updatePermissionAction(
 export async function resetPermissionsAction(): Promise<AdminActionResult> {
   return adminCall("/v1/auth/permissions/reset", "POST");
 }
+
+// ---------- Forecast : analyse IA à la demande (POST déclenché par clic) ----------
+
+export type ForecastAnalysisActionResult =
+  | { ok: true; analysis: string }
+  | { ok: false; error: string };
+
+interface ForecastAnalysisResponse {
+  analysis: string;
+}
+
+/**
+ * Rédige la lecture qualitative du forecast pondéré (Claude, sur les vraies
+ * opportunités du pipeline). Appelé à la demande depuis ForecastLive — jamais
+ * au chargement de la page, pour ne pas payer un appel LLM à chaque visite.
+ */
+export async function generateForecastAnalysisAction(): Promise<ForecastAnalysisActionResult> {
+  const { backendFetch, BackendError } = await import("@/lib/backend");
+  try {
+    const data = await backendFetch<ForecastAnalysisResponse>(
+      "/v1/dashboard/forecast/analysis",
+      { method: "POST" },
+    );
+    return { ok: true, analysis: data.analysis };
+  } catch (e) {
+    if (e instanceof BackendError) return { ok: false, error: e.message };
+    return { ok: false, error: "backend injoignable" };
+  }
+}
+
+export interface ClientDecisionResult {
+  decision_key: string;
+  decision_label: string;
+  justification: string;
+  action: string;
+  ai_generated: boolean;
+}
+
+export type ClientDecisionActionResult =
+  | { ok: true; decision: ClientDecisionResult }
+  | { ok: false; error: string };
+
+/**
+ * Décision recommandée pour un client du forecast : le risque (impayé connu +
+ * échéance dépassée) est calculé côté backend par une règle déterministe —
+ * Claude ne rédige que la justification et l'action, jamais la décision.
+ */
+export async function generateClientDecisionAction(
+  client: string,
+): Promise<ClientDecisionActionResult> {
+  const { backendFetch, BackendError } = await import("@/lib/backend");
+  try {
+    const decision = await backendFetch<ClientDecisionResult>(
+      "/v1/dashboard/forecast/client-decision",
+      { method: "POST", body: JSON.stringify({ client }) },
+    );
+    return { ok: true, decision };
+  } catch (e) {
+    if (e instanceof BackendError) return { ok: false, error: e.message };
+    return { ok: false, error: "backend injoignable" };
+  }
+}
+
+// ---------- Dashboard : projection IA à la demande ----------
+
+export type DashboardAnalysisActionResult =
+  | { ok: true; analysis: string }
+  | { ok: false; error: string };
+
+interface DashboardAnalysisResponse {
+  analysis: string;
+}
+
+/** Projection & recommandation du cockpit (Claude, sur les KPIs réels). */
+export async function generateDashboardAnalysisAction(): Promise<DashboardAnalysisActionResult> {
+  const { backendFetch, BackendError } = await import("@/lib/backend");
+  try {
+    const data = await backendFetch<DashboardAnalysisResponse>("/v1/dashboard/analysis", {
+      method: "POST",
+    });
+    return { ok: true, analysis: data.analysis };
+  } catch (e) {
+    if (e instanceof BackendError) return { ok: false, error: e.message };
+    return { ok: false, error: "backend injoignable" };
+  }
+}
+
+// ---------- Montée en valeur : analyse transversale IA à la demande ----------
+
+export type CrossSellAnalysisActionResult =
+  | { ok: true; analysis: string }
+  | { ok: false; error: string };
+
+interface CrossSellAnalysisResponse {
+  analysis: string;
+}
+
+/** Priorisation transversale des signaux de montée en valeur (Claude, sur commandes réelles). */
+export async function generateCrossSellAnalysisAction(): Promise<CrossSellAnalysisActionResult> {
+  const { backendFetch, BackendError } = await import("@/lib/backend");
+  try {
+    const data = await backendFetch<CrossSellAnalysisResponse>("/v1/crosssell/analysis", {
+      method: "POST",
+    });
+    return { ok: true, analysis: data.analysis };
+  } catch (e) {
+    if (e instanceof BackendError) return { ok: false, error: e.message };
+    return { ok: false, error: "backend injoignable" };
+  }
+}
+
+// ---------- Portefeuille clients : dossiers + profil IA à la demande ----------
+
+export interface ClientDossierRow {
+  ref: string;
+  client: string;
+  projet: string;
+  commercial: string;
+  etat: string;
+  date_creation: string | null;
+  date_fin: string | null;
+  ca_provisoire: number;
+  ca_definitif: number;
+  marge_provisoire: number;
+  marge_definitive: number;
+  perc_marge_provisoire: number;
+  perc_marge_definitive: number;
+  montant_recu: number;
+  reste_a_encaisser: number;
+  backlog: number;
+}
+
+export type ClientDossiersActionResult =
+  | { ok: true; dossiers: ClientDossierRow[] }
+  | { ok: false; error: string };
+
+/** Historique réel des dossiers d'un client (table dossiers). */
+export async function fetchClientDossiersAction(client: string): Promise<ClientDossiersActionResult> {
+  const { backendFetch, BackendError } = await import("@/lib/backend");
+  try {
+    const dossiers = await backendFetch<ClientDossierRow[]>(
+      `/v1/clients/dossiers?client=${encodeURIComponent(client)}`,
+    );
+    return { ok: true, dossiers };
+  } catch (e) {
+    if (e instanceof BackendError) return { ok: false, error: e.message };
+    return { ok: false, error: "backend injoignable" };
+  }
+}
+
+export interface ClientProfileResult {
+  activite: string;
+  recommandations: string[];
+  ai_generated: boolean;
+}
+
+export type ClientProfileActionResult =
+  | { ok: true; profile: ClientProfileResult }
+  | { ok: false; error: string };
+
+/**
+ * Rédige l'activité + les recommandations d'un client à partir de ses vrais
+ * dossiers — le backend calcule les constats, Claude ne fait que les rédiger.
+ */
+export async function generateClientProfileAction(client: string): Promise<ClientProfileActionResult> {
+  const { backendFetch, BackendError } = await import("@/lib/backend");
+  try {
+    const profile = await backendFetch<ClientProfileResult>("/v1/clients/profile", {
+      method: "POST",
+      body: JSON.stringify({ client }),
+    });
+    return { ok: true, profile };
+  } catch (e) {
+    if (e instanceof BackendError) return { ok: false, error: e.message };
+    return { ok: false, error: "backend injoignable" };
+  }
+}
+
+// ---------- Fournisseurs : analyse IA à la demande ----------
+
+export type PartnersAnalysisActionResult =
+  | { ok: true; analysis: string }
+  | { ok: false; error: string };
+
+interface PartnersAnalysisResponse {
+  analysis: string;
+}
+
+/** Analyse de concentration fournisseurs (Claude, sur les vraies commandes d'achat). */
+export async function generatePartnersAnalysisAction(): Promise<PartnersAnalysisActionResult> {
+  const { backendFetch, BackendError } = await import("@/lib/backend");
+  try {
+    const data = await backendFetch<PartnersAnalysisResponse>("/v1/partners/analysis", {
+      method: "POST",
+    });
+    return { ok: true, analysis: data.analysis };
+  } catch (e) {
+    if (e instanceof BackendError) return { ok: false, error: e.message };
+    return { ok: false, error: "backend injoignable" };
+  }
+}
+
+// ---------- Performance : analyse IA à la demande ----------
+
+export type PerformanceAnalysisActionResult =
+  | { ok: true; analysis: string }
+  | { ok: false; error: string };
+
+interface PerformanceAnalysisResponse {
+  analysis: string;
+}
+
+/** Lecture qualitative des performances (Claude, sur taux de victoire + pertes réelles). */
+export async function generatePerformanceAnalysisAction(): Promise<PerformanceAnalysisActionResult> {
+  const { backendFetch, BackendError } = await import("@/lib/backend");
+  try {
+    const data = await backendFetch<PerformanceAnalysisResponse>(
+      "/v1/dashboard/performance/analysis",
+      { method: "POST" },
+    );
+    return { ok: true, analysis: data.analysis };
+  } catch (e) {
+    if (e instanceof BackendError) return { ok: false, error: e.message };
+    return { ok: false, error: "backend injoignable" };
+  }
+}
+
+// ---------- Trésorerie : analyse IA + décision de recouvrement à la demande ----------
+
+export type TresorerieAnalysisActionResult =
+  | { ok: true; analysis: string }
+  | { ok: false; error: string };
+
+interface TresorerieAnalysisResponse {
+  analysis: string;
+}
+
+/** Lecture qualitative de l'exposition aux impayés (Claude, sur données réelles). */
+export async function generateTresorerieAnalysisAction(): Promise<TresorerieAnalysisActionResult> {
+  const { backendFetch, BackendError } = await import("@/lib/backend");
+  try {
+    const data = await backendFetch<TresorerieAnalysisResponse>(
+      "/v1/dashboard/unpaid/analysis",
+      { method: "POST" },
+    );
+    return { ok: true, analysis: data.analysis };
+  } catch (e) {
+    if (e instanceof BackendError) return { ok: false, error: e.message };
+    return { ok: false, error: "backend injoignable" };
+  }
+}
+
+export interface RecouvrementDecisionResult {
+  decision_key: string;
+  decision_label: string;
+  justification: string;
+  action: string;
+  ai_generated: boolean;
+}
+
+export type RecouvrementDecisionActionResult =
+  | { ok: true; decision: RecouvrementDecisionResult }
+  | { ok: false; error: string };
+
+/**
+ * Décision de recouvrement pour un débiteur : l'urgence (retard réel) est
+ * calculée côté backend par une règle déterministe — Claude ne rédige que la
+ * justification et l'action, jamais le niveau d'urgence.
+ */
+export async function generateRecouvrementDecisionAction(
+  client: string,
+): Promise<RecouvrementDecisionActionResult> {
+  const { backendFetch, BackendError } = await import("@/lib/backend");
+  try {
+    const decision = await backendFetch<RecouvrementDecisionResult>(
+      "/v1/dashboard/unpaid/recouvrement-decision",
+      { method: "POST", body: JSON.stringify({ client }) },
+    );
+    return { ok: true, decision };
+  } catch (e) {
+    if (e instanceof BackendError) return { ok: false, error: e.message };
+    return { ok: false, error: "backend injoignable" };
+  }
+}
+
+// ---------- Briefing quotidien : relance manuelle ----------
+
+export type RefreshBriefingActionResult =
+  | { ok: true; generated_at: string }
+  | { ok: false; error: string };
+
+interface RefreshBriefingResponse {
+  generated_at: string;
+}
+
+/**
+ * Régénère immédiatement le briefing des 5 rôles (hors planning de minuit).
+ * Recharge la page pour afficher le nouveau snapshot gelé.
+ */
+export async function refreshBriefingAction(): Promise<RefreshBriefingActionResult> {
+  const { backendFetch, BackendError } = await import("@/lib/backend");
+  const { revalidatePath } = await import("next/cache");
+  try {
+    const data = await backendFetch<RefreshBriefingResponse>("/v1/briefing/refresh", {
+      method: "POST",
+    });
+    revalidatePath("/briefing");
+    return { ok: true, generated_at: data.generated_at };
+  } catch (e) {
+    if (e instanceof BackendError) return { ok: false, error: e.message };
+    return { ok: false, error: "backend injoignable" };
+  }
+}
