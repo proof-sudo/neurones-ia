@@ -175,7 +175,22 @@ jobs:
 
             if [ "$OK" = "1" ]; then
               echo "${IMAGE_TAG}" > .deployed_tag
+
+              # Purge des vieilles images taguées par SHA. `docker image prune -f`
+              # seul ne suffit pas : il ne supprime que les images "dangling"
+              # (untagged), jamais un vieux tag SHA qui reste valide indéfiniment —
+              # elles s'accumulaient sans fin sur le VPS. On ne garde ici que
+              # l'image déployée, la précédente (rollback) et `latest`.
+              for repo in "${{ env.IMAGE_BACKEND }}" "${{ env.IMAGE_FRONTEND }}"; do
+                docker images "$repo" --format '{{.Tag}}' | while read -r tag; do
+                  case "$tag" in
+                    "${IMAGE_TAG}"|"${PREV_TAG}"|latest) ;;
+                    *) docker rmi "${repo}:${tag}" 2>/dev/null || true ;;
+                  esac
+                done
+              done
               docker image prune -f
+
               echo "✅ Déploiement OK $(date)"
               docker compose ps
             else

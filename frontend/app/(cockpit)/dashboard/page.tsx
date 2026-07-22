@@ -1,32 +1,29 @@
 import { requireView } from "@/lib/session";
 import { fetchDashboardData } from "@/lib/api/dashboard";
-import { DashboardView } from "@/components/dashboard/DashboardView";
 import { DashboardLive } from "@/components/dashboard/DashboardLive";
-import { DemoBanner } from "@/components/ui/DemoBanner";
+import { ErrorState } from "@/components/ui/ErrorState";
 
 export default async function DashboardPage() {
   await requireView("dashboard");
 
   let data: Awaited<ReturnType<typeof fetchDashboardData>> | null = null;
+  let error: string | null = null;
   try {
     data = await fetchDashboardData();
-  } catch {
-    data = null; // backend tombé en cours de session (ou token expiré) → repli honnête
+  } catch (e) {
+    error = e instanceof Error ? e.message : "erreur inconnue";
   }
 
   if (data === null) {
-    return (
-      <>
-        <DemoBanner reason="error" />
-        <DashboardView />
-      </>
-    );
+    return <ErrorState title="Tableau de bord indisponible" error={error} />;
   }
 
   return (
     <DashboardLive
       kpis={data.kpis}
       bySalesperson={data.bySalesperson}
+      unpaid={data.unpaid}
+      pipelineForecast={data.pipelineForecast}
     />
   );
 }

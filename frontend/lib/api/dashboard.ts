@@ -1,6 +1,8 @@
 import "server-only";
 
 import { backendFetch } from "../backend";
+import { fetchUnpaidData, type UnpaidData } from "./tresorerie";
+import { fetchPipelineForecast, type PipelineForecastData } from "./forecast";
 
 // ---------- Types des réponses /v1/dashboard/* (formes du LocalCRMAdapter) ----------
 
@@ -87,9 +89,20 @@ export interface DashboardData {
   byCountry: CountryClients[];
   bySalesperson: SalespersonRevenue[];
   topClients: TopClientRow[];
+  /** null si le rôle courant n'a pas accès à la Trésorerie — pas une erreur, juste hors périmètre. */
+  unpaid: UnpaidData | null;
+  /** null si le rôle courant n'a pas accès au Forecast — idem. */
+  pipelineForecast: PipelineForecastData | null;
 }
 
-/** Charge tous les blocs du dashboard en parallèle. Lève si le backend est indisponible. */
+/**
+ * Charge tous les blocs du dashboard en parallèle. Lève si le backend est
+ * indisponible pour les données propres au Dashboard (vue "dashboard").
+ * Impayés/forecast alimentent seulement les points de vigilance : certains
+ * rôles (dir_commercial, dir_operations, commercial) ont accès au Dashboard
+ * sans avoir accès à Trésorerie/Forecast — ces deux blocs sont donc
+ * optionnels (null si refusés ou indisponibles), jamais bloquants.
+ */
 export async function fetchDashboardData(): Promise<DashboardData> {
   const [kpis, byCountry, bySalesperson, topClients] = await Promise.all([
     backendFetch<DashboardKpis>("/v1/dashboard/kpis"),
@@ -97,5 +110,11 @@ export async function fetchDashboardData(): Promise<DashboardData> {
     backendFetch<SalespersonRevenue[]>("/v1/dashboard/revenue/by-salesperson"),
     backendFetch<TopClientRow[]>("/v1/dashboard/top-clients"),
   ]);
-  return { kpis, byCountry, bySalesperson, topClients };
+  const [unpaidResult, forecastResult] = await Promise.allSettled([
+    fetchUnpaidData(),
+    fetchPipelineForecast(),
+  ]);
+  const unpaid = unpaidResult.status === "fulfilled" ? unpaidResult.value : null;
+  const pipelineForecast = forecastResult.status === "fulfilled" ? forecastResult.value : null;
+  return { kpis, byCountry, bySalesperson, topClients, unpaid, pipelineForecast };
 }

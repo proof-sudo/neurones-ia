@@ -1,14 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { clsx } from "clsx";
 import { AiChip } from "@/components/ui/AiChip";
 import { Panel, PanelHead } from "@/components/ui/Panel";
 import { CaChart } from "@/components/charts/DashboardCharts";
 import { fmtInt, fmtM, fmtPct } from "@/lib/format";
-import { FORECAST_OPPS, VIGILANCE_IMPAYES } from "@/lib/fixtures/forecast";
-import { EXPOSITION_FOURNISSEURS } from "@/lib/fixtures/partners";
+import { generateDashboardAnalysisAction } from "@/app/actions";
 import type { DashboardKpis, SalespersonRevenue } from "@/lib/api/dashboard";
+import type { UnpaidData } from "@/lib/api/tresorerie";
+import type { PipelineForecastData } from "@/lib/api/forecast";
 import type { PeriodKey } from "@/lib/types";
 
 const MONTH_LABELS = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sept", "Oct", "Nov", "Déc"];
@@ -32,56 +33,6 @@ function sum(arr: number[]): number {
   return arr.reduce((a, b) => a + b, 0);
 }
 
-// ---- Points de vigilance (données réelles, calculées une fois) ----
-const IMPAYE_CRITIQUE = VIGILANCE_IMPAYES[0]; // le plus ancien
-const OPP_CRITIQUE =
-  [...FORECAST_OPPS].filter((o) => o.risk).sort((a, b) => b.val * b.prob - a.val * a.prob)[0] ??
-  [...FORECAST_OPPS].sort((a, b) => b.val * b.prob - a.val * a.prob)[0];
-const FOURN_CRITIQUE = EXPOSITION_FOURNISSEURS[0]; // exposition la plus forte
-
-const VIGILANCE_DETAILS: Record<string, { title: string; items: [string, string][] }> = {
-  faitImpaye: {
-    title: `Détail — Impayé ${IMPAYE_CRITIQUE.client}`,
-    items: [
-      ["Montant échu", `${IMPAYE_CRITIQUE.montant} M FCFA`],
-      ["Retard", `${IMPAYE_CRITIQUE.jours} jours — le plus ancien du portefeuille`],
-      ["Pourquoi c’est critique", IMPAYE_CRITIQUE.contexte],
-      ["Action recommandée", "Plan de recouvrement d’urgence sous 5 jours (DAF + Direction Commerciale), avant provision pour créance douteuse."],
-    ],
-  },
-  faitOpportunite: {
-    title: `Détail — ${OPP_CRITIQUE.name}`,
-    items: [
-      ["Client", OPP_CRITIQUE.client],
-      ["Montant", `${OPP_CRITIQUE.val} M FCFA (probabilité déclarée : ${OPP_CRITIQUE.prob}%)`],
-      ["Étape du pipeline", OPP_CRITIQUE.stage],
-      ["Commercial", OPP_CRITIQUE.com || "non renseigné"],
-      [
-        "Pourquoi c’est à risque",
-        OPP_CRITIQUE.age
-          ? `Ancienneté de ${OPP_CRITIQUE.age} — bien au-delà du cycle de vente réel moyen (79 jours) : la probabilité déclarée est probablement optimiste.`
-          : "Plus grosse contribution pondérée du forecast — à sécuriser en priorité.",
-      ],
-      [
-        "Action recommandée",
-        OPP_CRITIQUE.risk
-          ? "Requalifier ou clôturer cette opportunité pour fiabiliser le forecast."
-          : "Suivre activement vers la signature.",
-      ],
-    ],
-  },
-  faitFournisseur: {
-    title: `Détail — Exposition fournisseur : ${FOURN_CRITIQUE.name}`,
-    items: [
-      ["Montant commandé (12 derniers mois)", `${FOURN_CRITIQUE.expo12m} M FCFA — la plus forte exposition du portefeuille fournisseurs`],
-      ["Commandes sur la période", `${FOURN_CRITIQUE.cmd12m} bons de commande`],
-      ["Pourquoi c’est critique", "Le reste à payer fournisseurs global s'élève à 18,27 Md FCFA (849 dossiers). Dans un contexte de trésorerie tendue (10,86 Md FCFA d'impayés clients), un retard de paiement envers ce fournisseur clé mettrait en danger l'approvisionnement de la majorité des projets en cours."],
-      ["Limite de données", "La dette exacte par fournisseur n'est pas ventilée dans les données actuelles — l'exposition affichée est le montant commandé sur 12 mois, meilleur indicateur réel disponible."],
-      ["Action recommandée", `Vérifier dans Odoo l'encours réel de paiement envers ${FOURN_CRITIQUE.name} et sécuriser en priorité cette relation d'approvisionnement.`],
-    ],
-  },
-};
-
 function deltaTxt(cur: number, prev: number, suffix: string): { txt: string; variant: DeltaVariant } {
   if (prev <= 0) return { txt: suffix, variant: "none" };
   const pct = ((cur - prev) / prev) * 100;
@@ -94,14 +45,101 @@ function deltaTxt(cur: number, prev: number, suffix: string): { txt: string; var
 export function DashboardLive({
   kpis,
   bySalesperson,
+  unpaid,
+  pipelineForecast,
 }: {
   kpis: DashboardKpis;
   bySalesperson: SalespersonRevenue[];
+  /** null si le rôle courant n'a pas accès à la Trésorerie. */
+  unpaid: UnpaidData | null;
+  /** null si le rôle courant n'a pas accès au Forecast. */
+  pipelineForecast: PipelineForecastData | null;
 }) {
   const [period, setPeriod] = useState<PeriodKey>("trimestre");
   const [openDetail, setOpenDetail] = useState<string | null>(null);
-  const [projLoading, setProjLoading] = useState(false);
-  const [projShown, setProjShown] = useState(false);
+  const [analysis, setAnalysis] = useState<string | null>(null);
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [analyzing, startAnalyzing] = useTransition();
+
+  // ---- Points de vigilance (données réelles du pipeline/impayés, quand accessibles au rôle) ----
+  const topDebiteur = unpaid?.exposure.top_10_debiteurs[0] ?? null;
+
+  const oppsByWeight = pipelineForecast
+    ? [...pipelineForecast.opportunities].sort((a, b) => b.weighted_xof - a.weighted_xof)
+    : [];
+  const atRiskByWeight = pipelineForecast
+    ? pipelineForecast.opportunities.filter((o) => o.at_risk).sort((a, b) => b.weighted_xof - a.weighted_xof)
+    : [];
+  const oppCritique = atRiskByWeight[0] ?? oppsByWeight[0] ?? null;
+
+  const oppsWithAge = pipelineForecast ? pipelineForecast.opportunities.filter((o) => o.age_days !== null) : [];
+  const oldestOpp = oppsWithAge.length
+    ? [...oppsWithAge].sort((a, b) => (b.age_days ?? 0) - (a.age_days ?? 0))[0]
+    : null;
+
+  const vigilanceDetails: Record<string, { title: string; items: [string, string][] }> = {
+    ...(topDebiteur
+      ? {
+          faitImpaye: {
+            title: `Détail — Impayé ${topDebiteur.client}`,
+            items: [
+              ["Montant échu", fmtM(topDebiteur.montant_total_xof)],
+              ["Retard", `${topDebiteur.retard_max_jours} jours — le plus important du portefeuille`],
+              ["Nombre de factures", fmtInt(topDebiteur.nb_factures)],
+              ["Action recommandée", "Plan de recouvrement d'urgence sous 5 jours (DAF + Direction Commerciale), avant provision pour créance douteuse."],
+            ] as [string, string][],
+          },
+        }
+      : {}),
+    ...(oppCritique
+      ? {
+          faitOpportunite: {
+            title: `Détail — ${oppCritique.name}`,
+            items: [
+              ["Client", oppCritique.client],
+              ["Montant", `${fmtM(oppCritique.value_xof)} (probabilité déclarée : ${oppCritique.probability_pct}%)`],
+              ["Étape du pipeline", oppCritique.stage],
+              ["Commercial", oppCritique.commercial || "non renseigné"],
+              [
+                "Pourquoi c'est à risque",
+                oppCritique.at_risk
+                  ? "Échéance prévue déjà dépassée — la probabilité déclarée est probablement optimiste."
+                  : "Plus grosse contribution pondérée du pipeline ouvert — à sécuriser en priorité.",
+              ],
+              [
+                "Action recommandée",
+                oppCritique.at_risk
+                  ? "Requalifier ou clôturer cette opportunité pour fiabiliser le forecast."
+                  : "Suivre activement vers la signature.",
+              ],
+            ] as [string, string][],
+          },
+        }
+      : {}),
+    ...(oldestOpp
+      ? {
+          faitAncienne: {
+            title: `Détail — ${oldestOpp.name}`,
+            items: [
+              ["Client", oldestOpp.client],
+              ["Montant pondéré", fmtM(oldestOpp.weighted_xof)],
+              ["Étape du pipeline", oldestOpp.stage],
+              ["Ancienneté", `${fmtInt(oldestOpp.age_days ?? 0)} jours ouverte — la plus ancienne du pipeline`],
+              ["Action recommandée", "Requalifier ce dossier avec le commercial en charge, ou le clôturer si le besoin n'existe plus."],
+            ] as [string, string][],
+          },
+        }
+      : {}),
+  };
+
+  function genererProjection() {
+    setAnalysisError(null);
+    startAnalyzing(async () => {
+      const res = await generateDashboardAnalysisAction();
+      if (res.ok) setAnalysis(res.analysis);
+      else setAnalysisError(res.error);
+    });
+  }
 
   const y = kpis.year.year;
   const caByMonth = useMemo(() => {
@@ -191,7 +229,7 @@ export function DashboardLive({
     const w = kpis.win_rate;
     const m = kpis.marges;
     return {
-      ...VIGILANCE_DETAILS,
+      ...vigilanceDetails,
       ca: {
         title: "Détail — CA commandé",
         items: [
@@ -271,21 +309,14 @@ export function DashboardLive({
   const detail = openDetail ? details[openDetail] : null;
   const p = kpis.open_pipeline;
 
-  const projection = {
-    realiste: p.ca_pondere_xof,
-    pessimiste: p.ca_pondere_xof * 0.8,
-    optimiste: p.ca_pondere_xof * 1.2,
-  };
+  const projection = pipelineForecast
+    ? {
+        realiste: pipelineForecast.scenarios.realiste_xof,
+        pessimiste: pipelineForecast.scenarios.pessimiste_xof,
+        optimiste: pipelineForecast.scenarios.optimiste_xof,
+      }
+    : null;
   const ecart = kpis.year.revenue_xof - ytdPrev;
-
-  function genererProjection() {
-    setProjLoading(true);
-    setProjShown(false);
-    setTimeout(() => {
-      setProjLoading(false);
-      setProjShown(true);
-    }, 700);
-  }
 
   const gauges: { key: string; topColor: string; label: string; value: string; delta: string; variant: DeltaVariant }[] = [
     { key: "ca", topColor: "var(--color-good)", ...caGauge },
@@ -324,30 +355,36 @@ export function DashboardLive({
   ];
 
   const vigilance: { key: string; color: string; label: string; value: string; valueSize: string; delta: string }[] = [
-    {
-      key: "faitImpaye",
-      color: "var(--color-bad)",
-      label: "⚠ Impayé le plus critique",
-      value: IMPAYE_CRITIQUE.client,
-      valueSize: "16px",
-      delta: `${IMPAYE_CRITIQUE.montant} M FCFA — ${IMPAYE_CRITIQUE.jours} jours de retard`,
-    },
-    {
-      key: "faitOpportunite",
-      color: "var(--color-warn)",
-      label: "⚠ Opportunité la plus à risque",
-      value: OPP_CRITIQUE.name,
-      valueSize: "15px",
-      delta: `${OPP_CRITIQUE.client} — ${OPP_CRITIQUE.val} M FCFA${OPP_CRITIQUE.risk ? " (obsolète)" : ""}`,
-    },
-    {
-      key: "faitFournisseur",
-      color: "var(--color-bad)",
-      label: "⚠ Exposition fournisseur la plus forte",
-      value: FOURN_CRITIQUE.name,
-      valueSize: "16px",
-      delta: `${FOURN_CRITIQUE.expo12m} M FCFA commandés sur 12 mois`,
-    },
+    ...(topDebiteur
+      ? [{
+          key: "faitImpaye",
+          color: "var(--color-bad)",
+          label: "⚠ Impayé le plus critique",
+          value: topDebiteur.client,
+          valueSize: "16px",
+          delta: `${fmtM(topDebiteur.montant_total_xof)} — ${topDebiteur.retard_max_jours} jours de retard`,
+        }]
+      : []),
+    ...(oppCritique
+      ? [{
+          key: "faitOpportunite",
+          color: "var(--color-warn)",
+          label: "⚠ Opportunité la plus à risque",
+          value: oppCritique.name,
+          valueSize: "15px",
+          delta: `${oppCritique.client} — ${fmtM(oppCritique.value_xof)}${oppCritique.at_risk ? " (échéance dépassée)" : ""}`,
+        }]
+      : []),
+    ...(oldestOpp
+      ? [{
+          key: "faitAncienne",
+          color: "var(--color-bad)",
+          label: "⚠ Opportunité la plus ancienne du pipeline",
+          value: oldestOpp.name,
+          valueSize: "15px",
+          delta: `${oldestOpp.client} — ouverte depuis ${fmtInt(oldestOpp.age_days ?? 0)} jours`,
+        }]
+      : []),
   ];
 
   return (
@@ -457,6 +494,12 @@ export function DashboardLive({
         <Panel>
           <PanelHead title="Points de vigilance" />
           <div className="flex flex-col gap-3">
+            {vigilance.length === 0 && (
+              <div className="text-[12.5px] text-muted">
+                Aucun point de vigilance disponible pour votre rôle (Trésorerie et Forecast hors
+                périmètre).
+              </div>
+            )}
             {vigilance.map((v) => (
               <button
                 key={v.key}
@@ -485,16 +528,20 @@ export function DashboardLive({
           </h3>
           <button
             onClick={genererProjection}
-            disabled={projLoading}
+            disabled={analyzing}
             className="cursor-pointer rounded-lg bg-ai px-3 py-[7px] text-[11.5px] font-semibold text-white disabled:opacity-50"
           >
             🔮 Générer une projection
           </button>
         </div>
 
-        {projLoading && <AiChip>calcul de la projection…</AiChip>}
+        {analyzing && <AiChip>calcul de la projection…</AiChip>}
 
-        {!projLoading && !projShown && (
+        {!analyzing && analysisError && (
+          <div className="text-[12.5px] text-bad">Projection indisponible : {analysisError}</div>
+        )}
+
+        {!analyzing && !analysisError && !analysis && (
           <div className="text-[12.5px] text-muted">
             Cliquez sur « Générer une projection » pour une projection chiffrée de la
             trajectoire à venir, avec une recommandation concrète associée — basée sur le
@@ -502,42 +549,29 @@ export function DashboardLive({
           </div>
         )}
 
-        {!projLoading && projShown && (
+        {!analyzing && analysis && (
           <div className="rounded-card bg-panel-2 p-4">
-            <div className="mt-0">
-              <h4 className="mb-2 font-mono text-[12.5px] font-medium uppercase tracking-[0.06em] text-muted">
-                Projection
-              </h4>
+            {projection && (
               <p className="text-[13px] leading-relaxed text-text">
-                Sur la base du pipeline pondéré réel, le CA des prochains mois est estimé
-                entre <b>{fmtM(projection.pessimiste)}</b> (scénario prudent) et{" "}
-                <b>{fmtM(projection.optimiste)}</b> (scénario optimiste), avec un scénario
-                réaliste autour de <b>{fmtM(projection.realiste)}</b>. Cette estimation
-                reste incertaine : elle dépend de la conversion effective des opportunités
-                en cours
+                Scénarios 6 mois (pipeline pondéré réel) : entre <b>{fmtM(projection.pessimiste)}</b>{" "}
+                (prudent) et <b>{fmtM(projection.optimiste)}</b> (optimiste), réaliste autour de{" "}
+                <b>{fmtM(projection.realiste)}</b>
                 {ecart !== 0 && (
                   <>
-                    , et le CA {y} est {ecart >= 0 ? "en avance de" : "en retrait de"}{" "}
-                    <b>{fmtM(Math.abs(ecart))}</b> par rapport à {y - 1} sur la même
-                    période
+                    {" "}— le CA {y} est {ecart >= 0 ? "en avance de" : "en retrait de"}{" "}
+                    <b>{fmtM(Math.abs(ecart))}</b> par rapport à {y - 1} sur la même période
                   </>
                 )}
                 .
               </p>
-            </div>
-            <div className="mt-4">
-              <h4 className="mb-2 font-mono text-[12.5px] font-medium uppercase tracking-[0.06em] text-muted">
-                Recommandation
-              </h4>
-              <p className="text-[12px] leading-relaxed text-muted">
-                Concentrer les efforts sur les opportunités les plus avancées du pipeline
-                pour sécuriser le scénario prudent avant de viser le scénario optimiste,
-                tout en surveillant le risque de trésorerie associé aux impayés échus.
-              </p>
+            )}
+            <div className={clsx("flex flex-col gap-2 text-[12.5px] leading-relaxed text-text", projection && "mt-3")}>
+              {analysis.split("\n\n").map((par, i) => (
+                <p key={i}>{par}</p>
+              ))}
             </div>
             <div className="mt-3 font-mono text-[10px] leading-relaxed text-muted">
-              Généré en mode simplifié (sans IA générative) — basé sur le pipeline pondéré
-              réel ({fmtInt(p.total_opportunites)} opportunités).
+              Basé sur le pipeline pondéré réel ({fmtInt(p.total_opportunites)} opportunités).
             </div>
           </div>
         )}

@@ -77,9 +77,21 @@ def build_scheduler(
         max_instances=1,
     )
 
+    scheduler.add_job(
+        _daily_briefing_job,
+        args=[container],
+        trigger=CronTrigger(hour=0, minute=0),
+        id="daily_briefing",
+        name="Briefing quotidien par rôle (analyses IA figées jusqu'au lendemain minuit)",
+        replace_existing=True,
+        misfire_grace_time=600,
+        coalesce=True,
+        max_instances=1,
+    )
+
     logger.info(
         "Scheduler configuré : sync Odoo toutes les %d min (coalesce, max 1), scan GED à 2h00, "
-        "veille AO toutes les 6h, purge quarantaine à 3h30 (rétention %d j)",
+        "veille AO toutes les 6h, purge quarantaine à 3h30 (rétention %d j), briefing quotidien à 0h00",
         sync_interval, settings.quarantine_retention_days,
     )
     return scheduler
@@ -102,6 +114,16 @@ async def _reset_monthly_budget():
 async def _veille_scan_job(container=None):
     from modules.uc_veille.router import _run_scan
     await _run_scan(container)
+
+
+async def _daily_briefing_job(container=None):
+    """Régénère le briefing quotidien (5 rôles) — gelé jusqu'à ce run demain minuit."""
+    from modules.uc_briefing import service
+    if container is None:
+        logger.warning("Briefing quotidien — container absent, run ignoré")
+        return
+    llm = getattr(container, "llm_sonnet", None)
+    await service.generate(container.crm_repo, llm, triggered_by="schedule")
 
 
 async def _quarantine_purge_job():

@@ -9,9 +9,17 @@ simple masquage de menu.
 """
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from pydantic import BaseModel
 
 from api.v1.dependencies import require_views
+from modules.uc_forecast.aggregation import build_pipeline_forecast, month_labels
+from modules.uc_forecast.decision_client import build_client_decision
+from modules.uc_forecast.narratif import build_forecast_analysis
+from modules.uc_dashboard.narratif import build_dashboard_analysis
+from modules.uc_performance.narratif import build_performance_analysis
+from modules.uc_tresorerie.decision_recouvrement import build_recouvrement_decision
+from modules.uc_tresorerie.narratif import build_tresorerie_analysis
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
@@ -59,6 +67,39 @@ async def kpis(
             "fournisseurs_restant": margins["fournisseurs_restant"],
         },
     }
+
+
+def _m_fcfa_dashboard(xof: float) -> int:
+    return round((xof or 0) / 1_000_000)
+
+
+@router.post("/analysis", dependencies=[Depends(require_views("dashboard"))])
+async def dashboard_analysis(request: Request, year: int | None = Query(default=None)):
+    """Projection & recommandation du tableau de bord, rédigées par Claude à
+    partir des chiffres réels déjà calculés (jamais recalculés par le LLM)."""
+    crm = _crm(request)
+    y = year or datetime.now().year
+    current = await crm.get_year_stats(y)
+    previous = await crm.get_year_stats(y - 1)
+    open_pipeline = await crm.get_open_pipeline_stats()
+    win_rate = await crm.get_win_rate()
+    margins = await crm.get_margin_stats()
+
+    ecart = current["revenue_xof"] - previous["revenue_xof"]
+    ctx = {
+        "annee": y,
+        "annee_precedente": y - 1,
+        "ca_annee": _m_fcfa_dashboard(current["revenue_xof"]),
+        "ecart_pct": round(ecart / previous["revenue_xof"] * 100, 1) if previous["revenue_xof"] else 0.0,
+        "pipeline_pondere": _m_fcfa_dashboard(open_pipeline["ca_pondere_xof"]),
+        "nb_opportunites": open_pipeline["total_opportunites"],
+        "taux_victoire_nb": win_rate["taux_nb_pct"],
+        "taux_victoire_valeur": win_rate["taux_valeur_pct"],
+        "marge_definitive": margins["perc_marge_definitive_moyen"],
+    }
+    llm = getattr(request.app.state.container, "llm_sonnet", None)
+    analysis = await build_dashboard_analysis(llm, ctx)
+    return {"analysis": analysis, "context": ctx}
 
 
 @router.get("/clients-by-country", dependencies=[Depends(require_views("dashboard"))])
@@ -110,6 +151,43 @@ async def top_clients(
     return await _crm(request).get_top_clients(limit=limit, year=year)
 
 
+# ---------- Performance ----------
+
+@router.get("/performance/summary", dependencies=[Depends(require_views("performance"))])
+async def performance_summary(request: Request, limit: int = Query(default=20, le=100)):
+    """Taux de victoire (historique) + opportunités perdues (top N, par client, par commercial)."""
+    crm = _crm(request)
+    return {
+        "win_rate": await crm.get_win_rate(),
+        "lost_deals": await crm.get_lost_deals(limit=limit),
+    }
+
+
+@router.post("/performance/analysis", dependencies=[Depends(require_views("performance"))])
+async def performance_analysis(request: Request):
+    """Lecture qualitative des performances, rédigée par Claude à partir des
+    chiffres réels déjà calculés (jamais recalculés par le LLM)."""
+    crm = _crm(request)
+    win_rate = await crm.get_win_rate()
+    lost = await crm.get_lost_deals(limit=50)
+    if lost["nb_total"] == 0:
+        return {"analysis": "Aucune opportunité perdue enregistrée — pas d'analyse de pertes possible."}
+
+    top_client = lost["by_client"][0]
+    ctx = {
+        "taux_nb": win_rate["taux_nb_pct"],
+        "taux_valeur": win_rate["taux_valeur_pct"],
+        "nb_perdues": lost["nb_total"],
+        "montant_perdu": _m_fcfa(lost["montant_total_xof"]),
+        "top_client_name": top_client["client"],
+        "top_client_montant": _m_fcfa(top_client["montant_xof"]),
+        "top_client_nb": top_client["nb"],
+    }
+    llm = getattr(request.app.state.container, "llm_sonnet", None)
+    analysis = await build_performance_analysis(llm, ctx)
+    return {"analysis": analysis, "context": ctx}
+
+
 # ---------- Pipeline ----------
 
 @router.get("/pipeline", dependencies=[Depends(require_views("dashboard", "pipeline"))])
@@ -131,6 +209,86 @@ async def pipeline_opportunities(
 @router.get("/forecast", dependencies=[Depends(require_views("forecast"))])
 async def forecast(request: Request, year: int | None = Query(default=None)):
     return await _crm(request).get_quarterly_forecast(year=year)
+
+
+def _m_fcfa(xof: float) -> int:
+    return round(xof / 1_000_000)
+
+
+@router.get("/forecast/pipeline-weighted", dependencies=[Depends(require_views("forecast"))])
+async def forecast_pipeline_weighted(request: Request):
+    """Forecast pondéré à partir des vraies opportunités ouvertes du pipeline
+    (scénarios pessimiste/réaliste/optimiste, répartition mensuelle, par étape,
+    par client) — remplace le calcul JS qui tournait sur des fixtures front.
+    """
+    opportunities = await _crm(request).list_opportunities(limit=500)
+    result = build_pipeline_forecast(opportunities)
+    result["month_labels"] = month_labels()
+    return result
+
+
+@router.post("/forecast/analysis", dependencies=[Depends(require_views("forecast"))])
+async def forecast_analysis(request: Request):
+    """Lecture qualitative du forecast pondéré, rédigée par Claude à partir des
+    chiffres réels déjà calculés (jamais recalculés par le LLM)."""
+    opportunities = await _crm(request).list_opportunities(limit=500)
+    agg = build_pipeline_forecast(opportunities)
+    scen = agg["scenarios"]
+    if scen["nb_opportunites"] == 0 or scen["realiste_xof"] == 0:
+        return {"analysis": "Aucune opportunité pondérée dans le pipeline ouvert actuellement — pas de forecast à analyser."}
+
+    top_opp = max(agg["opportunities"], key=lambda o: o["weighted_xof"])
+    top_stage = agg["by_stage"][0]
+    ctx = {
+        "nb_opps": scen["nb_opportunites"],
+        "realiste": _m_fcfa(scen["realiste_xof"]),
+        "pessimiste": _m_fcfa(scen["pessimiste_xof"]),
+        "optimiste": _m_fcfa(scen["optimiste_xof"]),
+        "avg_prob": scen["avg_probability_pct"],
+        "top_opp_name": top_opp["name"],
+        "top_opp_client": top_opp["client"],
+        "top_opp_share": round(top_opp["weighted_xof"] / scen["realiste_xof"] * 100),
+        "top_stage_name": top_stage["stage"],
+        "top_stage_share": round(top_stage["weighted_xof"] / scen["realiste_xof"] * 100),
+        "top_stage_value": _m_fcfa(top_stage["weighted_xof"]),
+        "ecart": _m_fcfa(scen["optimiste_xof"] - scen["pessimiste_xof"]),
+    }
+    llm = getattr(request.app.state.container, "llm_sonnet", None)
+    analysis = await build_forecast_analysis(llm, ctx)
+    return {"analysis": analysis, "context": ctx}
+
+
+class ClientDecisionRequest(BaseModel):
+    client: str
+
+
+@router.post("/forecast/client-decision", dependencies=[Depends(require_views("forecast"))])
+async def forecast_client_decision(request: Request, body: ClientDecisionRequest):
+    """Décision recommandée pour un client du forecast : risque calculé en
+    Python (impayé connu + opportunité à échéance dépassée), Claude rédige
+    uniquement la justification et l'action."""
+    crm = _crm(request)
+    opportunities = await crm.list_opportunities(limit=500)
+    agg = build_pipeline_forecast(opportunities)
+    client_agg = next((c for c in agg["by_client"] if c["client"] == body.client), None)
+    if client_agg is None:
+        raise HTTPException(status_code=404, detail="Client introuvable dans le pipeline ouvert")
+
+    exposure = await crm.get_unpaid_exposure()
+    debiteur = next(
+        (d for d in exposure["top_10_debiteurs"] if d["client"] == body.client), None
+    )
+    opp_risque = next((o for o in client_agg["opportunities"] if o["at_risk"]), None)
+
+    llm = getattr(request.app.state.container, "llm_haiku", None)
+    decision = await build_client_decision(
+        llm,
+        client=body.client,
+        pondere_xof=client_agg["weighted_xof"],
+        debiteur=debiteur,
+        opp_risque=opp_risque,
+    )
+    return decision
 
 
 # ---------- Marges / coûts ----------
@@ -158,6 +316,57 @@ async def unpaid(request: Request, limit: int = Query(default=10, le=50)):
         "exposure": await crm.get_unpaid_exposure(),
         "top_invoices": await crm.get_unpaid_invoices(limit=limit),
     }
+
+
+@router.post("/unpaid/analysis", dependencies=[Depends(require_views("tresorerie"))])
+async def unpaid_analysis(request: Request):
+    """Lecture qualitative de l'exposition aux impayés, rédigée par Claude à
+    partir des chiffres réels déjà calculés (jamais recalculés par le LLM)."""
+    exposure = await _crm(request).get_unpaid_exposure()
+    if exposure["nb_factures_impayees"] == 0:
+        return {"analysis": "Aucun impayé enregistré actuellement."}
+
+    top3 = exposure["top_10_debiteurs"][:3]
+    top1 = top3[0] if top3 else None
+    ctx = {
+        "exposition_totale": _m_fcfa(exposure["exposition_totale_xof"]),
+        "nb_factures": exposure["nb_factures_impayees"],
+        "retard_90j_montant": _m_fcfa(exposure["retard_90j_montant_xof"]),
+        "retard_90j_nb": exposure["retard_90j_nb_factures"],
+        "top_debiteur_client": top1["client"] if top1 else "—",
+        "top_debiteur_montant": _m_fcfa(top1["montant_total_xof"]) if top1 else 0,
+        "top_debiteur_jours": top1["retard_max_jours"] if top1 else 0,
+        "top3_part_pct": (
+            round(sum(d["montant_total_xof"] for d in top3) / exposure["exposition_totale_xof"] * 100)
+            if exposure["exposition_totale_xof"] else 0
+        ),
+    }
+    llm = getattr(request.app.state.container, "llm_sonnet", None)
+    analysis = await build_tresorerie_analysis(llm, ctx)
+    return {"analysis": analysis, "context": ctx}
+
+
+class RecouvrementDecisionRequest(BaseModel):
+    client: str
+
+
+@router.post("/unpaid/recouvrement-decision", dependencies=[Depends(require_views("tresorerie"))])
+async def unpaid_recouvrement_decision(request: Request, body: RecouvrementDecisionRequest):
+    """Décision de recouvrement pour un débiteur : urgence calculée en Python
+    (retard réel), Claude rédige uniquement la justification et l'action."""
+    exposure = await _crm(request).get_unpaid_exposure()
+    debiteur = next((d for d in exposure["top_10_debiteurs"] if d["client"] == body.client), None)
+    if debiteur is None:
+        raise HTTPException(status_code=404, detail="Client introuvable dans les impayés")
+
+    llm = getattr(request.app.state.container, "llm_haiku", None)
+    decision = await build_recouvrement_decision(
+        llm,
+        client=body.client,
+        montant_xof=debiteur["montant_total_xof"],
+        jours=debiteur["retard_max_jours"],
+    )
+    return decision
 
 
 # ---------- Leads ----------

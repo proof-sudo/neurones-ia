@@ -96,6 +96,25 @@ class CRMRepository(ABC):
         """Prévision CA fin de trimestre via tendance mensuelle. Retourne optimiste/réaliste/pessimiste."""
 
     @abstractmethod
+    async def get_lost_deals(self, limit: int = 20) -> dict:
+        """Opportunités perdues (historique) : top N + agrégats par client et par commercial."""
+
+    @abstractmethod
+    async def get_order_lines(self, limit: int = 20000) -> list[dict]:
+        """Lignes de commande réelles (sale_orders non annulées), pour analyses
+        transversales par produit/catégorie (montée en valeur)."""
+
+    @abstractmethod
+    async def get_top_suppliers(self, limit: int = 20) -> list[dict]:
+        """Fournisseurs réels (purchase_orders) : montant commandé, nb commandes,
+        dernière commande, détail des commandes récentes."""
+
+    @abstractmethod
+    async def get_client_portfolio(self, limit: int = 50) -> list[dict]:
+        """Portefeuille clients réel (table dossiers) : CA, backlog, reste à
+        encaisser, nb dossiers, enrichi du secteur/contact quand disponibles."""
+
+    @abstractmethod
     async def get_cross_sell_opportunities(self, product_anchor: str, product_target: str | None = None, limit: int = 20) -> list[dict]:
         """Clients ayant acheté product_anchor mais pas product_target — opportunités cross-sell."""
 
