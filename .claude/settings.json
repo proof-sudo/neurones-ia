@@ -46,7 +46,8 @@
       "Bash(echo \"=== EXIT tsc: $? ===\")",
       "Bash(rm -rf \"app/\\(cockpit\\)/tenders\")",
       "Bash(rm -f \"components/views/TendersView.tsx\")",
-      "Bash(rm -f \"lib/fixtures/tenders.ts\")"
+      "Bash(rm -f \"lib/fixtures/tenders.ts\")",
+      "Bash(docker version *)"
     ]
   }
 }
