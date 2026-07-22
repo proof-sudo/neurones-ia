@@ -61,10 +61,10 @@ export function ClientsLive({
 
   return (
     <>
-      <ContextNote>
+      {/* <ContextNote>
         📎 <b>Donnée de contexte</b> — ce portefeuille alimente le Forecast, la Veille Client et
         les Suggestions d&apos;actions. Pour l&apos;état détaillé et à jour, voir Odoo.
-      </ContextNote>
+      </ContextNote> */}
 
       <div className="mb-3 flex justify-end">
         <input

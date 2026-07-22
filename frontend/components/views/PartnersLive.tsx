@@ -31,8 +31,10 @@ export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [analyzing, startAnalyzing] = useTransition();
   const [selected, setSelected] = useState<Supplier | null>(null);
+  const [q, setQ] = useState("");
 
   const total = useMemo(() => suppliers.reduce((s, p) => s + p.montant_total_xof, 0), [suppliers]);
+  const filtered = suppliers.filter((s) => s.name.toLowerCase().includes(q.toLowerCase()));
 
   function toggleSelected(s: Supplier) {
     setSelected((cur) => (cur?.name === s.name ? null : s));
@@ -49,7 +51,7 @@ export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
 
   return (
     <>
-      <div className="mb-4 flex items-center justify-between gap-3">
+      {/* <div className="mb-4 flex items-center justify-between gap-3">
         <p className="text-[11.5px] leading-relaxed text-muted">
           Fournisseurs réels (purchase_orders, synchronisés depuis Odoo). Le type, la spécialité et
           les certifications ne sont pas suivis dans les données actuelles — non affichés plutôt
@@ -62,9 +64,9 @@ export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
         >
           🔮 Analyse IA fournisseurs
         </button>
-      </div>
+      </div> */}
 
-      <Panel className="mb-4 border-l-[3px] border-l-ai">
+      {/* <Panel className="mb-4 border-l-[3px] border-l-ai">
         <PanelHead title="Ce que l'IA voit dans les fournisseurs">
           <AiChip>analyse</AiChip>
         </PanelHead>
@@ -84,7 +86,7 @@ export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
             ))}
           </div>
         )}
-      </Panel>
+      </Panel> */}
 
       {selected && (() => {
         const niveau = niveauPartenariat(selected.montant_total_xof);
@@ -134,11 +136,24 @@ export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
         );
       })()}
 
-      {suppliers.length === 0 ? (
-        <div className="text-[13px] text-muted">Aucune commande fournisseur enregistrée.</div>
+      <div className="mb-3 flex justify-end">
+        <input
+          className="min-w-[200px] cursor-text rounded-[9px] border border-line bg-panel px-2.5 py-2 font-mono text-xs text-text focus:border-ai focus:outline-none"
+          placeholder="Rechercher un fournisseur…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="text-[13px] text-muted">
+          {suppliers.length === 0
+            ? "Aucune commande fournisseur enregistrée."
+            : "Aucun fournisseur ne correspond à la recherche."}
+        </div>
       ) : (
         <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
-          {suppliers.map((s) => {
+          {filtered.map((s) => {
             const niveau = niveauPartenariat(s.montant_total_xof);
             const risque = risqueDependance(s.montant_total_xof, total);
             const jours = joursDepuisCommande(s.derniere_commande);

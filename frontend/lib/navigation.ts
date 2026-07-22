@@ -6,16 +6,16 @@ import type { NavGroup, NavModule, ModuleAccess, Role } from "./types";
  * Chaque `view` correspond à un dossier route dans app/(cockpit)/<view>/.
  */
 export const NAV_MODULES: NavModule[] = [
-  { view: "briefing", icon: "✺", label: "Briefing IA du jour" },
   { view: "dashboard", icon: "◧", label: "Tableau de bord" },
-  { view: "forecast", icon: "⟁", label: "Forecast" },
+  // { view: "forecast", icon: "⟁", label: "Forecast" },
   { view: "tresorerie", icon: "◒", label: "Trésorerie & marges" },
   { view: "performance", icon: "◭", label: "Performances" },
   { view: "presales", icon: "❖", label: "Appel d'offre" },
   { view: "veille", icon: "◔", label: "Veille" },
   { view: "crosssell", icon: "✚", label: "Montée en valeur" },
-  { view: "portefeuille", icon: "◈", label: "Portefeuille" },
-  { view: "pipeline", icon: "▥", label: "Pipeline" },
+  { view: "clients", icon: "◈", label: "Clients" },
+  { view: "partenaires", icon: "◈", label: "Fournisseurs" },
+  // { view: "pipeline", icon: "▥", label: "Pipeline" },
   { view: "admin", icon: "⚙", label: "Administration" },
 ];
 
@@ -23,7 +23,7 @@ export const NAV_MODULES: NavModule[] = [
 export const NAV_GROUPS: NavGroup[] = [
   {
     label: "Pilotage & Projection",
-    views: ["briefing", "dashboard", "forecast", "tresorerie", "performance"],
+    views: ["dashboard", "tresorerie", "performance"],
   },
   {
     label: "Exécution commerciale",
@@ -31,7 +31,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "Référentiel",
-    views: ["portefeuille", "pipeline"],
+    views: ["clients", "partenaires"],
   },
   {
     label: "Configuration",
@@ -55,7 +55,8 @@ export const MODULE_ACCESS: ModuleAccess = {
   performance:  { admin: true, dg: true,  dir_commercial: true,  dir_operations: true,  presale: false, dir_financier: true,  commercial: false },
   veille:       { admin: true, dg: true,  dir_commercial: true,  dir_operations: false, presale: true,  dir_financier: false, commercial: true },
   crosssell:    { admin: true, dg: false, dir_commercial: true,  dir_operations: false, presale: false, dir_financier: false, commercial: true },
-  portefeuille: { admin: true, dg: true,  dir_commercial: true,  dir_operations: true,  presale: true,  dir_financier: true,  commercial: true },
+  clients:      { admin: true, dg: true,  dir_commercial: true,  dir_operations: true,  presale: false, dir_financier: true,  commercial: true },
+  partenaires:  { admin: true, dg: false, dir_commercial: true,  dir_operations: true,  presale: false, dir_financier: false, commercial: false },
   pipeline:     { admin: true, dg: true,  dir_commercial: true,  dir_operations: true,  presale: true,  dir_financier: false, commercial: true },
   presales:     { admin: true, dg: true,  dir_commercial: false, dir_operations: true,  presale: true,  dir_financier: false, commercial: false },
   admin:        { admin: true, dg: false, dir_commercial: false, dir_operations: false, presale: false, dir_financier: false, commercial: false },

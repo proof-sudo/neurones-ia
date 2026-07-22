@@ -479,29 +479,18 @@ export async function generateRecouvrementDecisionAction(
   }
 }
 
-// ---------- Briefing quotidien : relance manuelle ----------
+// ---------- Briefing quotidien : lecture à la demande (modal du Dashboard) ----------
 
-export type RefreshBriefingActionResult =
-  | { ok: true; generated_at: string }
+export type BriefingActionResult =
+  | { ok: true; data: import("@/lib/api/briefing").BriefingData }
   | { ok: false; error: string };
 
-interface RefreshBriefingResponse {
-  generated_at: string;
-}
-
-/**
- * Régénère immédiatement le briefing des 5 rôles (hors planning de minuit).
- * Recharge la page pour afficher le nouveau snapshot gelé.
- */
-export async function refreshBriefingAction(): Promise<RefreshBriefingActionResult> {
+/** Lit le briefing figé du rôle courant (GET /v1/briefing) — chargé à la demande. */
+export async function fetchBriefingAction(): Promise<BriefingActionResult> {
   const { backendFetch, BackendError } = await import("@/lib/backend");
-  const { revalidatePath } = await import("next/cache");
   try {
-    const data = await backendFetch<RefreshBriefingResponse>("/v1/briefing/refresh", {
-      method: "POST",
-    });
-    revalidatePath("/briefing");
-    return { ok: true, generated_at: data.generated_at };
+    const data = await backendFetch<import("@/lib/api/briefing").BriefingData>("/v1/briefing");
+    return { ok: true, data };
   } catch (e) {
     if (e instanceof BackendError) return { ok: false, error: e.message };
     return { ok: false, error: "backend injoignable" };

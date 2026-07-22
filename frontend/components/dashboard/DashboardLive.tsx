@@ -4,13 +4,29 @@ import { useMemo, useState, useTransition } from "react";
 import { clsx } from "clsx";
 import { AiChip } from "@/components/ui/AiChip";
 import { Panel, PanelHead } from "@/components/ui/Panel";
+import { Modal } from "@/components/ui/Modal";
 import { CaChart } from "@/components/charts/DashboardCharts";
 import { fmtInt, fmtM, fmtPct } from "@/lib/format";
-import { generateDashboardAnalysisAction } from "@/app/actions";
+import { generateDashboardAnalysisAction, fetchBriefingAction } from "@/app/actions";
 import type { DashboardKpis, SalespersonRevenue } from "@/lib/api/dashboard";
 import type { UnpaidData } from "@/lib/api/tresorerie";
 import type { PipelineForecastData } from "@/lib/api/forecast";
+import type { Supplier } from "@/lib/api/partners";
+import type { BriefingData } from "@/lib/api/briefing";
 import type { PeriodKey } from "@/lib/types";
+
+const ROLE_LABELS: Record<string, string> = {
+  dg: "Direction Générale",
+  dir_commercial: "Direction Commerciale",
+  dir_financier: "Direction Financière",
+  dir_operations: "Direction des Opérations",
+  commercial: "Commercial",
+};
+
+function formatBriefingDate(iso: string | null): string {
+  if (!iso) return "jamais";
+  return new Date(iso).toLocaleString("fr-FR", { dateStyle: "long", timeStyle: "short" });
+}
 
 const MONTH_LABELS = ["Jan", "Fév", "Mar", "Avr", "Mai", "Juin", "Juil", "Août", "Sept", "Oct", "Nov", "Déc"];
 const MONTH_FULL = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"];
@@ -47,6 +63,7 @@ export function DashboardLive({
   bySalesperson,
   unpaid,
   pipelineForecast,
+  suppliers,
 }: {
   kpis: DashboardKpis;
   bySalesperson: SalespersonRevenue[];
@@ -54,12 +71,31 @@ export function DashboardLive({
   unpaid: UnpaidData | null;
   /** null si le rôle courant n'a pas accès au Forecast. */
   pipelineForecast: PipelineForecastData | null;
+  /** null si le rôle courant n'a pas accès aux Fournisseurs. */
+  suppliers: Supplier[] | null;
 }) {
   const [period, setPeriod] = useState<PeriodKey>("trimestre");
   const [openDetail, setOpenDetail] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [analyzing, startAnalyzing] = useTransition();
+
+  // ---- Débrief du jour (briefing) chargé à la demande dans un modal ----
+  const [briefingOpen, setBriefingOpen] = useState(false);
+  const [briefing, setBriefing] = useState<BriefingData | null>(null);
+  const [briefingError, setBriefingError] = useState<string | null>(null);
+  const [loadingBriefing, startBriefing] = useTransition();
+
+  function openBriefing() {
+    setBriefingOpen(true);
+    if (briefing || loadingBriefing) return; // déjà chargé / en cours
+    setBriefingError(null);
+    startBriefing(async () => {
+      const res = await fetchBriefingAction();
+      if (res.ok) setBriefing(res.data);
+      else setBriefingError(res.error);
+    });
+  }
 
   // ---- Points de vigilance (données réelles du pipeline/impayés, quand accessibles au rôle) ----
   const topDebiteur = unpaid?.exposure.top_10_debiteurs[0] ?? null;
@@ -72,10 +108,15 @@ export function DashboardLive({
     : [];
   const oppCritique = atRiskByWeight[0] ?? oppsByWeight[0] ?? null;
 
-  const oppsWithAge = pipelineForecast ? pipelineForecast.opportunities.filter((o) => o.age_days !== null) : [];
-  const oldestOpp = oppsWithAge.length
-    ? [...oppsWithAge].sort((a, b) => (b.age_days ?? 0) - (a.age_days ?? 0))[0]
+  // Exposition fournisseur : le fournisseur qui pèse le plus dans les achats
+  // (proxy réel du risque de dépendance — la dette exacte n'est pas ventilée par fournisseur).
+  const totalSupplierSpend = suppliers ? sum(suppliers.map((s) => s.montant_total_xof)) : 0;
+  const topSupplier = suppliers && suppliers.length
+    ? [...suppliers].sort((a, b) => b.montant_total_xof - a.montant_total_xof)[0]
     : null;
+  const topSupplierShare = topSupplier && totalSupplierSpend
+    ? Math.round((topSupplier.montant_total_xof / totalSupplierSpend) * 100)
+    : 0;
 
   const vigilanceDetails: Record<string, { title: string; items: [string, string][] }> = {
     ...(topDebiteur
@@ -116,16 +157,16 @@ export function DashboardLive({
           },
         }
       : {}),
-    ...(oldestOpp
+    ...(topSupplier
       ? {
-          faitAncienne: {
-            title: `Détail — ${oldestOpp.name}`,
+          faitFournisseur: {
+            title: `Détail — Exposition fournisseur : ${topSupplier.name}`,
             items: [
-              ["Client", oldestOpp.client],
-              ["Montant pondéré", fmtM(oldestOpp.weighted_xof)],
-              ["Étape du pipeline", oldestOpp.stage],
-              ["Ancienneté", `${fmtInt(oldestOpp.age_days ?? 0)} jours ouverte — la plus ancienne du pipeline`],
-              ["Action recommandée", "Requalifier ce dossier avec le commercial en charge, ou le clôturer si le besoin n'existe plus."],
+              ["Montant total commandé", `${fmtM(topSupplier.montant_total_xof)} — la plus forte exposition du portefeuille fournisseurs`],
+              ["Part du total fournisseurs", `${topSupplierShare} %`],
+              ["Nombre de commandes", fmtInt(topSupplier.nb_commandes)],
+              ["Dernière commande", topSupplier.derniere_commande ?? "non renseignée"],
+              ["Action recommandée", `Vérifier l'encours réel de paiement envers ${topSupplier.name} et sécuriser cette relation d'approvisionnement clé.`],
             ] as [string, string][],
           },
         }
@@ -171,6 +212,7 @@ export function DashboardLive({
         caDelta: deltaTxt(cur, prev, `vs ${MONTH_FULL[lastMonthIdx]} ${y - 1}`),
         months: chartMonths.map((i) => MONTH_LABELS[i]),
         realise: chartMonths.map((i) => Math.round(caByMonth[i] / 1_000_000)),
+        lastChartMonthIdx: lastMonthIdx,
       };
     }
     if (period === "trimestre") {
@@ -182,6 +224,7 @@ export function DashboardLive({
         caDelta: deltaTxt(cur, prev, `vs T${quarter + 1} ${y - 1}`),
         months: quarterMonths.map((i) => MONTH_LABELS[i]),
         realise: quarterMonths.map((i) => Math.round(caByMonth[i] / 1_000_000)),
+        lastChartMonthIdx: quarterMonths[quarterMonths.length - 1] ?? lastMonthIdx,
       };
     }
     const allMonths = Array.from({ length: lastMonthIdx + 1 }, (_, i) => i);
@@ -193,8 +236,35 @@ export function DashboardLive({
       caDelta: deltaTxt(cur, prevComparable, `vs jan-${MONTH_LABELS[lastMonthIdx].toLowerCase()} ${y - 1}`),
       months: allMonths.map((i) => MONTH_LABELS[i]),
       realise: allMonths.map((i) => Math.round(caByMonth[i] / 1_000_000)),
+      lastChartMonthIdx: lastMonthIdx,
     };
   }, [period, caByMonth, caByMonthPrev, lastMonthIdx, quarter, quarterMonths, y, kpis.year.revenue_xof]);
+
+  // ---- Courbe « Prévision IA » : prolonge le CA réalisé de 2 mois futurs, à
+  // partir du forecast pondéré réel (mêmes buckets que le module Forecast).
+  // Comme dans le mockup : présente uniquement si le rôle a accès au Forecast.
+  const chartData = useMemo(() => {
+    const buckets = pipelineForecast?.monthly_buckets.realiste_xof ?? [];
+    if (buckets.length < 2) {
+      return {
+        months: periodCalc.months,
+        realise: periodCalc.realise as (number | null)[],
+        prevision: periodCalc.months.map(() => null as number | null),
+      };
+    }
+    const prev1 = Math.round(buckets[0] / 1_000_000);
+    const prev2 = Math.round(buckets[1] / 1_000_000);
+    const nextLabel1 = MONTH_LABELS[(periodCalc.lastChartMonthIdx + 1) % 12];
+    const nextLabel2 = MONTH_LABELS[(periodCalc.lastChartMonthIdx + 2) % 12];
+    const months = [...periodCalc.months, nextLabel1, nextLabel2];
+    const realise: (number | null)[] = [...periodCalc.realise, null, null];
+    const prevision: (number | null)[] = months.map(() => null);
+    const joinIdx = periodCalc.realise.length - 1; // dernier mois réel = point de jonction
+    if (joinIdx >= 0) prevision[joinIdx] = periodCalc.realise[joinIdx];
+    prevision[months.length - 2] = prev1;
+    prevision[months.length - 1] = prev2;
+    return { months, realise, prevision };
+  }, [periodCalc, pipelineForecast]);
 
   // ---- Jauge CA : CA de la période sélectionnée ----
   const caGauge = {
@@ -375,14 +445,14 @@ export function DashboardLive({
           delta: `${oppCritique.client} — ${fmtM(oppCritique.value_xof)}${oppCritique.at_risk ? " (échéance dépassée)" : ""}`,
         }]
       : []),
-    ...(oldestOpp
+    ...(topSupplier
       ? [{
-          key: "faitAncienne",
+          key: "faitFournisseur",
           color: "var(--color-bad)",
-          label: "⚠ Opportunité la plus ancienne du pipeline",
-          value: oldestOpp.name,
-          valueSize: "15px",
-          delta: `${oldestOpp.client} — ouverte depuis ${fmtInt(oldestOpp.age_days ?? 0)} jours`,
+          label: "⚠ Exposition fournisseur la plus forte",
+          value: topSupplier.name,
+          valueSize: "16px",
+          delta: `${fmtM(topSupplier.montant_total_xof)} commandés — ${topSupplierShare} % du total`,
         }]
       : []),
   ];
@@ -417,6 +487,13 @@ export function DashboardLive({
               </button>
             ))}
           </div>
+          <button
+            onClick={openBriefing}
+            className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-ai px-3 py-[9px] text-[12.5px] font-semibold text-white"
+          >
+            <span className="inline-block animate-pulse text-base leading-none">✺</span>
+            Débrief du jour
+          </button>
         </div>
       </div>
 
@@ -485,9 +562,9 @@ export function DashboardLive({
               pipelineDelta: "",
               transfo: "",
               transfoDelta: "",
-              months: periodCalc.months,
-              realise: periodCalc.realise,
-              prevision: periodCalc.months.map(() => null),
+              months: chartData.months,
+              realise: chartData.realise,
+              prevision: chartData.prevision,
             }}
           />
         </Panel>
@@ -576,6 +653,69 @@ export function DashboardLive({
           </div>
         )}
       </Panel>
+
+      {/* ===== MODAL : DÉBRIEF DU JOUR (briefing chargé à la demande) ===== */}
+      <Modal open={briefingOpen} onClose={() => setBriefingOpen(false)} className="max-w-[640px] px-7 pb-7 pt-6">
+        <div className="mb-4 flex items-start justify-between">
+          <div>
+            <div className="mb-1.5 font-mono text-[11.5px] uppercase tracking-[0.14em] text-ai">
+              ● synthèse quotidienne
+            </div>
+            <h2 className="text-[19px]">Débrief du jour</h2>
+            {briefing && (
+              <div className="mt-1 text-[12px] text-muted">
+                Pour {ROLE_LABELS[briefing.role] ?? briefing.role} — figé depuis le{" "}
+                {formatBriefingDate(briefing.generated_at)}, jusqu&apos;à minuit
+              </div>
+            )}
+          </div>
+          <button
+            onClick={() => setBriefingOpen(false)}
+            className="cursor-pointer rounded-lg border border-line bg-panel-2 px-2.5 py-1.5 text-[13px] text-muted hover:border-ai hover:text-text"
+          >
+            Fermer ✕
+          </button>
+        </div>
+
+        {loadingBriefing ? (
+          <AiChip>chargement du débrief…</AiChip>
+        ) : briefingError ? (
+          <div className="text-[12.5px] text-bad">Débrief indisponible : {briefingError}</div>
+        ) : briefing?.section == null ? (
+          <div className="text-[12.5px] text-muted">
+            Le briefing de votre profil n&apos;a pas encore été généré aujourd&apos;hui.
+          </div>
+        ) : (
+          <>
+            <div className="mb-4 rounded-card border border-l-[3px] border-line border-l-ai bg-panel-2 p-4">
+              <div className="mb-2 flex items-center gap-2">
+                <AiChip>analyse</AiChip>
+                <span className="text-[13px] font-semibold">Ce qui compte aujourd&apos;hui</span>
+              </div>
+              <div className="flex flex-col gap-2 text-[12.5px] leading-relaxed text-text">
+                {briefing.section.analysis.split("\n\n").map((par, i) => (
+                  <p key={i}>{par}</p>
+                ))}
+              </div>
+            </div>
+
+            <div className="mb-2 flex items-center gap-2">
+              <AiChip>données réelles</AiChip>
+              <span className="text-[13px] font-semibold">Faits du jour</span>
+            </div>
+            <div className="flex flex-col gap-2">
+              {briefing.section.bullets.map((b, i) => (
+                <div
+                  key={i}
+                  className="rounded-lg border border-line border-l-2 border-l-ai bg-panel p-3 text-[12px] leading-relaxed"
+                >
+                  {b}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </Modal>
     </>
   );
 }
