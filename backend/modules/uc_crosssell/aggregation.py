@@ -107,8 +107,8 @@ def build_montee_valeur(lines: list[dict]) -> dict:
                     "client": client,
                     "titre": label,
                     "detail": (
-                        f"Dernière commande en {mois_annee}, soit {age_mois} mois — échéance de "
-                        "renouvellement probable (cycle annuel)."
+                        f"{montant_m} M FCFA investis, dernière commande en {mois_annee}, soit "
+                        f"{age_mois} mois — échéance de renouvellement probable (cycle annuel)."
                     ),
                     "montant_xof": round(info["total_xof"]),
                     "age_mois": age_mois,
@@ -118,8 +118,8 @@ def build_montee_valeur(lines: list[dict]) -> dict:
                     "client": client,
                     "titre": label,
                     "detail": (
-                        f"Dernière commande en {mois_annee}, soit {age_mois} mois — probablement en "
-                        "fin de cycle technologique, à réévaluer."
+                        f"{montant_m} M FCFA investis, dernière commande en {mois_annee}, soit "
+                        f"{age_mois} mois — probablement en fin de cycle technologique, à réévaluer."
                     ),
                     "montant_xof": round(info["total_xof"]),
                     "age_mois": age_mois,

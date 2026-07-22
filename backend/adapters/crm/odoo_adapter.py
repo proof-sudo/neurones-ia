@@ -292,7 +292,7 @@ class OdooAdapter(CRMRepository):
         if not records:
             return None
         r = records[0]
-        lines = await self.get_order_lines([r["id"]])
+        lines = await self.get_order_lines_by_ids([r["id"]])
         return {
             "name": r["name"],
             "client_name": (r.get("partner_id") or [None, "—"])[1],
@@ -348,7 +348,7 @@ class OdooAdapter(CRMRepository):
         logger.info("Dates de paiement récupérées : %d factures payées", len(result))
         return result
 
-    async def get_order_lines(self, order_ids: list[int]) -> dict[int, list]:
+    async def get_order_lines_by_ids(self, order_ids: list[int]) -> dict[int, list]:
         """Retourne {odoo_order_id: [{product, qty, subtotal, unit_price}]}."""
         if not order_ids:
             return {}

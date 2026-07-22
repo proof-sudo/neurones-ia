@@ -191,7 +191,7 @@ async def _sync_sale_orders_by_ids(odoo: OdooAdapter, ids: list[int]):
             )
         else:
             raise
-    lines_by_order = await odoo.get_order_lines([r["id"] for r in records])
+    lines_by_order = await odoo.get_order_lines_by_ids([r["id"] for r in records])
     async with AsyncSessionLocal() as session:
         for so in records:
             order_id = f"so_{so['id']}"
@@ -443,7 +443,7 @@ async def run_odoo_sync(force_full: bool = False):
         all_odoo_ids = [so["id"] for so in sale_orders]
         lines_by_order: dict[int, list] = {}
         for i in range(0, len(all_odoo_ids), 500):
-            batch = await odoo.get_order_lines(all_odoo_ids[i:i + 500])
+            batch = await odoo.get_order_lines_by_ids(all_odoo_ids[i:i + 500])
             lines_by_order.update(batch)
         async with AsyncSessionLocal() as session:
             new_so = 0
