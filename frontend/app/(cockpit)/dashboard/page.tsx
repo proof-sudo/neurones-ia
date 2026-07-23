@@ -24,6 +24,7 @@ export default async function DashboardPage() {
       bySalesperson={data.bySalesperson}
       unpaid={data.unpaid}
       pipelineForecast={data.pipelineForecast}
+      suppliers={data.suppliers}
     />
   );
 }

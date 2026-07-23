@@ -21,13 +21,24 @@ function risqueDependance(montantTotalXof: number, total: number): { label: stri
   return { label: "Faible", color: "var(--color-good)", part };
 }
 
+function joursDepuisCommande(dateStr: string | null): number | null {
+  if (!dateStr) return null;
+  return Math.round((Date.now() - new Date(dateStr).getTime()) / 86_400_000);
+}
+
 export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
   const [analysis, setAnalysis] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [analyzing, startAnalyzing] = useTransition();
   const [selected, setSelected] = useState<Supplier | null>(null);
+  const [q, setQ] = useState("");
 
   const total = useMemo(() => suppliers.reduce((s, p) => s + p.montant_total_xof, 0), [suppliers]);
+  const filtered = suppliers.filter((s) => s.name.toLowerCase().includes(q.toLowerCase()));
+
+  function toggleSelected(s: Supplier) {
+    setSelected((cur) => (cur?.name === s.name ? null : s));
+  }
 
   function genererAnalyse() {
     setAnalysisError(null);
@@ -40,7 +51,7 @@ export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
 
   return (
     <>
-      <div className="mb-4 flex items-center justify-between gap-3">
+      {/* <div className="mb-4 flex items-center justify-between gap-3">
         <p className="text-[11.5px] leading-relaxed text-muted">
           Fournisseurs réels (purchase_orders, synchronisés depuis Odoo). Le type, la spécialité et
           les certifications ne sont pas suivis dans les données actuelles — non affichés plutôt
@@ -53,9 +64,9 @@ export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
         >
           🔮 Analyse IA fournisseurs
         </button>
-      </div>
+      </div> */}
 
-      <Panel className="mb-4 border-l-[3px] border-l-ai">
+      {/* <Panel className="mb-4 border-l-[3px] border-l-ai">
         <PanelHead title="Ce que l'IA voit dans les fournisseurs">
           <AiChip>analyse</AiChip>
         </PanelHead>
@@ -75,19 +86,82 @@ export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
             ))}
           </div>
         )}
-      </Panel>
+      </Panel> */}
 
-      {suppliers.length === 0 ? (
-        <div className="text-[13px] text-muted">Aucune commande fournisseur enregistrée.</div>
+      {selected && (() => {
+        const niveau = niveauPartenariat(selected.montant_total_xof);
+        const risque = risqueDependance(selected.montant_total_xof, total);
+        const jours = joursDepuisCommande(selected.derniere_commande);
+        const inactif = jours !== null && jours > 365;
+        return (
+          <div className="mb-4 rounded-card border border-line bg-panel p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-[14.5px] font-semibold">{selected.name}</h3>
+              <button onClick={() => setSelected(null)} className="cursor-pointer text-[13px] text-muted">
+                Fermer ✕
+              </button>
+            </div>
+            <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+              <Stat k="Montant total réel" v={fmtM(selected.montant_total_xof)} />
+              <Stat k="Niveau de partenariat" v={niveau.label} color={niveau.color} />
+              <Stat k="Risque de dépendance" v={`${risque.label} (${risque.part.toFixed(1)}%)`} color={risque.color} />
+              <Stat
+                k="Activité"
+                v={jours === null ? "—" : inactif ? `Inactif ${jours} j` : `il y a ${jours} j`}
+                color={jours === null ? undefined : inactif ? "var(--color-bad)" : "var(--color-good)"}
+              />
+            </div>
+            <h4 className="mb-2 text-[12.5px] font-semibold text-text">Historique réel des commandes</h4>
+            <table className="w-full border-collapse text-[12.5px]">
+              <thead>
+                <tr>
+                  {["Référence", "Montant", "Date"].map((h) => (
+                    <th key={h} className="border-b border-line px-2 pb-2 text-left text-[11px] font-medium uppercase tracking-[0.05em] text-muted">
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {selected.commandes_recentes.map((c, i) => (
+                  <tr key={i} className="border-b border-line last:border-none">
+                    <td className="px-2 py-2.5 text-text">{c.ref}</td>
+                    <td className="px-2 py-2.5 font-mono">{fmtM(c.montant_xof)}</td>
+                    <td className="px-2 py-2.5 text-muted">{c.date ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        );
+      })()}
+
+      <div className="mb-3 flex justify-end">
+        <input
+          className="min-w-[200px] cursor-text rounded-[9px] border border-line bg-panel px-2.5 py-2 font-mono text-xs text-text focus:border-ai focus:outline-none"
+          placeholder="Rechercher un fournisseur…"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+        />
+      </div>
+
+      {filtered.length === 0 ? (
+        <div className="text-[13px] text-muted">
+          {suppliers.length === 0
+            ? "Aucune commande fournisseur enregistrée."
+            : "Aucun fournisseur ne correspond à la recherche."}
+        </div>
       ) : (
         <div className="grid grid-cols-1 gap-3.5 xl:grid-cols-2">
-          {suppliers.map((s) => {
+          {filtered.map((s) => {
             const niveau = niveauPartenariat(s.montant_total_xof);
             const risque = risqueDependance(s.montant_total_xof, total);
+            const jours = joursDepuisCommande(s.derniere_commande);
+            const inactif = jours !== null && jours > 365;
             return (
               <button
                 key={s.name}
-                onClick={() => setSelected(s)}
+                onClick={() => toggleSelected(s)}
                 className="rounded-card border border-line bg-panel p-[18px] text-left transition hover:-translate-y-px hover:border-[#39466B]"
               >
                 <div className="mb-3 flex items-start justify-between">
@@ -110,51 +184,28 @@ export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
                     {risque.label} ({risque.part.toFixed(1)}%)
                   </b>
                 </div>
+                <div className="flex justify-between py-1.5 text-[12px] text-muted">
+                  <span>Activité</span>
+                  <b style={{ color: jours === null ? undefined : inactif ? "var(--color-bad)" : "var(--color-good)" }}>
+                    {jours === null ? "—" : inactif ? `Inactif depuis ${jours} j` : `il y a ${jours} j`}
+                  </b>
+                </div>
               </button>
             );
           })}
-        </div>
-      )}
-
-      {selected && (
-        <div className="mt-4 rounded-card border border-line bg-panel p-5">
-          <div className="mb-3 flex items-center justify-between">
-            <h3 className="text-[14.5px] font-semibold">Commandes récentes — {selected.name}</h3>
-            <button onClick={() => setSelected(null)} className="cursor-pointer text-[13px] text-muted">
-              Fermer ✕
-            </button>
-          </div>
-          <table className="w-full border-collapse text-[12.5px]">
-            <thead>
-              <tr>
-                {["Référence", "Montant", "Date"].map((h) => (
-                  <th key={h} className="border-b border-line px-2 pb-2 text-left text-[11px] font-medium uppercase tracking-[0.05em] text-muted">
-                    {h}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {selected.commandes_recentes.map((c, i) => (
-                <tr key={i} className="border-b border-line last:border-none">
-                  <td className="px-2 py-2.5 text-text">{c.ref}</td>
-                  <td className="px-2 py-2.5 font-mono">{fmtM(c.montant_xof)}</td>
-                  <td className="px-2 py-2.5 text-muted">{c.date ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       )}
     </>
   );
 }
 
-function Stat({ k, v }: { k: string; v: string }) {
+function Stat({ k, v, color }: { k: string; v: string; color?: string }) {
   return (
     <div>
       <div className="text-[10.5px] text-muted">{k}</div>
-      <div className="mt-0.5 font-mono text-[14px]">{v}</div>
+      <div className="mt-0.5 font-mono text-[14px]" style={color ? { color } : undefined}>
+        {v}
+      </div>
     </div>
   );
 }

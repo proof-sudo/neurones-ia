@@ -3,6 +3,7 @@ import "server-only";
 import { backendFetch } from "../backend";
 import { fetchUnpaidData, type UnpaidData } from "./tresorerie";
 import { fetchPipelineForecast, type PipelineForecastData } from "./forecast";
+import { fetchTopSuppliers, type Supplier } from "./partners";
 
 // ---------- Types des réponses /v1/dashboard/* (formes du LocalCRMAdapter) ----------
 
@@ -93,15 +94,17 @@ export interface DashboardData {
   unpaid: UnpaidData | null;
   /** null si le rôle courant n'a pas accès au Forecast — idem. */
   pipelineForecast: PipelineForecastData | null;
+  /** null si le rôle courant n'a pas accès aux Fournisseurs — idem. */
+  suppliers: Supplier[] | null;
 }
 
 /**
  * Charge tous les blocs du dashboard en parallèle. Lève si le backend est
  * indisponible pour les données propres au Dashboard (vue "dashboard").
- * Impayés/forecast alimentent seulement les points de vigilance : certains
- * rôles (dir_commercial, dir_operations, commercial) ont accès au Dashboard
- * sans avoir accès à Trésorerie/Forecast — ces deux blocs sont donc
- * optionnels (null si refusés ou indisponibles), jamais bloquants.
+ * Impayés/forecast/fournisseurs alimentent seulement les points de vigilance :
+ * certains rôles (dir_commercial, dir_operations, commercial) ont accès au
+ * Dashboard sans avoir accès à Trésorerie/Forecast/Fournisseurs — ces trois
+ * blocs sont donc optionnels (null si refusés ou indisponibles), jamais bloquants.
  */
 export async function fetchDashboardData(): Promise<DashboardData> {
   const [kpis, byCountry, bySalesperson, topClients] = await Promise.all([
@@ -110,11 +113,13 @@ export async function fetchDashboardData(): Promise<DashboardData> {
     backendFetch<SalespersonRevenue[]>("/v1/dashboard/revenue/by-salesperson"),
     backendFetch<TopClientRow[]>("/v1/dashboard/top-clients"),
   ]);
-  const [unpaidResult, forecastResult] = await Promise.allSettled([
+  const [unpaidResult, forecastResult, suppliersResult] = await Promise.allSettled([
     fetchUnpaidData(),
     fetchPipelineForecast(),
+    fetchTopSuppliers(),
   ]);
   const unpaid = unpaidResult.status === "fulfilled" ? unpaidResult.value : null;
   const pipelineForecast = forecastResult.status === "fulfilled" ? forecastResult.value : null;
-  return { kpis, byCountry, bySalesperson, topClients, unpaid, pipelineForecast };
+  const suppliers = suppliersResult.status === "fulfilled" ? suppliersResult.value : null;
+  return { kpis, byCountry, bySalesperson, topClients, unpaid, pipelineForecast, suppliers };
 }

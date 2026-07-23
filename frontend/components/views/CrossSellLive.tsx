@@ -133,7 +133,7 @@ export function CrossSellLive({ data }: { data: MonteeValeurSignals }) {
               <div className="mt-1 flex items-center gap-2">
                 <span className="font-mono text-[12px] text-ai">{fmtM(o.montant_xof)}</span>
                 <Link
-                  href={`/portefeuille?client=${encodeURIComponent(o.client)}`}
+                  href={`/clients?client=${encodeURIComponent(o.client)}`}
                   className="cursor-pointer rounded-lg bg-ai px-3 py-[7px] text-[11.5px] font-semibold text-white"
                 >
                   Voir le client

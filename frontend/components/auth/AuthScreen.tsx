@@ -65,11 +65,6 @@ export function AuthScreen({
       }}
     >
       <div className="mb-9 flex max-w-[400px] flex-col items-center text-center">
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img src="/logo.png" alt="Neurones" className="mb-3.5 h-10 w-auto" />
-        <div className="mb-2 font-mono text-[11.5px] uppercase tracking-[0.14em] text-ai">
-          ● Neurones Technologies — cockpit prédictif
-        </div>
         <h1 className="my-2.5 text-[26px]">Connexion</h1>
         <p className="text-[12.5px] text-muted">
           Identifiez-vous pour accéder à votre espace
@@ -83,6 +78,13 @@ export function AuthScreen({
       )}
 
       <div className="w-full max-w-[400px] rounded-2xl border border-line bg-panel p-7">
+        <div className="mb-9 flex flex-col items-center text-center">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/logo.png" alt="Neurones" className="mb-3.5 h-10 w-auto" />
+          <div className="font-mono text-[10.5px] uppercase tracking-[0.14em] text-ai">
+            ● Neurones Technologies — cockpit prédictif
+          </div>
+        </div>
         <div className="mb-3.5">
           <div className="mb-1.5 text-[11px] text-muted">Email professionnel</div>
           <input
@@ -125,8 +127,12 @@ export function AuthScreen({
           <div className="mb-10 w-full max-w-[480px] rounded-2xl border border-line border-l-[3px] border-l-ai bg-panel p-6">
             <h2 className="text-[16px]">✺ Bienvenue</h2>
             <div className="mt-2.5 mb-2.5 text-[12.5px] text-muted">
-              Bienvenue, <b className="text-text">{welcome.profile.nom}</b>. Votre briefing IA du
-              jour vous attend dans votre espace.
+              Bienvenue, <b className="text-text">{welcome.profile.nom}</b>. Voici ce que Sales IA a
+              préparé pour vous aujourd&apos;hui :
+            </div>
+            <div className="mb-4 rounded-xl border border-line border-l-[3px] border-l-ai bg-panel p-3 text-[12.5px] text-muted">
+              Aucun signal prioritaire particulier détecté pour ce profil pour l&apos;instant — votre
+              espace est prêt.
             </div>
             <button
               onClick={enterCockpit}
