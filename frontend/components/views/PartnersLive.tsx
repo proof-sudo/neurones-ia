@@ -3,6 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import { AiChip } from "@/components/ui/AiChip";
 import { Panel, PanelHead } from "@/components/ui/Panel";
+import { Modal } from "@/components/ui/Modal";
 import { fmtM, fmtInt } from "@/lib/format";
 import { generatePartnersAnalysisAction } from "@/app/actions";
 import type { Supplier } from "@/lib/api/partners";
@@ -88,54 +89,6 @@ export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
         )}
       </Panel> */}
 
-      {selected && (() => {
-        const niveau = niveauPartenariat(selected.montant_total_xof);
-        const risque = risqueDependance(selected.montant_total_xof, total);
-        const jours = joursDepuisCommande(selected.derniere_commande);
-        const inactif = jours !== null && jours > 365;
-        return (
-          <div className="mb-4 rounded-card border border-line bg-panel p-5">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-[14.5px] font-semibold">{selected.name}</h3>
-              <button onClick={() => setSelected(null)} className="cursor-pointer text-[13px] text-muted">
-                Fermer ✕
-              </button>
-            </div>
-            <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
-              <Stat k="Montant total réel" v={fmtM(selected.montant_total_xof)} />
-              <Stat k="Niveau de partenariat" v={niveau.label} color={niveau.color} />
-              <Stat k="Risque de dépendance" v={`${risque.label} (${risque.part.toFixed(1)}%)`} color={risque.color} />
-              <Stat
-                k="Activité"
-                v={jours === null ? "—" : inactif ? `Inactif ${jours} j` : `il y a ${jours} j`}
-                color={jours === null ? undefined : inactif ? "var(--color-bad)" : "var(--color-good)"}
-              />
-            </div>
-            <h4 className="mb-2 text-[12.5px] font-semibold text-text">Historique réel des commandes</h4>
-            <table className="w-full border-collapse text-[12.5px]">
-              <thead>
-                <tr>
-                  {["Référence", "Montant", "Date"].map((h) => (
-                    <th key={h} className="border-b border-line px-2 pb-2 text-left text-[11px] font-medium uppercase tracking-[0.05em] text-muted">
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {selected.commandes_recentes.map((c, i) => (
-                  <tr key={i} className="border-b border-line last:border-none">
-                    <td className="px-2 py-2.5 text-text">{c.ref}</td>
-                    <td className="px-2 py-2.5 font-mono">{fmtM(c.montant_xof)}</td>
-                    <td className="px-2 py-2.5 text-muted">{c.date ?? "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        );
-      })()}
-
       <div className="mb-3 flex justify-end">
         <input
           className="min-w-[200px] cursor-text rounded-[9px] border border-line bg-panel px-2.5 py-2 font-mono text-xs text-text focus:border-ai focus:outline-none"
@@ -195,7 +148,72 @@ export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
           })}
         </div>
       )}
+
+      <SupplierModal supplier={selected} total={total} onClose={() => setSelected(null)} />
     </>
+  );
+}
+
+function SupplierModal({
+  supplier,
+  total,
+  onClose,
+}: {
+  supplier: Supplier | null;
+  total: number;
+  onClose: () => void;
+}) {
+  return (
+    <Modal open={!!supplier} onClose={onClose} className="max-w-[760px] px-7 pb-7 pt-6">
+      {supplier &&
+        (() => {
+          const niveau = niveauPartenariat(supplier.montant_total_xof);
+          const risque = risqueDependance(supplier.montant_total_xof, total);
+          const jours = joursDepuisCommande(supplier.derniere_commande);
+          const inactif = jours !== null && jours > 365;
+          return (
+            <>
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-[14.5px] font-semibold">{supplier.name}</h3>
+                <button onClick={onClose} className="cursor-pointer text-[13px] text-muted">
+                  Fermer ✕
+                </button>
+              </div>
+              <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <Stat k="Montant total réel" v={fmtM(supplier.montant_total_xof)} />
+                <Stat k="Niveau de partenariat" v={niveau.label} color={niveau.color} />
+                <Stat k="Risque de dépendance" v={`${risque.label} (${risque.part.toFixed(1)}%)`} color={risque.color} />
+                <Stat
+                  k="Activité"
+                  v={jours === null ? "—" : inactif ? `Inactif ${jours} j` : `il y a ${jours} j`}
+                  color={jours === null ? undefined : inactif ? "var(--color-bad)" : "var(--color-good)"}
+                />
+              </div>
+              <h4 className="mb-2 text-[12.5px] font-semibold text-text">Historique réel des commandes</h4>
+              <table className="w-full border-collapse text-[12.5px]">
+                <thead>
+                  <tr>
+                    {["Référence", "Montant", "Date"].map((h) => (
+                      <th key={h} className="border-b border-line px-2 pb-2 text-left text-[11px] font-medium uppercase tracking-[0.05em] text-muted">
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {supplier.commandes_recentes.map((c, i) => (
+                    <tr key={i} className="border-b border-line last:border-none">
+                      <td className="px-2 py-2.5 text-text">{c.ref}</td>
+                      <td className="px-2 py-2.5 font-mono">{fmtM(c.montant_xof)}</td>
+                      <td className="px-2 py-2.5 text-muted">{c.date ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          );
+        })()}
+    </Modal>
   );
 }
 
