@@ -527,6 +527,35 @@ class KBAttestationModel(Base, _KBFactCommon):
     signataire: Mapped[dict] = mapped_column(JSON, default=dict)
 
 
+class PresalesDossierModel(Base):
+    """Dossier d'appel d'offres persisté (UC10 Pre-Sales).
+
+    Avant : le fichier AO et tout l'état du workflow (scoring, stratégie, checklist...)
+    ne vivaient qu'en mémoire navigateur (localStorage + File en RAM) → après un
+    rechargement de page, le File disparaissait et « refaire une étape » échouait
+    (« Fichier non disponible »). Ici, le fichier source est écrit sur disque
+    (`file_path`) et l'intégralité de l'état (forme `AOEntry` du frontend) est
+    répliquée dans `state` (JSON) → toute étape est rejouable à tout moment, y
+    compris après reload, tant que le dossier n'a pas été purgé.
+
+    `client_name` / `owner` / `deadline` / `status` sont dupliqués depuis `state`
+    à chaque écriture — uniquement pour indexer/filtrer/purger sans désérialiser
+    le JSON. `state` reste la seule source de vérité renvoyée au frontend.
+    """
+    __tablename__ = "presales_dossiers"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    filename: Mapped[str] = mapped_column(String(500), default="")
+    file_path: Mapped[str] = mapped_column(String(1000), default="")
+    client_name: Mapped[str] = mapped_column(String(255), default="")
+    owner: Mapped[str] = mapped_column(String(255), default="")
+    deadline: Mapped[str] = mapped_column(String(20), default="", index=True)  # "YYYY-MM-DD" ou ""
+    status: Mapped[str] = mapped_column(String(30), default="pending_analysis")
+    state: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
 class KBAliasModel(Base):
     """Journal des libellés observés → entité canonique (Phase 2).
 

@@ -89,9 +89,21 @@ def build_scheduler(
         max_instances=1,
     )
 
+    scheduler.add_job(
+        _presales_expiry_purge_job,
+        trigger=CronTrigger(hour=4, minute=0),
+        id="presales_expiry_purge",
+        name="Purge dossiers présale dont l'échéance est dépassée",
+        replace_existing=True,
+        misfire_grace_time=600,
+        coalesce=True,
+        max_instances=1,
+    )
+
     logger.info(
         "Scheduler configuré : sync Odoo toutes les %d min (coalesce, max 1), scan GED à 2h00, "
-        "veille AO toutes les 6h, purge quarantaine à 3h30 (rétention %d j), briefing quotidien à 0h00",
+        "veille AO toutes les 6h, purge quarantaine à 3h30 (rétention %d j), briefing quotidien à 0h00, "
+        "purge dossiers présale expirés à 4h00",
         sync_interval, settings.quarantine_retention_days,
     )
     return scheduler
@@ -144,3 +156,9 @@ async def _quarantine_purge_job():
             logger.warning("Purge quarantaine — suppression %s impossible : %s", p, e)
     if paths:
         logger.info("Purge quarantaine : %d entrée(s) périmée(s), %d fichier(s) supprimé(s)", len(paths), removed)
+
+
+async def _presales_expiry_purge_job():
+    """Supprime (base + fichier) les dossiers présale dont l'échéance est dépassée."""
+    from modules.uc10_presales import dossier_store
+    await dossier_store.purge_expired()

@@ -7,14 +7,15 @@ import {
   Download, Loader2, Trash2, Sparkles, ArrowRight, ArrowLeft, Shield, Target,
   Users, Eye, ClipboardList, BarChart2, Layers, Lock, Plus, Send,
   CalendarDays, Trophy, ThumbsDown, Clock, List,
-  Briefcase, Scale, Coins, X, Search, ChevronDown, FileCheck, Play,
+  Briefcase, Scale, Coins, X, Search, ChevronDown, FileCheck, Play, Pencil, Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Modal } from "@/components/ui/Modal";
 import {
-  scoreAO, generateBidStrategy, exportAnalysis, exportScoring, exportStrategy,
+  generateBidStrategy, exportAnalysis, exportScoring, exportStrategy,
   exportMatrix, exportChecklist, buildOfferSections, renderOffer,
   fetchGEDFiles, uploadGEDFile, itemText, assessMatrix, confirmMatrix,
+  createDossier, listDossiers, patchDossier, deleteDossier, analyzeDossier, downloadDossierFile,
   type GEDFile, type ExtractedItem, type ConformityExigence,
   type ScoringResult, type BidStrategy, type OfferSections,
   type MarketIdentity, type CalendarEvent, type EvaluationModalities,
@@ -115,17 +116,6 @@ function NumberedAnalysis({ text }: { text: string }) {
       </ol>
     </div>
   );
-}
-
-function getStorageKey(): string {
-  if (typeof window === "undefined") return "neurones_presales_aos_v2";
-  try {
-    const raw = localStorage.getItem("neurones_user");
-    const uid = raw ? (JSON.parse(raw) as { id: number }).id : 0;
-    return `neurones_presales_${uid}_v2`;
-  } catch {
-    return "neurones_presales_aos_v2";
-  }
 }
 
 function newEntry(id: string, filename: string): AOEntry {
@@ -2539,7 +2529,7 @@ const KANBAN_COLS = [
   { key: "perdu",     label: "Perdus",        color: "bg-bad/60",    light: "bg-bad/10 border-bad/35",     text: "text-bad" },
 ] as const;
 
-export function PresalesWorkflow() {
+export function PresalesWorkflow({ currentUserName = "" }: { currentUserName?: string }) {
   const [aos, setAos] = useState<AOEntry[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [viewStep, setViewStep] = useState<1 | 2 | 3 | 4 | 5 | 6 | 7>(1);
@@ -2549,8 +2539,10 @@ export function PresalesWorkflow() {
   const [dragOver, setDragOver] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newClientName, setNewClientName] = useState("");
-  const [newOwner, setNewOwner] = useState("");
   const [newDeadline, setNewDeadline] = useState("");
+  const [editingRowId, setEditingRowId] = useState<string | null>(null);
+  const [downloadingOriginalId, setDownloadingOriginalId] = useState<string | null>(null);
+  const [homeDownloadError, setHomeDownloadError] = useState<string | null>(null);
   const [generatingStrategy, setGeneratingStrategy] = useState(false);
   const [validatingDecision, setValidatingDecision] = useState(false);
   const [exportingAnalysis, setExportingAnalysis] = useState(false);
@@ -2562,35 +2554,49 @@ export function PresalesWorkflow() {
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const demoLoaded = useRef(false);
-  const pendingFilesRef = useRef<Map<string, File>>(new Map());
+  const [loadingDossiers, setLoadingDossiers] = useState(true);
+  // Sync backend débouncée : chaque updateAO() accumule son patch ici et le flush
+  // (PATCH réseau) 500ms après la dernière modification sur ce dossier — évite une
+  // requête par frappe clavier tout en garantissant qu'aucun champ modifié n'est
+  // perdu (fusion des patches successifs, pas juste le dernier).
+  const pendingPatchRef = useRef<Map<string, Partial<AOEntry>>>(new Map());
+  const patchTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   const selectedAO = aos.find(a => a.id === selectedId) ?? null;
 
-  // Restauration localStorage différée en microtâche : pas de setState synchrone
-  // dans l'effet (règle react-hooks) et pas de mismatch d'hydratation.
+  // Le backend est la seule source de vérité (fichier + état persistés en base) —
+  // condition pour que « refaire une étape » fonctionne après un rechargement de page.
   useEffect(() => {
     let cancelled = false;
-    void Promise.resolve().then(() => {
-      if (cancelled) return;
-      const saved = localStorage.getItem(getStorageKey());
-      if (saved) {
-        try { setAos(JSON.parse(saved)); } catch { /* ignore */ }
-      }
-    });
+    listDossiers()
+      .then(rows => { if (!cancelled) setAos(rows as unknown as AOEntry[]); })
+      .catch(e => { if (!cancelled) console.error("Chargement des dossiers présale échoué:", e); })
+      .finally(() => { if (!cancelled) setLoadingDossiers(false); });
     return () => { cancelled = true; };
   }, []);
 
-  useEffect(() => {
-    if (aos.length > 0) localStorage.setItem(getStorageKey(), JSON.stringify(aos));
-  }, [aos]);
-
   function updateAO(id: string, patch: Partial<AOEntry>) {
     setAos(prev => prev.map(a => a.id === id ? { ...a, ...patch } : a));
+
+    const accumulated = { ...(pendingPatchRef.current.get(id) ?? {}), ...patch };
+    pendingPatchRef.current.set(id, accumulated);
+    const existingTimer = patchTimerRef.current.get(id);
+    if (existingTimer) clearTimeout(existingTimer);
+    patchTimerRef.current.set(id, setTimeout(() => {
+      patchTimerRef.current.delete(id);
+      const toSend = pendingPatchRef.current.get(id);
+      pendingPatchRef.current.delete(id);
+      if (toSend) {
+        patchDossier(id, toSend as Record<string, unknown>).catch(e => {
+          console.error("Synchronisation du dossier échouée:", e);
+        });
+      }
+    }, 500));
   }
 
-  function handleFiles(
+  async function handleFiles(
     files: FileList | File[],
-    meta?: { clientName?: string; owner?: string; deadline?: string },
+    meta?: { clientName?: string; deadline?: string },
   ) {
     const allowed = [
       "application/pdf",
@@ -2601,29 +2607,29 @@ export function PresalesWorkflow() {
       const id = genId();
       const entry = newEntry(id, file.name);
       if (meta?.clientName) entry.clientName = meta.clientName;
-      if (meta?.owner) entry.owner = meta.owner;
+      entry.owner = currentUserName;
       if (meta?.deadline) entry.deadline = meta.deadline;
-      pendingFilesRef.current.set(id, file);
       setAos(prev => [entry, ...prev]);
       setSelectedId(id);
       setViewStep(1);
+      try {
+        await createDossier(id, file, entry as unknown as Record<string, unknown>);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        setAos(prev => prev.map(a => a.id === id
+          ? { ...a, status: "error", errorMessage: `Échec de l'enregistrement du dossier : ${msg}` }
+          : a));
+      }
     }
   }
 
   // force=true : relance une analyse fraîche (ignore le cache disque backend) —
-  // utilisé par le bouton « Refaire l'analyse ». Le fichier est conservé en mémoire
-  // (pendingFilesRef) tant que le dossier n'est pas supprimé, pour permettre le rejeu.
+  // utilisé par le bouton « Refaire l'analyse ». Le fichier est lu depuis le disque
+  // serveur (dossier persisté), donc rejouable à tout moment, même après reload.
   async function startAnalysis(id: string, force = false) {
-    const file = pendingFilesRef.current.get(id);
-    if (!file) {
-      setAos(prev => prev.map(a => a.id === id
-        ? { ...a, status: "error", errorMessage: "Fichier non disponible — supprimez cette entrée et re-déposez le fichier." }
-        : a));
-      return;
-    }
     setAos(prev => prev.map(a => a.id === id ? { ...a, status: "scoring", errorMessage: undefined } : a));
     try {
-      const result = await scoreAO(file, force);
+      const result = await analyzeDossier(id, force);
       setAos(prev => prev.map(a => a.id === id ? { ...a, status: "scored", scoringResult: result } : a));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -2643,12 +2649,14 @@ export function PresalesWorkflow() {
   }
 
   function removeAO(id: string) {
-    pendingFilesRef.current.delete(id);
+    const timer = patchTimerRef.current.get(id);
+    if (timer) clearTimeout(timer);
+    patchTimerRef.current.delete(id);
+    pendingPatchRef.current.delete(id);
     setAos(prev => prev.filter(a => a.id !== id));
     if (selectedId === id) setSelectedId(null);
-    if (aos.filter(a => a.id !== id).length === 0) {
-      localStorage.removeItem(getStorageKey());
-    }
+    // 404 toléré côté deleteDossier() : couvre aussi le dossier démo (jamais persisté).
+    deleteDossier(id).catch(e => console.error("Suppression du dossier échouée:", e));
   }
 
   function openDossier(id: string) {
@@ -2656,6 +2664,8 @@ export function PresalesWorkflow() {
     setPageView("workflow");
   }
 
+  // Dossier de démonstration — local uniquement (pas de fichier réel à persister
+  // côté backend), disparaît donc au rechargement de page. C'est intentionnel.
   function loadDemo() {
     if (demoLoaded.current) return;
     demoLoaded.current = true;
@@ -2744,6 +2754,19 @@ export function PresalesWorkflow() {
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
     }, 500);
+  }
+
+  async function handleDownloadOriginal(ao: AOEntry) {
+    setDownloadingOriginalId(ao.id);
+    setHomeDownloadError(null);
+    try {
+      const blob = await downloadDossierFile(ao.id);
+      triggerDownload(blob, ao.filename);
+    } catch (e) {
+      setHomeDownloadError(e instanceof Error ? e.message : "Téléchargement du fichier impossible.");
+    } finally {
+      setDownloadingOriginalId(null);
+    }
   }
 
   async function handleExportAnalysis(aoId: string) {
@@ -2929,6 +2952,14 @@ export function PresalesWorkflow() {
               )}
             </div>
 
+            {homeDownloadError && (
+              <div className="mb-3 flex items-center gap-2 px-4 py-2.5 bg-bad/10 border border-bad/35 rounded-xl text-sm text-bad">
+                <XCircle size={15} className="shrink-0 text-bad" />
+                <span className="flex-1">{homeDownloadError}</span>
+                <button onClick={() => setHomeDownloadError(null)} className="text-bad hover:text-bad text-xs shrink-0">✕</button>
+              </div>
+            )}
+
             {/* Filtre par étape */}
             {aos.length > 0 && (
               <div className="flex items-center gap-1.5 flex-wrap mb-3">
@@ -2954,7 +2985,12 @@ export function PresalesWorkflow() {
 
             {/* Tableau */}
             <div className="rounded-2xl border border-line bg-panel overflow-hidden">
-              {aos.length === 0 ? (
+              {loadingDossiers ? (
+                <div className="py-16 text-center">
+                  <Loader2 size={24} className="animate-spin text-muted mx-auto mb-3" />
+                  <p className="text-sm text-muted">Chargement des dossiers…</p>
+                </div>
+              ) : aos.length === 0 ? (
                 <div className="py-16 text-center">
                   <FileText size={30} className="text-line mx-auto mb-3" />
                   <p className="text-sm font-semibold text-muted">Aucun dossier pour l&apos;instant</p>
@@ -2986,22 +3022,61 @@ export function PresalesWorkflow() {
                         key={ao.id}
                         className="grid grid-cols-[1.6fr_1fr_1fr_0.9fr_1.1fr_1fr_120px] gap-3 items-center px-5 py-3.5 border-b border-line last:border-0 hover:bg-panel-2/60 transition group"
                       >
-                        <div className="min-w-0">
-                          <p className="text-[13px] font-semibold text-text truncate">{ao.filename}</p>
-                          {montant && (
-                            <p className="text-[11.5px] text-muted truncate mt-0.5">{montant}</p>
-                          )}
+                        <div className="min-w-0 flex items-start gap-2">
+                          <button
+                            onClick={() => handleDownloadOriginal(ao)}
+                            disabled={downloadingOriginalId === ao.id}
+                            className="mt-0.5 shrink-0 text-muted hover:text-ai disabled:opacity-50 transition"
+                            title="Télécharger le fichier déposé"
+                          >
+                            {downloadingOriginalId === ao.id
+                              ? <Loader2 size={14} className="animate-spin" />
+                              : <Download size={14} />}
+                          </button>
+                          <div className="min-w-0">
+                            <p className="text-[13px] font-semibold text-text truncate">{ao.filename}</p>
+                            {montant && (
+                              <p className="text-[11.5px] text-muted truncate mt-0.5">{montant}</p>
+                            )}
+                          </div>
                         </div>
-                        <div className="text-[12.5px] text-text truncate">
-                          {ao.clientName || <span className="text-muted">Non renseigné</span>}
-                        </div>
-                        <div className="text-[12.5px] text-text truncate">
-                          {ao.owner || <span className="text-muted">—</span>}
-                        </div>
-                        <div className="text-[12px] font-mono text-muted flex items-center gap-1 min-w-0">
-                          <CalendarDays size={11} className="text-line shrink-0" />
-                          <span className="truncate">{dossierEcheance(ao)}</span>
-                        </div>
+                        {editingRowId === ao.id ? (
+                          <input
+                            value={ao.clientName}
+                            onChange={e => updateAO(ao.id, { clientName: e.target.value })}
+                            placeholder="Nom du client"
+                            className="w-full text-[12.5px] text-text bg-panel border border-line rounded-lg px-2 py-1 focus:outline-none focus:border-ai"
+                          />
+                        ) : (
+                          <div className="text-[12.5px] text-text truncate">
+                            {ao.clientName || <span className="text-muted">Non renseigné</span>}
+                          </div>
+                        )}
+                        {editingRowId === ao.id ? (
+                          <input
+                            value={ao.owner}
+                            onChange={e => updateAO(ao.id, { owner: e.target.value })}
+                            placeholder="Saisi par"
+                            className="w-full text-[12.5px] text-text bg-panel border border-line rounded-lg px-2 py-1 focus:outline-none focus:border-ai"
+                          />
+                        ) : (
+                          <div className="text-[12.5px] text-text truncate">
+                            {ao.owner || <span className="text-muted">—</span>}
+                          </div>
+                        )}
+                        {editingRowId === ao.id ? (
+                          <input
+                            type="date"
+                            value={ao.deadline}
+                            onChange={e => updateAO(ao.id, { deadline: e.target.value })}
+                            className="w-full text-[12px] font-mono text-text bg-panel border border-line rounded-lg px-2 py-1 focus:outline-none focus:border-ai"
+                          />
+                        ) : (
+                          <div className="text-[12px] font-mono text-muted flex items-center gap-1 min-w-0">
+                            <CalendarDays size={11} className="text-line shrink-0" />
+                            <span className="truncate">{dossierEcheance(ao)}</span>
+                          </div>
+                        )}
                         <div>
                           <span className={cn("inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-full font-medium", st.cls)}>
                             {ao.status === "scoring" && <Loader2 size={10} className="animate-spin" />}
@@ -3021,6 +3096,23 @@ export function PresalesWorkflow() {
                           <span className="text-[11px] font-mono text-muted tabular-nums w-9 text-right">{prog}%</span>
                         </div>
                         <div className="flex items-center justify-end gap-1">
+                          {editingRowId === ao.id ? (
+                            <button
+                              onClick={() => setEditingRowId(null)}
+                              className="inline-flex items-center gap-1 text-[11.5px] px-2.5 py-1.5 rounded-lg bg-good text-white hover:brightness-110 transition font-medium"
+                              title="Terminer la modification"
+                            >
+                              <Check size={13} />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => setEditingRowId(ao.id)}
+                              className="opacity-0 group-hover:opacity-100 p-1.5 text-line hover:text-ai transition"
+                              title="Modifier client / saisi par / échéance"
+                            >
+                              <Pencil size={13} />
+                            </button>
+                          )}
                           <button
                             onClick={() => openDossier(ao.id)}
                             className="inline-flex items-center gap-1 text-[11.5px] px-3 py-1.5 rounded-lg bg-ai text-white hover:brightness-110 transition font-medium"
@@ -3091,24 +3183,14 @@ export function PresalesWorkflow() {
                 />
               </div>
               <div>
-                <div className="mb-1.5 text-[11px] text-muted">Saisi par</div>
+                <div className="mb-1.5 text-[11px] text-muted">Date d&apos;échéance</div>
                 <input
-                  value={newOwner}
-                  onChange={e => setNewOwner(e.target.value)}
-                  placeholder="Nom de la personne"
+                  type="date"
+                  value={newDeadline}
+                  onChange={e => setNewDeadline(e.target.value)}
                   className="w-full rounded-[9px] border border-line bg-panel px-2.5 py-2 text-[13px] text-text focus:border-ai focus:outline-none"
                 />
               </div>
-            </div>
-
-            <div>
-              <div className="mb-1.5 text-[11px] text-muted">Date d&apos;échéance</div>
-              <input
-                type="date"
-                value={newDeadline}
-                onChange={e => setNewDeadline(e.target.value)}
-                className="w-full sm:w-60 rounded-[9px] border border-line bg-panel px-2.5 py-2 text-[13px] text-text focus:border-ai focus:outline-none"
-              />
             </div>
 
             <div
@@ -3124,9 +3206,9 @@ export function PresalesWorkflow() {
               onDrop={e => {
                 e.preventDefault();
                 setDragOver(false);
-                handleFiles(e.dataTransfer.files, { clientName: newClientName.trim(), owner: newOwner.trim(), deadline: newDeadline });
+                handleFiles(e.dataTransfer.files, { clientName: newClientName.trim(), deadline: newDeadline });
                 setShowAddModal(false);
-                setNewClientName(""); setNewOwner(""); setNewDeadline("");
+                setNewClientName(""); setNewDeadline("");
               }}
             >
               <div className="w-14 h-14 rounded-xl bg-[#ececee] flex items-center justify-center mx-auto mb-3">
@@ -3150,9 +3232,9 @@ export function PresalesWorkflow() {
                 className="hidden"
                 onChange={e => {
                   if (e.target.files && e.target.files.length) {
-                    handleFiles(e.target.files, { clientName: newClientName.trim(), owner: newOwner.trim(), deadline: newDeadline });
+                    handleFiles(e.target.files, { clientName: newClientName.trim(), deadline: newDeadline });
                     setShowAddModal(false);
-                    setNewClientName(""); setNewOwner(""); setNewDeadline("");
+                    setNewClientName(""); setNewDeadline("");
                   }
                 }}
               />

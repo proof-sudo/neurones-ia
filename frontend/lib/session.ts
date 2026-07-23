@@ -18,6 +18,8 @@ function isRole(value: string | undefined): value is Role {
 export interface Session {
   role: Role;
   allowedViews: string[] | null;
+  fullName: string;
+  email: string;
 }
 
 /**
@@ -44,18 +46,20 @@ export const getSession = cache(async (): Promise<Session | null> => {
       cache: "no-store",
     });
     if (!res.ok) return null; // token expiré / compte désactivé → reconnexion
-    const me = (await res.json()) as { role?: string; allowed_views?: string[] | null };
+    const me = (await res.json()) as {
+      role?: string; allowed_views?: string[] | null; full_name?: string; email?: string;
+    };
     if (!isRole(me.role)) return null;
     // allowed_views absent (backend antérieur) → repli matrice statique
     const views =
       me.allowed_views !== undefined ? me.allowed_views : staticViews(me.role);
-    return { role: me.role, allowedViews: views };
+    return { role: me.role, allowedViews: views, fullName: me.full_name ?? "", email: me.email ?? "" };
   } catch {
     // Backend momentanément injoignable : repli sur le rôle posé à la connexion
     const store = await cookies();
     const value = store.get(ROLE_COOKIE)?.value;
     if (!isRole(value)) return null;
-    return { role: value, allowedViews: staticViews(value) };
+    return { role: value, allowedViews: staticViews(value), fullName: "", email: "" };
   }
 });
 

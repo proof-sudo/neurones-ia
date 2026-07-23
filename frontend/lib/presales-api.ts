@@ -254,6 +254,99 @@ export async function scoreAO(file: File, force = false): Promise<ScoringResult>
   return data as ScoringResult;
 }
 
+// ── Dossiers persistés (fichier + état complet du workflow) ──────────────────
+//
+// Avant : le fichier AO et tout l'état du workflow ne vivaient qu'en mémoire
+// navigateur (localStorage + File en RAM) → après un rechargement de page,
+// « refaire une étape » échouait faute de fichier. Le backend persiste
+// désormais le fichier ET l'état complet — ces fonctions remplacent
+// localStorage comme source de vérité. `state` est volontairement `unknown` /
+// générique côté API : c'est PresalesWorkflow.tsx qui connaît la forme AOEntry.
+
+/** Crée un dossier persisté : upload du fichier + état initial (AOEntry). */
+export async function createDossier(
+  dossierId: string, file: File, initialState: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const form = new FormData();
+  form.append("file", file);
+  form.append("dossier_id", dossierId);
+  form.append("state", JSON.stringify(initialState));
+  const r = await apiFetch(`${API_BASE}/presales/dossiers`, { method: "POST", body: form }, 60_000);
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({})) as { detail?: string };
+    throw new Error(e.detail ?? `Erreur création du dossier (${r.status})`);
+  }
+  return r.json();
+}
+
+/** Historique complet des dossiers présale (remplace localStorage au chargement). */
+export async function listDossiers(): Promise<Record<string, unknown>[]> {
+  const r = await apiFetch(`${API_BASE}/presales/dossiers`, {}, 30_000);
+  if (!r.ok) throw new Error(`Erreur chargement des dossiers (${r.status})`);
+  return r.json();
+}
+
+/** Fusionne un patch partiel (mêmes clés que l'objet AOEntry) dans l'état persisté. */
+export async function patchDossier(
+  dossierId: string, changes: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const r = await apiFetch(`${API_BASE}/presales/dossiers/${dossierId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(changes),
+  }, 30_000);
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({})) as { detail?: string };
+    throw new Error(e.detail ?? `Erreur mise à jour du dossier (${r.status})`);
+  }
+  return r.json();
+}
+
+/** Télécharge le fichier AO original tel qu'uploadé (bouton téléchargement de l'historique). */
+export async function downloadDossierFile(dossierId: string): Promise<Blob> {
+  const r = await apiFetch(`${API_BASE}/presales/dossiers/${dossierId}/file`, {}, 60_000);
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({})) as { detail?: string };
+    throw new Error(e.detail ?? `Erreur téléchargement du fichier (${r.status})`);
+  }
+  return r.blob();
+}
+
+/** Supprime un dossier (base + fichier serveur). */
+export async function deleteDossier(dossierId: string): Promise<void> {
+  const r = await apiFetch(`${API_BASE}/presales/dossiers/${dossierId}`, { method: "DELETE" }, 30_000);
+  if (!r.ok && r.status !== 404) throw new Error(`Erreur suppression du dossier (${r.status})`);
+}
+
+/** (Re)lance le scoring sur le fichier PERSISTÉ du dossier — plus besoin de File en mémoire. */
+export async function analyzeDossier(dossierId: string, force = false): Promise<ScoringResult> {
+  const url = `${API_BASE}/presales/dossiers/${dossierId}/analyze${force ? "?force=true" : ""}`;
+  let response: Response;
+  try {
+    response = await fetch(url, { method: "POST" });
+  } catch (e) {
+    const name = (e != null && typeof e === "object" && "name" in e) ? (e as { name: unknown }).name : "";
+    const msg = String(e instanceof Error ? e.message : e);
+    if (name === "AbortError" || msg.toLowerCase().includes("abort")) {
+      throw new Error("Analyse annulée — connexion interrompue.");
+    }
+    throw new Error("Serveur inaccessible — vérifiez que le backend est démarré.");
+  }
+  if (response.status === 401) {
+    window.location.replace("/");
+    throw new Error("Session expirée — reconnexion en cours…");
+  }
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({})) as Record<string, string>;
+    throw new Error((error as { detail?: string }).detail ?? `Erreur serveur ${response.status}`);
+  }
+  const data = await response.json() as ScoringResult & { __error__?: number; detail?: string };
+  if (data && typeof data.__error__ === "number") {
+    throw new Error(data.detail ?? `Erreur serveur ${data.__error__}`);
+  }
+  return data as ScoringResult;
+}
+
 // ── Matrice de conformité ─────────────────────────────────────────────────────
 
 export interface ConformityExigence {

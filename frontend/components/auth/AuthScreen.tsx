@@ -21,7 +21,9 @@ export function AuthScreen({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   // Modale « Sales IA vous attend » : profil connecté + rôle réel renvoyé par le serveur
-  const [welcome, setWelcome] = useState<{ profile: Profile; role: Role } | null>(null);
+  const [welcome, setWelcome] = useState<
+    { profile: Profile; role: Role; briefingHeadline: string | null } | null
+  >(null);
 
   async function submitAuth() {
     if (!email.trim() || !password.trim()) {
@@ -40,7 +42,7 @@ export function AuthScreen({
       return;
     }
     const profile = profiles.find((p) => p.role === result.role) ?? profiles[0];
-    setWelcome({ profile, role: result.role });
+    setWelcome({ profile, role: result.role, briefingHeadline: result.briefingHeadline ?? null });
   }
 
   async function enterCockpit() {
@@ -131,8 +133,8 @@ export function AuthScreen({
               préparé pour vous aujourd&apos;hui :
             </div>
             <div className="mb-4 rounded-xl border border-line border-l-[3px] border-l-ai bg-panel p-3 text-[12.5px] text-muted">
-              Aucun signal prioritaire particulier détecté pour ce profil pour l&apos;instant — votre
-              espace est prêt.
+              {welcome.briefingHeadline ??
+                "Aucun signal prioritaire particulier détecté pour ce profil pour l'instant — votre espace est prêt."}
             </div>
             <button
               onClick={enterCockpit}
