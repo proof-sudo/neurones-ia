@@ -162,9 +162,29 @@ class LocalCRMAdapter(CRMRepository):
             if not row:
                 return None
             o, c = row
+
+            invoices: list[dict] = []
+            invoice_odoo_ids = o.invoice_ids or []
+            if invoice_odoo_ids:
+                inv_result = await session.execute(
+                    select(InvoiceModel).where(InvoiceModel.odoo_id.in_(invoice_odoo_ids))
+                )
+                invoices = [
+                    {
+                        "name": inv.invoice_name or inv.invoice_id,
+                        "amount": inv.amount,
+                        "status": inv.status,
+                        "date": inv.invoice_date.strftime("%d/%m/%Y") if inv.invoice_date else "—",
+                    }
+                    for inv in inv_result.scalars().all()
+                ]
+
             return {
                 "name": o.name,
                 "client_name": c.name if c else "—",
+                "client_email": c.contact_email if c else None,
+                "client_phone": c.phone if c else None,
+                "client_city": c.city if c else None,
                 "amount": o.amount,
                 "currency": o.currency,
                 "date_order": o.date_order.strftime("%d/%m/%Y") if o.date_order else "—",
@@ -172,6 +192,7 @@ class LocalCRMAdapter(CRMRepository):
                 "salesperson": o.salesperson_name or "",
                 "dossier": o.dossier_id or "",
                 "lines": o.order_lines or [],
+                "invoices": invoices,
             }
 
     async def get_aggregate_stats(self) -> dict:

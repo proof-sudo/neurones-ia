@@ -23,8 +23,10 @@ interface LoginApiResponse {
 }
 
 export type LoginResult =
-  /** `home` = première vue autorisée (matrice dynamique du backend) */
-  | { ok: true; role: Role; home: string }
+  /** `home` = première vue autorisée (matrice dynamique du backend) ;
+   *  `briefingHeadline` = résumé en une phrase du briefing IA du jour
+   *  (absent hors étape 1, `null` si indisponible pour ce rôle). */
+  | { ok: true; role: Role; home: string; briefingHeadline?: string | null }
   | { ok: false; error: string };
 
 const BACKEND_DOWN =
@@ -64,15 +66,55 @@ async function loginResultFrom(res: Response | null): Promise<LoginResult> {
   return { ok: true, role, home: firstAllowedFrom(data.user.allowed_views) };
 }
 
+/** Coupe un texte à la première phrase (résumé en une ligne pour la modale de bienvenue). */
+function firstSentence(text: string): string {
+  const trimmed = text.trim();
+  const idx = trimmed.indexOf(". ");
+  if (idx === -1) return trimmed.endsWith(".") ? trimmed : `${trimmed}.`;
+  return trimmed.slice(0, idx + 1);
+}
+
+interface BriefingApiResponse {
+  section: { analysis: string } | null;
+}
+
+/**
+ * Résumé en une phrase du briefing IA du jour, pour le rôle du token fourni.
+ * Utilise le token obtenu à l'étape 1 (aucun cookie posé) — jamais persisté.
+ */
+async function fetchBriefingHeadline(token: string): Promise<string | null> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/v1/briefing`, {
+      headers: { Authorization: `Bearer ${token}` },
+      cache: "no-store",
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as BriefingApiResponse;
+    const text = data.section?.analysis?.trim();
+    return text ? firstSentence(text) : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Étape 1 — vérifie les identifiants SANS poser de cookie (pas de refresh
- * du routeur → la modale « Sales IA vous attend » peut s'afficher).
+ * du routeur → la modale « Sales IA vous attend » peut s'afficher). En
+ * profite pour lire le résumé du briefing du jour (rôle réel du compte).
  */
 export async function verifyCredentials(
   email: string,
   password: string,
 ): Promise<LoginResult> {
-  return loginResultFrom(await callLogin(email, password));
+  const res = await callLogin(email, password);
+  if (res === null || !res.ok) return loginResultFrom(res);
+
+  const data = (await res.clone().json()) as LoginApiResponse;
+  const result = await loginResultFrom(res);
+  if (!result.ok) return result;
+
+  const briefingHeadline = await fetchBriefingHeadline(data.access_token);
+  return { ...result, briefingHeadline };
 }
 
 /**
@@ -257,7 +299,7 @@ export async function generateClientDecisionAction(
   }
 }
 
-// ---------- Dashboard : projection IA à la demande ----------
+// ---------- Dashboard : analyse automatique de la courbe CA affichée ----------
 
 export type DashboardAnalysisActionResult =
   | { ok: true; analysis: string }
@@ -267,12 +309,20 @@ interface DashboardAnalysisResponse {
   analysis: string;
 }
 
-/** Projection & recommandation du cockpit (Claude, sur les KPIs réels). */
-export async function generateDashboardAnalysisAction(): Promise<DashboardAnalysisActionResult> {
+/**
+ * Analyse la courbe CA réellement affichée (mois + valeurs déjà calculés
+ * côté client selon le filtre de période actif) — Claude commente la
+ * tendance de CETTE courbe précise, jamais recalculée côté serveur.
+ */
+export async function generateDashboardAnalysisAction(
+  months: string[],
+  valuesMFcfa: number[],
+): Promise<DashboardAnalysisActionResult> {
   const { backendFetch, BackendError } = await import("@/lib/backend");
   try {
     const data = await backendFetch<DashboardAnalysisResponse>("/v1/dashboard/analysis", {
       method: "POST",
+      body: JSON.stringify({ months, values_m_fcfa: valuesMFcfa }),
     });
     return { ok: true, analysis: data.analysis };
   } catch (e) {

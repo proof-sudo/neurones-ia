@@ -44,6 +44,8 @@ async def init_db():
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await conn.run_sync(_migrate_veille_entries)
+        await conn.run_sync(_migrate_sale_orders)
+        await conn.run_sync(_migrate_opportunities)
 
 
 # Colonnes IA S2I ajoutées après coup au Watch-Tracker. `create_all` ne modifie
@@ -75,6 +77,46 @@ def _migrate_veille_entries(sync_conn):
                 f"ALTER TABLE veille_entries ADD COLUMN {name} {ddl}"
             )
             logger.info("Migration veille_entries : colonne '%s' ajoutée", name)
+
+
+# Lien commande → factures (sale.order.invoice_ids), ajouté après coup pour
+# rattacher les factures réelles à leur bon de commande d'origine.
+_SALE_ORDER_NEW_COLUMNS = {
+    "invoice_ids": "JSON NOT NULL DEFAULT '[]'",
+}
+
+
+def _migrate_sale_orders(sync_conn):
+    inspector = inspect(sync_conn)
+    if "sale_orders" not in inspector.get_table_names():
+        return
+    existing = {c["name"] for c in inspector.get_columns("sale_orders")}
+    for name, ddl in _SALE_ORDER_NEW_COLUMNS.items():
+        if name not in existing:
+            sync_conn.exec_driver_sql(
+                f"ALTER TABLE sale_orders ADD COLUMN {name} {ddl}"
+            )
+            logger.info("Migration sale_orders : colonne '%s' ajoutée", name)
+
+
+# Lien opportunité → bons de commande générés (crm.lead.order_ids), pour
+# tracer quelle vente a réellement découlé de quelle opportunité du pipeline.
+_OPPORTUNITY_NEW_COLUMNS = {
+    "order_ids": "JSON NOT NULL DEFAULT '[]'",
+}
+
+
+def _migrate_opportunities(sync_conn):
+    inspector = inspect(sync_conn)
+    if "opportunities" not in inspector.get_table_names():
+        return
+    existing = {c["name"] for c in inspector.get_columns("opportunities")}
+    for name, ddl in _OPPORTUNITY_NEW_COLUMNS.items():
+        if name not in existing:
+            sync_conn.exec_driver_sql(
+                f"ALTER TABLE opportunities ADD COLUMN {name} {ddl}"
+            )
+            logger.info("Migration opportunities : colonne '%s' ajoutée", name)
 
 
 async def get_session() -> AsyncSession:

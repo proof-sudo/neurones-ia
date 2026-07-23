@@ -277,7 +277,7 @@ class OdooAdapter(CRMRepository):
                 "sale.order", "search_read",
                 [[["name", "=", ref]]],
                 {"fields": ["id", "name", "partner_id", "amount_total", "currency_id",
-                            "date_order", "state", "user_id", "dossier_id"], "limit": 1},
+                            "date_order", "state", "user_id", "dossier_id", "invoice_ids"], "limit": 1},
             )
         except RuntimeError as e:
             if "dossier_id" in str(e):
@@ -285,7 +285,7 @@ class OdooAdapter(CRMRepository):
                     "sale.order", "search_read",
                     [[["name", "=", ref]]],
                     {"fields": ["id", "name", "partner_id", "amount_total", "currency_id",
-                                "date_order", "state", "user_id"], "limit": 1},
+                                "date_order", "state", "user_id", "invoice_ids"], "limit": 1},
                 )
             else:
                 raise
@@ -293,6 +293,7 @@ class OdooAdapter(CRMRepository):
             return None
         r = records[0]
         lines = await self.get_order_lines_by_ids([r["id"]])
+        invoices = await self._get_invoices_by_ids(r.get("invoice_ids") or [])
         return {
             "name": r["name"],
             "client_name": (r.get("partner_id") or [None, "—"])[1],
@@ -303,7 +304,30 @@ class OdooAdapter(CRMRepository):
             "salesperson": (r.get("user_id") or [None, ""])[1] or "",
             "dossier": (r.get("dossier_id") or [None, ""])[1] or "",
             "lines": lines.get(r["id"], []),
+            "invoices": invoices,
         }
+
+    async def _get_invoices_by_ids(self, invoice_ids: list[int]) -> list[dict]:
+        """Détail minimal des factures (account.move) liées à un bon de commande."""
+        if not invoice_ids:
+            return []
+        try:
+            records = await self._call(
+                "account.move", "read", [invoice_ids],
+                {"fields": ["name", "amount_total", "payment_state", "invoice_date"]},
+            )
+        except Exception as e:
+            logger.warning("Impossible de récupérer les factures liées (%s) : %s", invoice_ids, e)
+            return []
+        return [
+            {
+                "name": inv.get("name") or "",
+                "amount": float(inv.get("amount_total", 0)),
+                "status": inv.get("payment_state") or "",
+                "date": (inv.get("invoice_date") or "")[:10],
+            }
+            for inv in records
+        ]
 
     async def get_payment_dates(self, since: datetime | None = None) -> dict[str, datetime]:
         """
@@ -349,7 +373,7 @@ class OdooAdapter(CRMRepository):
         return result
 
     async def get_order_lines_by_ids(self, order_ids: list[int]) -> dict[int, list]:
-        """Retourne {odoo_order_id: [{product, qty, subtotal, unit_price}]}."""
+        """Retourne {odoo_order_id: [{product, product_code, product_category, qty, subtotal, unit_price}]}."""
         if not order_ids:
             return {}
         # Tente d'abord avec price_unit (disponible en standard Odoo)
@@ -373,17 +397,45 @@ class OdooAdapter(CRMRepository):
             except Exception as e:
                 logger.warning("Impossible de récupérer les lignes de commande : %s", e)
                 return {}
+
+        # Référence article (default_code) + catégorie, en un seul appel batché sur
+        # les produits distincts — pour retrouver le catalogue réel (cross-sell, GED…).
+        product_ids = sorted({
+            (line.get("product_id") or [None])[0]
+            for line in lines if line.get("product_id")
+        })
+        product_meta: dict[int, dict] = {}
+        if product_ids:
+            try:
+                products = await self._call(
+                    "product.product", "read", [product_ids],
+                    {"fields": ["default_code", "categ_id"]},
+                )
+                product_meta = {
+                    p["id"]: {
+                        "code": p.get("default_code") or None,
+                        "category": (p.get("categ_id") or [None, None])[1],
+                    }
+                    for p in products
+                }
+            except Exception as e:
+                logger.warning("Impossible de récupérer référence/catégorie produit : %s", e)
+
         result: dict[int, list] = {}
         for line in lines:
             oid = (line.get("order_id") or [None])[0]
             if not oid:
                 continue
+            pid = (line.get("product_id") or [None])[0]
             product_name = (line.get("product_id") or [None, ""])[1] or line.get("name", "")
+            meta = product_meta.get(pid, {})
             qty = float(line.get("product_uom_qty", 0))
             subtotal = float(line.get("price_subtotal", 0))
             unit_price = float(line.get("price_unit", 0)) if "price_unit" in line else None
             result.setdefault(oid, []).append({
                 "product": product_name,
+                "product_code": meta.get("code"),
+                "product_category": meta.get("category"),
                 "qty": qty,
                 "subtotal": subtotal,
                 "unit_price": unit_price,
@@ -397,9 +449,9 @@ class OdooAdapter(CRMRepository):
         if since:
             domain.append(["write_date", ">=", since.strftime("%Y-%m-%d %H:%M:%S")])
         fields_with_dossier = ["id", "name", "partner_id", "amount_total",
-                               "currency_id", "date_order", "state", "user_id", "dossier_id"]
+                               "currency_id", "date_order", "state", "user_id", "dossier_id", "invoice_ids"]
         fields_without_dossier = ["id", "name", "partner_id", "amount_total",
-                                  "currency_id", "date_order", "state", "user_id"]
+                                  "currency_id", "date_order", "state", "user_id", "invoice_ids"]
         try:
             records = await self._call(
                 "sale.order", "search_read", [domain],

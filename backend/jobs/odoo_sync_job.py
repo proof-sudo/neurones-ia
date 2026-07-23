@@ -179,7 +179,7 @@ async def _sync_sale_orders_by_ids(odoo: OdooAdapter, ids: list[int]):
             "sale.order", "search_read",
             [[["id", "in", ids]]],
             {"fields": ["id", "name", "partner_id", "amount_total",
-                        "currency_id", "date_order", "state", "user_id", "dossier_id"]},
+                        "currency_id", "date_order", "state", "user_id", "dossier_id", "invoice_ids"]},
         )
     except RuntimeError as e:
         if "dossier_id" in str(e):
@@ -187,7 +187,7 @@ async def _sync_sale_orders_by_ids(odoo: OdooAdapter, ids: list[int]):
                 "sale.order", "search_read",
                 [[["id", "in", ids]]],
                 {"fields": ["id", "name", "partner_id", "amount_total",
-                            "currency_id", "date_order", "state", "user_id"]},
+                            "currency_id", "date_order", "state", "user_id", "invoice_ids"]},
             )
         else:
             raise
@@ -200,6 +200,7 @@ async def _sync_sale_orders_by_ids(odoo: OdooAdapter, ids: list[int]):
             salesperson = _get_odoo_name(so.get("user_id"))
             dossier = _get_odoo_name(so.get("dossier_id")) or None
             lines = lines_by_order.get(so["id"], [])
+            invoice_ids = so.get("invoice_ids") or []
             currency = _get_odoo_name(so.get("currency_id"), "XOF")
             amount_xof = _to_xof(float(so.get("amount_total", 0)), currency, rates)
             existing = await session.get(SaleOrderModel, order_id)
@@ -210,6 +211,7 @@ async def _sync_sale_orders_by_ids(odoo: OdooAdapter, ids: list[int]):
                 existing.salesperson_name = salesperson
                 existing.dossier_id = dossier
                 existing.order_lines = lines
+                existing.invoice_ids = invoice_ids
                 existing.synced_at = datetime.utcnow()
             else:
                 session.add(SaleOrderModel(
@@ -224,6 +226,7 @@ async def _sync_sale_orders_by_ids(odoo: OdooAdapter, ids: list[int]):
                     salesperson_name=salesperson,
                     dossier_id=dossier,
                     order_lines=lines,
+                    invoice_ids=invoice_ids,
                 ))
         await session.commit()
     logger.info("Webhook : %d bons de commande mis à jour", len(records))
@@ -454,6 +457,7 @@ async def run_odoo_sync(force_full: bool = False):
                 salesperson = _get_odoo_name(so.get("user_id"))
                 dossier = _get_odoo_name(so.get("dossier_id")) or None
                 lines = lines_by_order.get(so["id"], [])
+                invoice_ids = so.get("invoice_ids") or []
                 currency = _get_odoo_name(so.get("currency_id"), "XOF")
                 amount_xof = _to_xof(float(so.get("amount_total", 0)), currency, rates)
                 try:
@@ -478,6 +482,7 @@ async def run_odoo_sync(force_full: bool = False):
                     existing.salesperson_name = salesperson
                     existing.dossier_id = dossier
                     existing.order_lines = lines
+                    existing.invoice_ids = invoice_ids
                     existing.synced_at = sync_start
                 else:
                     session.add(SaleOrderModel(
@@ -492,6 +497,7 @@ async def run_odoo_sync(force_full: bool = False):
                         salesperson_name=salesperson,
                         dossier_id=dossier,
                         order_lines=lines,
+                        invoice_ids=invoice_ids,
                     ))
                     new_so += 1
             await session.commit()
@@ -550,7 +556,7 @@ async def run_odoo_sync(force_full: bool = False):
         try:
             _opp_domain = [["type", "=", "opportunity"]]
             _opp_fields = ["id", "name", "partner_id", "expected_revenue", "probability",
-                           "stage_id", "date_deadline", "user_id", "create_date"]
+                           "stage_id", "date_deadline", "user_id", "create_date", "order_ids"]
             total_opps = await odoo._call("crm.lead", "search_count", [_opp_domain], {})
             opportunities: list[dict] = []
             for offset in range(0, total_opps, 500):
@@ -568,6 +574,7 @@ async def run_odoo_sync(force_full: bool = False):
                     salesperson = _get_odoo_name(opp.get("user_id"))
                     deadline = _parse_date(opp.get("date_deadline"))
                     created_at = _parse_date(opp.get("create_date"))
+                    order_ids = opp.get("order_ids") or []
                     existing = await session.get(OpportunityModel, opp_id)
                     if existing:
                         existing.name = opp.get("name", "")
@@ -576,6 +583,7 @@ async def run_odoo_sync(force_full: bool = False):
                         existing.probability = float(opp.get("probability", 0))
                         existing.salesperson_name = salesperson
                         existing.deadline = deadline
+                        existing.order_ids = order_ids
                         existing.synced_at = sync_start
                     else:
                         session.add(OpportunityModel(
@@ -590,6 +598,7 @@ async def run_odoo_sync(force_full: bool = False):
                             salesperson_name=salesperson,
                             deadline=deadline,
                             created_at=created_at,
+                            order_ids=order_ids,
                         ))
                         new_opp += 1
                 await session.commit()

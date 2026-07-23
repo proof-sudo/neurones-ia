@@ -4,6 +4,7 @@ import json
 import logging
 import re
 import unicodedata
+import uuid
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
@@ -11,7 +12,7 @@ from urllib.parse import quote
 
 from config.settings import settings
 
-from fastapi import APIRouter, Request, UploadFile, File, HTTPException
+from fastapi import APIRouter, Request, UploadFile, File, Form, Body, HTTPException
 from fastapi.responses import Response, StreamingResponse
 
 from modules.uc10_presales.schemas import (
@@ -25,14 +26,9 @@ from modules.uc10_presales.schemas import (
     RequiredProfileSchema, EligibilityThresholdSchema, FinancialDataSchema,
     CapabilityDealSchema, CapabilityMatchSchema, ClientContextSchema,
     OfferSectionsSchema, OfferSectionsResponse, OfferRenderRequest,
-    TemplateCheckSchema, TemplateValidationSchema,
 )
 from modules.uc10_presales.use_case import PresalesUseCase
 from modules.uc10_presales.offer_generator import OfferGenerator
-from modules.uc10_presales.template_validator import (
-    TemplateValidation, validate_template, make_validation, validate_domain_template,
-)
-from modules.uc10_presales.template_contract import DEFAULT_DOMAIN
 from core.domain.offer import ScoringResult, BidStrategy, Partner, Appendix
 # Matrice de conformité : build_matrice / render_matrix_xlsx étaient UTILISÉS sans être
 # importés (NameError latent sur /export-matrix) → import explicite. + assesseur IA,
@@ -41,6 +37,7 @@ from modules.uc10_presales.requirements_builder import build_matrice
 from modules.uc10_presales.matrix_export import render_matrix_xlsx
 from modules.uc10_presales.conformity import assess_matrice
 from modules.uc10_presales import matrix_store
+from modules.uc10_presales import dossier_store
 from modules.uc10_presales.latency import prune_cache_dir, content_key
 
 # Checklist générique inférée (CI / marchés publics) — utilisée quand l'AO ne liste
@@ -194,6 +191,145 @@ async def score_ao(
     return StreamingResponse(_stream(), media_type="application/json")
 
 
+# ── Dossiers persistés (fichier + état complet du workflow) ──────────────────────
+#
+# Avant : le fichier AO et tout l'état (décision, stratégie, checklist...) ne
+# vivaient qu'en mémoire navigateur (localStorage + File en RAM) → après un
+# rechargement de page, « refaire une étape » échouait faute de fichier. Ici, le
+# fichier est écrit sur disque et l'état complet (forme `AOEntry` du frontend,
+# blob JSON opaque pour le backend) est répliqué en base à chaque changement.
+# Purge automatique : cf. `dossier_store.purge_expired` + job planifié.
+
+
+@router.post("/dossiers")
+async def create_dossier(
+    file: UploadFile = File(...),
+    state: str = Form(..., description="État initial AOEntry (JSON) — id/filename/clientName/owner/deadline/status inclus"),
+    dossier_id: str | None = Form(None),
+):
+    """Crée un dossier persisté : écrit le fichier AO sur disque + sauvegarde l'état initial.
+
+    Le frontend reste propriétaire du schéma `AOEntry` (id généré côté client, état initial
+    construit par `newEntry()`) — le backend ne fait que stocker et rejouer ce blob JSON.
+    """
+    if file.content_type not in _ALLOWED_TYPES and not file.filename.endswith((".pdf", ".docx")):
+        raise HTTPException(status_code=400, detail="Format non supporté. Utilisez PDF ou DOCX.")
+    file_bytes = await file.read()
+    if len(file_bytes) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Fichier trop volumineux (max 10 MB).")
+    try:
+        state_dict = json.loads(state)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="État initial invalide (JSON attendu).")
+
+    dossier_id = dossier_id or state_dict.get("id") or str(uuid.uuid4())
+    state_dict["id"] = dossier_id
+    file_path = dossier_store.save_file(dossier_id, file.filename, file_bytes)
+    saved = await dossier_store.create(dossier_id, file.filename, file_path, state_dict)
+    logger.info("Dossier présale créé — id=%s fichier=%s", dossier_id, file.filename)
+    return saved
+
+
+@router.get("/dossiers")
+async def list_dossiers():
+    """Historique complet des dossiers présale (page d'accueil du module)."""
+    return await dossier_store.list_all()
+
+
+@router.get("/dossiers/{dossier_id}")
+async def get_dossier(dossier_id: str):
+    state = await dossier_store.get(dossier_id)
+    if state is None:
+        raise HTTPException(status_code=404, detail="Dossier introuvable.")
+    return state
+
+
+@router.get("/dossiers/{dossier_id}/file")
+async def download_dossier_file(dossier_id: str):
+    """Télécharge le fichier AO original tel qu'uploadé (le bouton téléchargement de l'historique)."""
+    meta = await dossier_store.get_file_meta(dossier_id)
+    if meta is None:
+        raise HTTPException(status_code=404, detail="Dossier introuvable.")
+    file_path, filename = meta
+    file_bytes = dossier_store.read_file(file_path)
+    if file_bytes is None:
+        raise HTTPException(status_code=404, detail="Fichier source introuvable sur le serveur.")
+    media_type = _DOCX_MIME if filename.lower().endswith(".docx") else "application/pdf"
+    return Response(content=file_bytes, media_type=media_type, headers=_attachment_headers(filename))
+
+
+@router.patch("/dossiers/{dossier_id}")
+async def patch_dossier(dossier_id: str, changes: dict = Body(...)):
+    """Fusionne un patch partiel (mêmes clés que l'objet `AOEntry` frontend) dans l'état persisté."""
+    updated = await dossier_store.patch(dossier_id, changes)
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Dossier introuvable.")
+    return updated
+
+
+@router.delete("/dossiers/{dossier_id}")
+async def delete_dossier(dossier_id: str):
+    ok = await dossier_store.delete(dossier_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Dossier introuvable.")
+    return {"deleted": True}
+
+
+@router.post("/dossiers/{dossier_id}/analyze")
+async def analyze_dossier(dossier_id: str, request: Request, force: bool = False):
+    """(Re)lance le pipeline de scoring sur le fichier PERSISTÉ du dossier — c'est ce qui
+    permet de « refaire l'analyse » à tout moment, y compris après un rechargement de page
+    (plus besoin que le File soit encore en mémoire navigateur). Même contrat de streaming
+    (heartbeat + sentinelle d'erreur) que `/presales/score`."""
+    file_path = await dossier_store.get_file_path(dossier_id)
+    if file_path is None:
+        raise HTTPException(status_code=404, detail="Dossier introuvable.")
+    file_bytes = dossier_store.read_file(file_path)
+    if file_bytes is None:
+        await dossier_store.patch(dossier_id, {
+            "status": "error",
+            "errorMessage": "Fichier source introuvable sur le serveur — supprimez ce dossier et re-déposez le fichier.",
+        })
+        raise HTTPException(status_code=422, detail="Fichier source introuvable sur le serveur.")
+
+    current = await dossier_store.get(dossier_id)
+    filename = (current or {}).get("filename") or Path(file_path).name
+
+    await dossier_store.patch(dossier_id, {"status": "scoring", "errorMessage": None})
+    use_case = _get_use_case(request)
+
+    async def _stream():
+        task = asyncio.create_task(use_case.score_ao(filename=filename, file_bytes=file_bytes))
+        while not task.done():
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=_SCORE_HEARTBEAT_SECONDS)
+            except asyncio.TimeoutError:
+                yield b" "
+
+        try:
+            result = task.result()
+        except ValueError as e:
+            await dossier_store.patch(dossier_id, {"status": "error", "errorMessage": str(e)})
+            yield json.dumps({"__error__": 422, "detail": str(e)}, ensure_ascii=False).encode()
+            return
+        except Exception as e:
+            logger.exception("Erreur pipeline scoring AO (dossier %s)", dossier_id)
+            msg = f"Erreur analyse AO : {type(e).__name__}: {e}"
+            await dossier_store.patch(dossier_id, {"status": "error", "errorMessage": msg})
+            yield json.dumps({"__error__": 500, "detail": msg}, ensure_ascii=False).encode()
+            return
+
+        schema = _to_schema(result)
+        await dossier_store.patch(dossier_id, {
+            "status": "scored",
+            "scoringResult": schema.model_dump(mode="json"),
+            "errorMessage": None,
+        })
+        yield json.dumps(schema.model_dump(mode="json"), ensure_ascii=False).encode()
+
+    return StreamingResponse(_stream(), media_type="application/json")
+
+
 @router.post("/generate")
 async def generate_offer(body: OfferGenerationRequest, request: Request):
     """Génère une offre technique Word à partir du résultat de scoring."""
@@ -275,47 +411,6 @@ async def offer_render(body: OfferRenderRequest, request: Request):
         media_type=_DOCX_MIME,
         headers=_attachment_headers(draft.filename),
     )
-
-
-def _validation_to_schema(v: TemplateValidation) -> TemplateValidationSchema:
-    return TemplateValidationSchema(
-        ok=v.ok, domain=v.domain, template_path=v.template_path,
-        errors=v.errors, warnings=v.warnings,
-        checks=[
-            TemplateCheckSchema(label=c.label, ok=c.ok, detail=c.detail, severity=c.severity)
-            for c in v.checks
-        ],
-    )
-
-
-@router.post("/template/validate", response_model=TemplateValidationSchema)
-async def validate_offer_template(
-    domain: str = DEFAULT_DOMAIN,
-    file: UploadFile | None = File(None),
-):
-    """Vérifie qu'un template .docx d'offre respecte le contrat attendu par le générateur.
-
-    - **Sans fichier** : valide le template présent dans la GED pour `domain`.
-    - **Avec fichier .docx** : valide le fichier uploadé (préflight, avant dépôt en GED).
-
-    Renvoie un rapport ✅/❌ par exigence (ancres de titres, noms legacy, tableaux,
-    phases du planning) + le détail de ce qu'il faut corriger dans le .docx. `ok=false`
-    dès qu'une exigence de sévérité « error » échoue (les « warning » n'invalident pas).
-    """
-    if file is not None:
-        if not (file.filename or "").lower().endswith(".docx"):
-            raise HTTPException(status_code=400, detail="Le template doit être un fichier .docx.")
-        data = await file.read()
-        if len(data) > 10 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="Fichier trop volumineux (max 10 MB).")
-        try:
-            checks = validate_template(BytesIO(data))
-        except Exception as exc:
-            raise HTTPException(status_code=422, detail=f".docx illisible : {type(exc).__name__}: {exc}")
-        result = make_validation(domain=domain, template_path=file.filename, checks=checks)
-    else:
-        result = validate_domain_template(domain)
-    return _validation_to_schema(result)
 
 
 @router.post("/bid-strategy", response_model=BidStrategySchema)

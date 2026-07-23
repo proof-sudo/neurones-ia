@@ -325,48 +325,47 @@ class OfferGenerationResponse(BaseModel):
     message: str
 
 
-# ── Offre en 2 temps : sections éditables → rendu .docx ───────────────────────
+# ── Offre en 2 temps : plan de document IA → rendu .docx ──────────────────────
+# L'IA ne remplit plus un gabarit : elle produit un PLAN DE DOCUMENT (couverture +
+# blocs typés) que le builder met en forme sans template. Cf. offer_docx_builder.
 
-class OfferModuleSchema(BaseModel):
+class OfferCoverSchema(BaseModel):
+    """Page de garde rédigée par l'IA (le client et la date sont ajoutés par le code)."""
     titre: str = ""
-    description: str = ""
+    sous_titre: str = "Offre technique"
+    accroche: str = ""
 
 
-class OfferStackItemSchema(BaseModel):
-    composant: str = ""
-    version: str = ""
+class OfferBlockSchema(BaseModel):
+    """Un bloc de contenu. `type` ∈ heading | paragraph | bullets | numbered | table |
+    page_break. Seuls les champs pertinents pour le `type` sont utilisés au rendu."""
+    type: str = "paragraph"
+    level: int = 1                       # heading
+    text: str = ""                       # heading / paragraph
+    items: list[str] = []                # bullets / numbered
+    titre: str = ""                      # table
+    headers: list[str] = []              # table
+    rows: list[list[str]] = []           # table
 
-
-class OfferPlanningItemSchema(BaseModel):
-    phase: str = ""
-    activite: str = ""
-    jh: str = ""
-
-    @field_validator("jh", mode="before")
+    @field_validator("items", mode="before")
     @classmethod
-    def _coerce_jh(cls, v):
-        # le LLM peut renvoyer un entier ou null pour les J/H
-        return "" if v is None else str(v)
+    def _coerce_items(cls, v):
+        if v is None:
+            return []
+        return [("" if i is None else str(i)) for i in v] if isinstance(v, list) else []
 
-
-class OfferRepartitionItemSchema(BaseModel):
-    """Une ligne du tableau « Répartition des fonctionnalités selon l'architecture » :
-    une fonctionnalité associée à sa couche / composant technique."""
-    fonctionnalite: str = ""
-    composant: str = ""
+    @field_validator("rows", mode="before")
+    @classmethod
+    def _coerce_rows(cls, v):
+        if not isinstance(v, list):
+            return []
+        return [[("" if c is None else str(c)) for c in r] for r in v if isinstance(r, list)]
 
 
 class OfferSectionsSchema(BaseModel):
-    titre_projet: str = ""
-    expression_besoins: list[str] = []
-    objectifs_reponse: list[str] = []
-    presentation_reponse: list[str] = []
-    fonctionnalites: list[str] = []
-    modules: list[OfferModuleSchema] = []
-    stack_technique: list[OfferStackItemSchema] = []
-    planning: list[OfferPlanningItemSchema] = []
-    # Tableau Fonctionnalité → Composant inséré à {{Répartition des fonctionnalités}}.
-    repartition: list[OfferRepartitionItemSchema] = []
+    """Plan de document produit par l'IA : couverture + liste de blocs."""
+    cover: OfferCoverSchema = Field(default_factory=OfferCoverSchema)
+    blocks: list[OfferBlockSchema] = []
 
 
 class OfferSectionsResponse(BaseModel):
@@ -384,22 +383,6 @@ class OfferRenderRequest(BaseModel):
     # CV / ABE choisis dans le modal (noms de fichiers GED) à injecter dans le .docx.
     selected_cvs: list[str] = []
     selected_abes: list[str] = []
-
-
-class TemplateCheckSchema(BaseModel):
-    label: str
-    ok: bool
-    detail: str = ""
-    severity: str = "error"  # "error" (invalide le template) | "warning" (dégrade)
-
-
-class TemplateValidationSchema(BaseModel):
-    ok: bool
-    domain: str
-    template_path: Optional[str] = None
-    errors: int = 0
-    warnings: int = 0
-    checks: list[TemplateCheckSchema] = []
 
 
 class TeamMatchRequest(BaseModel):
