@@ -7,7 +7,6 @@ import type { NavGroup, NavModule, ModuleAccess, Role } from "./types";
  */
 export const NAV_MODULES: NavModule[] = [
   { view: "dashboard", icon: "◧", label: "Tableau de bord" },
-  // { view: "forecast", icon: "⟁", label: "Forecast" },
   { view: "tresorerie", icon: "◒", label: "Trésorerie & marges" },
   { view: "performance", icon: "◭", label: "Performances" },
   { view: "presales", icon: "❖", label: "Appel d'offre" },
@@ -15,7 +14,6 @@ export const NAV_MODULES: NavModule[] = [
   { view: "crosssell", icon: "✚", label: "Montée en valeur" },
   { view: "clients", icon: "◈", label: "Clients" },
   { view: "partenaires", icon: "◈", label: "Fournisseurs" },
-  // { view: "pipeline", icon: "▥", label: "Pipeline" },
   { view: "admin", icon: "⚙", label: "Administration" },
 ];
 

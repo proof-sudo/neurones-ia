@@ -123,16 +123,16 @@ export function TresorerieLive({
         title="Trésorerie & marges prévisionnelles"
         sub="Simulation de la trésorerie et des marges futures à partir du forecast commercial réel"
       >
-        <button
+        {/* <button
           onClick={genererAnalyse}
           disabled={analyzing}
           className="cursor-pointer rounded-lg bg-ai px-3 py-[7px] text-[11.5px] font-semibold text-white disabled:opacity-50"
         >
           ⚡ Analyse IA de la trésorerie
-        </button>
+        </button> */}
       </ViewHeader>
 
-      <Panel className="mb-4 border-l-[3px] border-l-ai">
+      {/* <Panel className="mb-4 border-l-[3px] border-l-ai">
         <PanelHead title="Ce que l'IA voit dans la trésorerie">
           <AiChip>analyse</AiChip>
         </PanelHead>
@@ -152,7 +152,7 @@ export function TresorerieLive({
             ))}
           </div>
         )}
-      </Panel>
+      </Panel> */}
 
       <DetailPanel
         open={!!impaye}

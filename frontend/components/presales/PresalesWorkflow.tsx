@@ -7,9 +7,10 @@ import {
   Download, Loader2, Trash2, Sparkles, ArrowRight, ArrowLeft, Shield, Target,
   Users, Eye, ClipboardList, BarChart2, Layers, Lock, Plus, Send,
   CalendarDays, Trophy, ThumbsDown, Clock, List,
-  Briefcase, Scale, Coins, X, Search, ChevronDown, FileCheck,
+  Briefcase, Scale, Coins, X, Search, ChevronDown, FileCheck, Play,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Modal } from "@/components/ui/Modal";
 import {
   scoreAO, generateBidStrategy, exportAnalysis, exportScoring, exportStrategy,
   exportMatrix, exportChecklist, validateTemplate, buildOfferSections, renderOffer,
@@ -40,7 +41,7 @@ interface AOEntry {
   filename: string;
   addedAt: string;
   clientName: string;
-  status: "scoring" | "scored" | "error";
+  status: "pending_analysis" | "scoring" | "scored" | "error";
   errorMessage?: string;
   scoringResult?: ScoringResult;
   decision: "go" | "no_bid" | "conditional" | null;
@@ -130,7 +131,7 @@ function newEntry(id: string, filename: string): AOEntry {
     id, filename,
     addedAt: new Date().toISOString(),
     clientName: "",
-    status: "scoring",
+    status: "pending_analysis",
     decision: null,
     decisionReason: "",
     decisionValidated: false,
@@ -1056,6 +1057,7 @@ function dossierProgress(ao: AOEntry): number {
 }
 
 function dossierStatut(ao: AOEntry): { label: string; cls: string } {
+  if (ao.status === "pending_analysis") return { label: "En attente d'analyse", cls: "bg-panel-2 text-muted" };
   if (ao.status === "scoring") return { label: "Analyse en cours", cls: "bg-[#ececee] text-ai" };
   if (ao.status === "error") return { label: "Erreur", cls: "bg-bad/15 text-bad" };
   if (ao.result === "won") return { label: "Gagné", cls: "bg-good/15 text-good" };
@@ -2652,6 +2654,8 @@ export function PresalesWorkflow() {
   const [homeFilter, setHomeFilter] = useState<"all" | 1 | 2 | 3 | 4 | 5 | 6 | 7>("all");
   const [homePage, setHomePage] = useState(1);
   const [dragOver, setDragOver] = useState(false);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [newClientName, setNewClientName] = useState("");
   const [generatingStrategy, setGeneratingStrategy] = useState(false);
   const [validatingDecision, setValidatingDecision] = useState(false);
   const [exportingAnalysis, setExportingAnalysis] = useState(false);
@@ -2663,6 +2667,7 @@ export function PresalesWorkflow() {
   const [exportSuccess, setExportSuccess] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const demoLoaded = useRef(false);
+  const pendingFilesRef = useRef<Map<string, File>>(new Map());
 
   const selectedAO = aos.find(a => a.id === selectedId) ?? null;
 
@@ -2688,7 +2693,7 @@ export function PresalesWorkflow() {
     setAos(prev => prev.map(a => a.id === id ? { ...a, ...patch } : a));
   }
 
-  async function handleFiles(files: FileList | File[]) {
+  function handleFiles(files: FileList | File[], clientName?: string) {
     const allowed = [
       "application/pdf",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -2697,17 +2702,31 @@ export function PresalesWorkflow() {
       if (!allowed.includes(file.type) && !file.name.match(/\.(pdf|docx)$/i)) continue;
       const id = genId();
       const entry = newEntry(id, file.name);
+      if (clientName) entry.clientName = clientName;
+      pendingFilesRef.current.set(id, file);
       setAos(prev => [entry, ...prev]);
       setSelectedId(id);
       setViewStep(1);
-      try {
-        const result = await scoreAO(file);
-        setAos(prev => prev.map(a => a.id === id ? { ...a, status: "scored", scoringResult: result } : a));
-        setViewStep(1);
-      } catch (e: unknown) {
-        const msg = e instanceof Error ? e.message : String(e);
-        setAos(prev => prev.map(a => a.id === id ? { ...a, status: "error", errorMessage: msg } : a));
-      }
+    }
+  }
+
+  async function startAnalysis(id: string) {
+    const file = pendingFilesRef.current.get(id);
+    if (!file) {
+      setAos(prev => prev.map(a => a.id === id
+        ? { ...a, status: "error", errorMessage: "Fichier non disponible — supprimez cette entrée et re-déposez le fichier." }
+        : a));
+      return;
+    }
+    setAos(prev => prev.map(a => a.id === id ? { ...a, status: "scoring" } : a));
+    try {
+      const result = await scoreAO(file);
+      setAos(prev => prev.map(a => a.id === id ? { ...a, status: "scored", scoringResult: result } : a));
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setAos(prev => prev.map(a => a.id === id ? { ...a, status: "error", errorMessage: msg } : a));
+    } finally {
+      pendingFilesRef.current.delete(id);
     }
   }
 
@@ -2947,65 +2966,27 @@ export function PresalesWorkflow() {
       <div className="flex flex-col h-full overflow-hidden bg-ink">
         <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
           {/* En-tête module (style charte) */}
-          <div>
-            <div className="mb-1.5 font-mono text-[11.5px] uppercase tracking-[0.14em] text-ai">
-              ● exécution commerciale
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="mb-1.5 font-mono text-[11.5px] uppercase tracking-[0.14em] text-ai">
+                ● exécution commerciale
+              </div>
+              <h1 className="text-2xl font-semibold tracking-[-0.01em] text-text">Appel d'offres</h1>
+              <div className="mt-1 text-[13px] text-muted">
+                Analyse d&apos;appels d&apos;offres, scoring IA &amp; génération d&apos;offres
+                {statsAos.total > 0 && (
+                  <>
+                    {" — "}{statsAos.total} dossier{statsAos.total > 1 ? "s" : ""} · {validCount} en cours · {statsAos.won} gagné{statsAos.won > 1 ? "s" : ""} · {statsAos.lost} perdu{statsAos.lost > 1 ? "s" : ""}
+                  </>
+                )}
+              </div>
             </div>
-            <h1 className="text-2xl font-semibold tracking-[-0.01em] text-text">Appel d'offres</h1>
-            <div className="mt-1 text-[13px] text-muted">
-              Analyse d&apos;appels d&apos;offres, scoring IA &amp; génération d&apos;offres
-              {statsAos.total > 0 && (
-                <>
-                  {" — "}{statsAos.total} dossier{statsAos.total > 1 ? "s" : ""} · {validCount} en cours · {statsAos.won} gagné{statsAos.won > 1 ? "s" : ""} · {statsAos.lost} perdu{statsAos.lost > 1 ? "s" : ""}
-                </>
-              )}
-            </div>
-          </div>
-
-          {/* Zone d'upload (en haut) */}
-          <div
-            className={cn(
-              "border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all bg-panel",
-              dragOver
-                ? "border-ai bg-[#ececee]"
-                : "border-line hover:border-ai hover:bg-panel-2"
-            )}
-            onClick={() => fileInputRef.current?.click()}
-            onDragOver={e => { e.preventDefault(); setDragOver(true); }}
-            onDragLeave={() => setDragOver(false)}
-            onDrop={e => {
-              e.preventDefault();
-              setDragOver(false);
-              handleFiles(e.dataTransfer.files);
-              setPageView("workflow");
-            }}
-          >
-            <div className="w-14 h-14 rounded-xl bg-[#ececee] flex items-center justify-center mx-auto mb-3">
-              <Upload size={24} className="text-ai" />
-            </div>
-            <p className="text-sm font-semibold text-text">Déposer un appel d&apos;offres</p>
-            <p className="text-xs text-muted mt-1">
-              PDF ou DOCX — max 10 Mo · Analyse automatique en 7 étapes
-            </p>
             <button
-              onClick={e => { e.stopPropagation(); fileInputRef.current?.click(); }}
-              className="mt-4 inline-flex items-center gap-1.5 text-xs px-4 py-2 bg-ai hover:brightness-95 text-white rounded-lg font-medium transition"
+              onClick={() => setShowAddModal(true)}
+              className="shrink-0 inline-flex items-center gap-1.5 text-xs px-4 py-2 bg-ai hover:brightness-95 text-white rounded-lg font-medium transition"
             >
-              <Upload size={13} /> Choisir un fichier
+              <Plus size={14} /> Ajouter appel d&apos;offre
             </button>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".pdf,.docx"
-              multiple
-              className="hidden"
-              onChange={e => {
-                if (e.target.files && e.target.files.length) {
-                  handleFiles(e.target.files);
-                  setPageView("workflow");
-                }
-              }}
-            />
           </div>
 
           {/* Historique */}
@@ -3052,7 +3033,7 @@ export function PresalesWorkflow() {
                   <FileText size={30} className="text-line mx-auto mb-3" />
                   <p className="text-sm font-semibold text-muted">Aucun dossier pour l&apos;instant</p>
                   <p className="text-xs text-muted mt-1">
-                    Déposez un appel d&apos;offres ci-dessus pour lancer une analyse.
+                    Cliquez sur « Ajouter appel d&apos;offre » pour lancer une analyse.
                   </p>
                 </div>
               ) : filteredAos.length === 0 ? (
@@ -3061,8 +3042,9 @@ export function PresalesWorkflow() {
                 </div>
               ) : (
                 <>
-                  <div className="grid grid-cols-[2fr_1fr_1.2fr_1.2fr_120px] gap-3 px-5 py-3 border-b border-line text-[11px] uppercase tracking-[0.05em] text-muted bg-panel-2/60">
+                  <div className="grid grid-cols-[1.7fr_1.1fr_1fr_1.1fr_1.1fr_150px] gap-3 px-5 py-3 border-b border-line text-[11px] uppercase tracking-[0.05em] text-muted bg-panel-2/60">
                     <div>Appel d&apos;offre</div>
+                    <div>Client</div>
                     <div>Échéance</div>
                     <div>Statut</div>
                     <div>Avancement</div>
@@ -3075,14 +3057,16 @@ export function PresalesWorkflow() {
                     return (
                       <div
                         key={ao.id}
-                        className="grid grid-cols-[2fr_1fr_1.2fr_1.2fr_120px] gap-3 items-center px-5 py-3.5 border-b border-line last:border-0 hover:bg-panel-2/60 transition group"
+                        className="grid grid-cols-[1.7fr_1.1fr_1fr_1.1fr_1.1fr_150px] gap-3 items-center px-5 py-3.5 border-b border-line last:border-0 hover:bg-panel-2/60 transition group"
                       >
                         <div className="min-w-0">
                           <p className="text-[13px] font-semibold text-text truncate">{ao.filename}</p>
-                          <p className="text-[11.5px] text-muted truncate mt-0.5">
-                            {ao.clientName || "Client non renseigné"}
-                            {montant ? ` · ${montant}` : ""}
-                          </p>
+                          {montant && (
+                            <p className="text-[11.5px] text-muted truncate mt-0.5">{montant}</p>
+                          )}
+                        </div>
+                        <div className="text-[12.5px] text-text truncate">
+                          {ao.clientName || <span className="text-muted">Non renseigné</span>}
                         </div>
                         <div className="text-[12px] font-mono text-muted flex items-center gap-1 min-w-0">
                           <CalendarDays size={11} className="text-line shrink-0" />
@@ -3107,12 +3091,21 @@ export function PresalesWorkflow() {
                           <span className="text-[11px] font-mono text-muted tabular-nums w-9 text-right">{prog}%</span>
                         </div>
                         <div className="flex items-center justify-end gap-1">
-                          <button
-                            onClick={() => openDossier(ao.id)}
-                            className="inline-flex items-center gap-1 text-[11.5px] px-3 py-1.5 rounded-lg bg-ai text-white hover:brightness-110 transition font-medium"
-                          >
-                            Ouvrir <ArrowRight size={12} />
-                          </button>
+                          {ao.status === "pending_analysis" ? (
+                            <button
+                              onClick={() => startAnalysis(ao.id)}
+                              className="inline-flex items-center gap-1 text-[11.5px] px-3 py-1.5 rounded-lg bg-ai text-white hover:brightness-110 transition font-medium"
+                            >
+                              <Play size={12} /> Démarrer
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => openDossier(ao.id)}
+                              className="inline-flex items-center gap-1 text-[11.5px] px-3 py-1.5 rounded-lg bg-ai text-white hover:brightness-110 transition font-medium"
+                            >
+                              Ouvrir <ArrowRight size={12} />
+                            </button>
+                          )}
                           <button
                             onClick={() => removeAO(ao.id)}
                             className="opacity-0 group-hover:opacity-100 p-1.5 text-line hover:text-bad transition"
@@ -3153,6 +3146,77 @@ export function PresalesWorkflow() {
             </div>
           </div>
         </div>
+
+        <Modal open={showAddModal} onClose={() => setShowAddModal(false)} className="max-w-[560px] p-6">
+          <div className="mb-4 flex items-start justify-between">
+            <h2 className="text-[16px] font-semibold text-text">Ajouter un appel d&apos;offres</h2>
+            <button
+              onClick={() => setShowAddModal(false)}
+              className="cursor-pointer rounded-lg border border-line bg-panel-2 px-2.5 py-1.5 text-[13px] text-muted hover:border-ai hover:text-text"
+            >
+              Fermer ✕
+            </button>
+          </div>
+
+          <div className="flex flex-col gap-4">
+            <div>
+              <div className="mb-1.5 text-[11px] text-muted">Nom du client</div>
+              <input
+                value={newClientName}
+                onChange={e => setNewClientName(e.target.value)}
+                placeholder="Ex. BSIC"
+                className="w-full rounded-[9px] border border-line bg-panel px-2.5 py-2 text-[13px] text-text focus:border-ai focus:outline-none"
+              />
+            </div>
+
+            <div
+              className={cn(
+                "border-2 border-dashed rounded-2xl p-8 text-center cursor-pointer transition-all bg-panel",
+                dragOver
+                  ? "border-ai bg-[#ececee]"
+                  : "border-line hover:border-ai hover:bg-panel-2"
+              )}
+              onClick={() => fileInputRef.current?.click()}
+              onDragOver={e => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={e => {
+                e.preventDefault();
+                setDragOver(false);
+                handleFiles(e.dataTransfer.files, newClientName.trim());
+                setShowAddModal(false);
+                setNewClientName("");
+              }}
+            >
+              <div className="w-14 h-14 rounded-xl bg-[#ececee] flex items-center justify-center mx-auto mb-3">
+                <Upload size={24} className="text-ai" />
+              </div>
+              <p className="text-sm font-semibold text-text">Déposer un appel d&apos;offres</p>
+              <p className="text-xs text-muted mt-1">
+                PDF ou DOCX — max 10 Mo · Analyse automatique en 7 étapes
+              </p>
+              <button
+                onClick={e => { e.stopPropagation(); fileInputRef.current?.click(); }}
+                className="mt-4 inline-flex items-center gap-1.5 text-xs px-4 py-2 bg-ai hover:brightness-95 text-white rounded-lg font-medium transition"
+              >
+                <Upload size={13} /> Choisir un fichier
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".pdf,.docx"
+                multiple
+                className="hidden"
+                onChange={e => {
+                  if (e.target.files && e.target.files.length) {
+                    handleFiles(e.target.files, newClientName.trim());
+                    setShowAddModal(false);
+                    setNewClientName("");
+                  }
+                }}
+              />
+            </div>
+          </div>
+        </Modal>
       </div>
     );
   }
@@ -3325,6 +3389,25 @@ export function PresalesWorkflow() {
                 </div>
               </div>
             </div>
+
+            {/* En attente d'analyse */}
+            {selectedAO.status === "pending_analysis" && (
+              <div className="flex-1 flex flex-col items-center justify-center gap-5 p-8 text-center">
+                <div className="w-16 h-16 rounded-xl bg-[#ececee] flex items-center justify-center">
+                  <Play size={28} className="text-ai" />
+                </div>
+                <div>
+                  <p className="font-semibold text-text">Analyse pas encore lancée</p>
+                  <p className="text-sm text-muted mt-1">Le fichier est prêt — démarrez l&apos;analyse IA quand vous le souhaitez.</p>
+                </div>
+                <button
+                  onClick={() => startAnalysis(selectedAO.id)}
+                  className="inline-flex items-center gap-1.5 text-sm px-4 py-2 bg-ai hover:brightness-95 text-white rounded-lg font-medium transition"
+                >
+                  <Play size={14} /> Démarrer l&apos;analyse
+                </button>
+              </div>
+            )}
 
             {/* Loading */}
             {selectedAO.status === "scoring" && (

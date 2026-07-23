@@ -545,7 +545,7 @@ export function DashboardLive({
 
       {/* ===== CHART CA + POINTS DE VIGILANCE (grid2 mockup) ===== */}
       <div className="mb-4 grid grid-cols-1 gap-4 lg:grid-cols-2">
-        <Panel>
+        <Panel className="flex flex-col">
           <PanelHead title="Évolution du CA — réalisé">
             <AiChip>Données réelles Odoo (commandes)</AiChip>
           </PanelHead>

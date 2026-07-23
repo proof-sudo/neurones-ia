@@ -4,11 +4,9 @@ import { Line } from "react-chartjs-2";
 import { CHART_GRID as GRID } from "./register";
 import type { PeriodData } from "@/lib/types";
 
-const HEIGHT = "h-[220px]";
-
 export function CaChart({ period }: { period: PeriodData }) {
   return (
-    <div className={HEIGHT}>
+    <div className="min-h-[220px] flex-1">
       <Line
         data={{
           labels: period.months,
@@ -43,7 +41,13 @@ export function CaChart({ period }: { period: PeriodData }) {
           },
           scales: {
             x: { grid: { color: GRID } },
-            y: { grid: { color: GRID }, ticks: { callback: (v) => v + "M" } },
+            y: {
+              grid: { color: GRID },
+              // max: 10_000,
+              ticks: {
+                callback: (v) => `${Math.round(Number(v)).toLocaleString("fr-FR")} M`,
+              },
+            },
           },
         }}
       />
