@@ -1,9 +1,8 @@
-"""Projection & recommandation du tableau de bord, rédigées par Claude.
-
-Les chiffres (CA vs N-1, pipeline pondéré, taux de transformation, marge) sont
-déjà calculés en Python à partir des vraies agrégations CRM — Claude ne fait
-que les commenter et proposer une recommandation, jamais recalculer. Repli
-déterministe si Claude échoue.
+"""Analyse de la courbe d'évolution du CA affichée dans le cockpit, rédigée
+par Claude. Les statistiques de tendance sont déjà calculées en Python à
+partir des vrais points de la courbe — Claude ne fait que les commenter et
+proposer une recommandation, jamais recalculer. Repli déterministe si Claude
+échoue.
 """
 from __future__ import annotations
 
@@ -11,49 +10,53 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-_SYSTEM = (
-    "Tu es directeur commercial d'une ESN ivoirienne (S2I). Tu commentes les "
-    "indicateurs de pilotage déjà calculés du cockpit, en français, de façon "
-    "concise et factuelle, et tu proposes une recommandation concrète pour la "
-    "journée."
+# ---------- Analyse de la courbe d'évolution du CA affichée ----------
+# Remplace le bouton manuel "Générer une projection" : se déclenche
+# automatiquement à chaque changement de période, sur les points RÉELS de la
+# courbe affichée (jamais les 2 mois de prévision ajoutés au graphe).
+
+_SYSTEM_TREND = (
+    "Tu es directeur commercial d'une ESN ivoirienne (S2I). Tu analyses la "
+    "courbe d'évolution du CA commandé affichée dans le cockpit — des points déjà "
+    "calculés — en français, de façon concise et factuelle."
 )
 
-_USER_TEMPLATE = """Chiffres réels du cockpit ({annee}) :
-- CA commandé {annee} : {ca_annee} M FCFA ({ecart_pct:+.1f}% vs {annee_precedente})
-- Pipeline ouvert pondéré : {pipeline_pondere} M FCFA ({nb_opportunites} opportunités)
-- Taux de transformation : {taux_victoire_nb}% en nombre, {taux_victoire_valeur}% en valeur
-- Marge définitive moyenne : {marge_definitive}%
+_USER_TEMPLATE_TREND = """Courbe CA commandé affichée ({nb_mois} mois, de {periode_debut} à {periode_fin}) :
+- Valeur en {periode_debut} : {valeur_debut} M FCFA
+- Valeur en {periode_fin} : {valeur_fin} M FCFA
+- Variation sur la période affichée : {variation_pct}%
+- Pic : {mois_pic} ({valeur_pic} M FCFA)
+- Creux : {mois_creux} ({valeur_creux} M FCFA)
+- Moyenne sur la période affichée : {moyenne_periode} M FCFA
 
 Rédige 2 courts paragraphes (pas de titres, pas de markdown, en français) :
-1. Une projection de la trajectoire à venir basée sur le pipeline pondéré réel et la
-   tendance CA vs l'année précédente.
-2. Une recommandation concrète pour la journée, cohérente avec ces chiffres.
-Base-toi UNIQUEMENT sur les chiffres donnés, aucune invention de montant."""
+1. La tendance de cette courbe précise (hausse/baisse/stabilité, et son ampleur réelle).
+2. Une recommandation concrète cohérente avec cette tendance.
+Base-toi UNIQUEMENT sur les chiffres donnés, aucune invention de montant ou de mois."""
 
 
-def _fallback_analysis(ctx: dict) -> str:
-    """Repli déterministe sur les vraies données."""
-    tendance = "en avance" if ctx["ecart_pct"] >= 0 else "en retrait"
+def _fallback_trend(ctx: dict) -> str:
+    """Repli déterministe sur les vraies données de la courbe affichée."""
+    variation = ctx["variation_pct"]
+    tendance = "en hausse" if variation > 0 else "en baisse" if variation < 0 else "stable"
     return "\n\n".join([
-        f"Le CA {ctx['annee']} ({ctx['ca_annee']} M FCFA) est {tendance} de "
-        f"{abs(ctx['ecart_pct']):.1f}% par rapport à {ctx['annee_precedente']}. Le pipeline "
-        f"ouvert pondéré ({ctx['pipeline_pondere']} M FCFA sur {ctx['nb_opportunites']} "
-        f"opportunités) reste le principal levier de la trajectoire à venir.",
-        f"Taux de transformation : {ctx['taux_victoire_nb']}% en nombre mais "
-        f"{ctx['taux_victoire_valeur']}% en valeur, pour une marge définitive moyenne de "
-        f"{ctx['marge_definitive']}% — concentrer les efforts sur les opportunités les plus "
-        "avancées du pipeline pour sécuriser le CA à venir.",
+        f"Le CA commandé est {tendance} entre {ctx['periode_debut']} ({ctx['valeur_debut']} M FCFA) et "
+        f"{ctx['periode_fin']} ({ctx['valeur_fin']} M FCFA), soit {variation}% sur la période affichée. "
+        f"Le pic se situe en {ctx['mois_pic']} ({ctx['valeur_pic']} M FCFA), le creux en "
+        f"{ctx['mois_creux']} ({ctx['valeur_creux']} M FCFA).",
+        f"Moyenne sur la période affichée : {ctx['moyenne_periode']} M FCFA — à comparer aux prochains "
+        "mois pour confirmer si cette tendance se maintient.",
     ])
 
 
-async def build_dashboard_analysis(llm, ctx: dict) -> str:
-    """ctx : faits déjà calculés (jamais recalculés par le LLM)."""
+async def build_trend_analysis(llm, ctx: dict) -> str:
+    """ctx : statistiques de la courbe déjà calculées en Python (jamais recalculées par le LLM)."""
     if llm is None:
-        return _fallback_analysis(ctx)
+        return _fallback_trend(ctx)
     try:
-        user = _USER_TEMPLATE.format(**ctx)
-        text = await llm.generate(system=_SYSTEM, user=user, max_tokens=450, temperature=0.5)
-        return (text or "").strip() or _fallback_analysis(ctx)
+        user = _USER_TEMPLATE_TREND.format(**ctx)
+        text = await llm.generate(system=_SYSTEM_TREND, user=user, max_tokens=400, temperature=0.5)
+        return (text or "").strip() or _fallback_trend(ctx)
     except Exception as exc:
-        logger.warning("Analyse IA dashboard échouée (repli calculs réels) : %s", exc)
-        return _fallback_analysis(ctx)
+        logger.warning("Analyse IA tendance CA échouée (repli calculs réels) : %s", exc)
+        return _fallback_trend(ctx)

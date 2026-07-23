@@ -13,10 +13,10 @@ import { cn } from "@/lib/utils";
 import { Modal } from "@/components/ui/Modal";
 import {
   scoreAO, generateBidStrategy, exportAnalysis, exportScoring, exportStrategy,
-  exportMatrix, exportChecklist, validateTemplate, buildOfferSections, renderOffer,
+  exportMatrix, exportChecklist, buildOfferSections, renderOffer,
   fetchGEDFiles, uploadGEDFile, itemText, assessMatrix, confirmMatrix,
   type GEDFile, type ExtractedItem, type ConformityExigence,
-  type ScoringResult, type BidStrategy, type TemplateValidation, type OfferSections,
+  type ScoringResult, type BidStrategy, type OfferSections,
   type MarketIdentity, type CalendarEvent, type EvaluationModalities,
   type ScoringCriterion, type Risk, type Precondition,
   type StrategyPhase, type Appendix,
@@ -41,6 +41,8 @@ interface AOEntry {
   filename: string;
   addedAt: string;
   clientName: string;
+  owner: string;      // nom de la personne qui saisit / pilote l'offre
+  deadline: string;   // date d'échéance saisie manuellement à l'ajout
   status: "pending_analysis" | "scoring" | "scored" | "error";
   errorMessage?: string;
   scoringResult?: ScoringResult;
@@ -131,6 +133,8 @@ function newEntry(id: string, filename: string): AOEntry {
     id, filename,
     addedAt: new Date().toISOString(),
     clientName: "",
+    owner: "",
+    deadline: "",
     status: "pending_analysis",
     decision: null,
     decisionReason: "",
@@ -1077,6 +1081,7 @@ function dossierMontant(ao: AOEntry): string | null {
 
 function dossierEcheance(ao: AOEntry): string {
   return (
+    ao.deadline ||
     ao.scoringResult?.date_remise ||
     ao.scoringResult?.market_identity?.deadline_soumission ||
     "—"
@@ -1173,9 +1178,9 @@ function StepperBar({ ao, viewStep, onStepClick, steps }: {
 
 // ── Step content ──────────────────────────────────────────────────────────────
 
-function Step1({ ao, onExport, exporting, onExportMatrix, exportingMatrix, onNext }: {
+function Step1({ ao, onExport, exporting, onExportMatrix, exportingMatrix, onNext, onReanalyze }: {
   ao: AOEntry; onExport: () => void; exporting: boolean;
-  onExportMatrix: () => void; exportingMatrix: boolean; onNext: () => void;
+  onExportMatrix: () => void; exportingMatrix: boolean; onNext: () => void; onReanalyze: () => void;
 }) {
   const r = ao.scoringResult!;
   return (
@@ -1261,6 +1266,13 @@ function Step1({ ao, onExport, exporting, onExportMatrix, exportingMatrix, onNex
           >
             {exportingMatrix ? <Loader2 size={14} className="animate-spin" /> : <FileCheck size={14} />}
             Matrice de conformité
+          </button>
+          <button
+            onClick={onReanalyze}
+            title="Relancer une analyse fraîche de l'AO (ignore le cache)"
+            className="flex items-center gap-2 px-4 py-2 bg-panel hover:bg-panel-2 text-muted rounded-lg text-sm font-medium border border-line hover:border-ai hover:text-ai transition-colors"
+          >
+            <Play size={14} /> Refaire l&apos;analyse
           </button>
         </div>
         <button
@@ -1489,12 +1501,13 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
   );
 }
 
-function Step3({ ao, generatingStrategy, onValidate, onExport, exporting }: {
+function Step3({ ao, generatingStrategy, onValidate, onExport, exporting, onRegenerate }: {
   ao: AOEntry;
   generatingStrategy: boolean;
   onValidate: () => void;
   onExport: () => void;
   exporting: boolean;
+  onRegenerate: () => void;
 }) {
   if (generatingStrategy) {
     return (
@@ -1520,6 +1533,12 @@ function Step3({ ao, generatingStrategy, onValidate, onExport, exporting }: {
       <div className="flex flex-col items-center justify-center py-16 gap-4">
         <AlertCircle size={40} className="text-warn" />
         <p className="text-muted">La génération de la stratégie a échoué.</p>
+        <button
+          onClick={onRegenerate}
+          className="flex items-center gap-2 px-5 py-2 bg-ai hover:brightness-95 text-white rounded-xl text-sm font-medium transition-colors"
+        >
+          <Sparkles size={14} /> Refaire la génération
+        </button>
       </div>
     );
   }
@@ -1551,14 +1570,23 @@ function Step3({ ao, generatingStrategy, onValidate, onExport, exporting }: {
       )}
 
       <div className="flex items-center justify-between gap-3">
-        <button
-          onClick={onExport}
-          disabled={exporting}
-          className="flex items-center gap-2 px-4 py-2 bg-panel hover:bg-panel-2 text-text rounded-xl text-sm font-medium border border-line hover:border-line disabled:opacity-50 transition-colors"
-        >
-          {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-          Exporter en Word
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={onExport}
+            disabled={exporting}
+            className="flex items-center gap-2 px-4 py-2 bg-panel hover:bg-panel-2 text-text rounded-xl text-sm font-medium border border-line hover:border-line disabled:opacity-50 transition-colors"
+          >
+            {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            Exporter en Word
+          </button>
+          <button
+            onClick={onRegenerate}
+            title="Relancer la génération de la stratégie"
+            className="flex items-center gap-2 px-4 py-2 bg-panel hover:bg-panel-2 text-muted rounded-xl text-sm font-medium border border-line hover:border-ai hover:text-ai transition-colors"
+          >
+            <Sparkles size={14} /> Refaire la génération
+          </button>
+        </div>
 
         {!ao.strategyValidated ? (
           <button
@@ -1576,114 +1604,6 @@ function Step3({ ao, generatingStrategy, onValidate, onExport, exporting }: {
         )}
       </div>
     </div>
-  );
-}
-
-// ── État du modèle d'offre (.docx) — pré-check avant génération ───────────────
-
-function TemplateStatus({ val, loading, error, onRecheck }: {
-  val: TemplateValidation | null;
-  loading: boolean;
-  error: string | null;
-  onRecheck: () => void;
-}) {
-  const [open, setOpen] = useState(false);
-
-  const fileName = val?.template_path ? val.template_path.split(/[\\/]/).pop() : null;
-  const failed = val ? val.checks.filter(c => !c.ok) : [];
-
-  const pill = !val
-    ? null
-    : val.errors > 0
-    ? { cls: "bg-warn/10 text-warn border-warn/35", icon: <AlertTriangle size={13} />, label: "Incomplet" }
-    : val.warnings > 0
-    ? { cls: "bg-warn/10 text-warn border-warn/35", icon: <AlertTriangle size={13} />, label: "Avertissements" }
-    : { cls: "bg-good/10 text-good border-good/35", icon: <CheckCircle size={13} />, label: "Compatible" };
-
-  return (
-    <SectionCard title="Modèle d'offre (.docx)" icon={<ClipboardList size={15} />}>
-      <div className="flex items-center gap-2 mb-3">
-        {loading ? (
-          <span className="flex items-center gap-1.5 text-xs text-muted">
-            <Loader2 size={13} className="animate-spin" /> Vérification du modèle…
-          </span>
-        ) : pill ? (
-          <span className={cn("flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-medium", pill.cls)}>
-            {pill.icon} {pill.label}
-          </span>
-        ) : null}
-        {val && !loading && (
-          <span className="text-xs text-muted">
-            {val.errors} erreur(s) · {val.warnings} avertissement(s)
-          </span>
-        )}
-        <button
-          onClick={onRecheck}
-          disabled={loading}
-          className="ml-auto text-xs text-muted hover:text-text disabled:opacity-50"
-        >
-          Revérifier
-        </button>
-      </div>
-
-      {fileName && (
-        <p className="text-xs text-muted mb-2 truncate">
-          Fichier : <span className="text-text">{fileName}</span>
-        </p>
-      )}
-
-      {error && (
-        <div className="flex items-start gap-2 p-3 bg-bad/10 border border-bad/35 rounded-lg text-xs text-bad">
-          <AlertCircle size={14} className="shrink-0 mt-0.5" /> {error}
-        </div>
-      )}
-
-      {val && val.errors > 0 && (
-        <div className="flex items-start gap-2 p-3 bg-warn/10 border border-warn/35 rounded-lg text-xs text-warn">
-          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-          <span>Le modèle est <strong>incomplet</strong>, mais la génération reste possible : les éléments manquants seront marqués <strong>« À COMPLÉTER »</strong> dans le document (bannière en page de garde + annexe de fin reprenant le contenu généré). Corriger le .docx (voir le détail) reste recommandé.</span>
-        </div>
-      )}
-      {val && val.errors === 0 && val.warnings > 0 && (
-        <div className="flex items-start gap-2 p-3 bg-warn/10 border border-warn/35 rounded-lg text-xs text-warn">
-          <AlertTriangle size={14} className="shrink-0 mt-0.5" />
-          <span>Le modèle fonctionne ; les éléments non remplis seront signalés <strong>« À COMPLÉTER »</strong> dans le document généré (voir le détail).</span>
-        </div>
-      )}
-      {val && val.ok && val.warnings === 0 && (
-        <div className="flex items-start gap-2 p-3 bg-good/10 border border-good/35 rounded-lg text-xs text-good">
-          <CheckCircle size={14} className="shrink-0 mt-0.5" /> Modèle pleinement compatible.
-        </div>
-      )}
-
-      {val && failed.length > 0 && (
-        <button
-          onClick={() => setOpen(o => !o)}
-          className="mt-2 text-xs text-ai font-medium hover:underline"
-        >
-          {open ? "Masquer le détail" : `Voir le détail (${failed.length} point(s) à corriger)`}
-        </button>
-      )}
-      {val && open && (
-        <ul className="mt-2 space-y-1.5">
-          {val.checks.map((c, i) => (
-            <li key={i} className="flex items-start gap-2 text-xs">
-              {c.ok ? (
-                <CheckCircle size={13} className="shrink-0 mt-0.5 text-good" />
-              ) : c.severity === "error" ? (
-                <XCircle size={13} className="shrink-0 mt-0.5 text-bad" />
-              ) : (
-                <AlertTriangle size={13} className="shrink-0 mt-0.5 text-warn" />
-              )}
-              <span className={cn(c.ok ? "text-muted" : "text-text")}>
-                <span className="font-medium">{c.label}</span>
-                {!c.ok && c.detail ? <span className="text-muted"> — {c.detail}</span> : null}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </SectionCard>
   );
 }
 
@@ -1926,10 +1846,6 @@ function Step5({ ao, onValidate, triggerDownload, onOfferReady }: {
   triggerDownload: (blob: Blob, filename: string) => void;
   onOfferReady: (filename: string) => void;
 }) {
-  const [tpl, setTpl] = useState<TemplateValidation | null>(null);
-  const [tplLoading, setTplLoading] = useState(true);
-  const [tplError, setTplError] = useState<string | null>(null);
-
   const [, setSections] = useState<OfferSections | null>(null);
   const [filename, setFilename] = useState("");
   const [building, setBuilding] = useState(false);
@@ -1942,28 +1858,6 @@ function Step5({ ao, onValidate, triggerDownload, onOfferReady }: {
   const [selectedAbes, setSelectedAbes] = useState<string[]>([]);
   const toggle = (setter: React.Dispatch<React.SetStateAction<string[]>>) => (f: string) =>
     setter(prev => (prev.includes(f) ? prev.filter(x => x !== f) : [...prev, f]));
-
-  const checkTpl = async () => {
-    setTplLoading(true);
-    setTplError(null);
-    try {
-      setTpl(await validateTemplate());
-    } catch (e) {
-      setTplError(e instanceof Error ? e.message : "Vérification impossible");
-    } finally {
-      setTplLoading(false);
-    }
-  };
-
-  // Vérification initiale du modèle : mêmes contraintes react-hooks que ci-dessus.
-  useEffect(() => {
-    let cancelled = false;
-    validateTemplate()
-      .then((v) => { if (!cancelled) setTpl(v); })
-      .catch((e) => { if (!cancelled) setTplError(e instanceof Error ? e.message : "Vérification impossible"); })
-      .finally(() => { if (!cancelled) setTplLoading(false); });
-    return () => { cancelled = true; };
-  }, []);
 
   // Génération JAMAIS bloquante, en une seule action : sections IA (étape 1) PUIS
   // rendu du .docx (étape 2) PUIS téléchargement automatique. Les éléments que le
@@ -2032,7 +1926,6 @@ function Step5({ ao, onValidate, triggerDownload, onOfferReady }: {
           onConfirm={confirmGenerate}
         />
       )}
-      <TemplateStatus val={tpl} loading={tplLoading} error={tplError} onRecheck={checkTpl} />
       <SectionCard title="Génération de l'offre technique" icon={<FileText size={15} />}>
         <p className="text-sm text-muted leading-relaxed mb-3">
           L'offre technique est générée automatiquement par IA à partir de votre AO et de vos références GED.
@@ -2656,6 +2549,8 @@ export function PresalesWorkflow() {
   const [dragOver, setDragOver] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newClientName, setNewClientName] = useState("");
+  const [newOwner, setNewOwner] = useState("");
+  const [newDeadline, setNewDeadline] = useState("");
   const [generatingStrategy, setGeneratingStrategy] = useState(false);
   const [validatingDecision, setValidatingDecision] = useState(false);
   const [exportingAnalysis, setExportingAnalysis] = useState(false);
@@ -2693,7 +2588,10 @@ export function PresalesWorkflow() {
     setAos(prev => prev.map(a => a.id === id ? { ...a, ...patch } : a));
   }
 
-  function handleFiles(files: FileList | File[], clientName?: string) {
+  function handleFiles(
+    files: FileList | File[],
+    meta?: { clientName?: string; owner?: string; deadline?: string },
+  ) {
     const allowed = [
       "application/pdf",
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -2702,7 +2600,9 @@ export function PresalesWorkflow() {
       if (!allowed.includes(file.type) && !file.name.match(/\.(pdf|docx)$/i)) continue;
       const id = genId();
       const entry = newEntry(id, file.name);
-      if (clientName) entry.clientName = clientName;
+      if (meta?.clientName) entry.clientName = meta.clientName;
+      if (meta?.owner) entry.owner = meta.owner;
+      if (meta?.deadline) entry.deadline = meta.deadline;
       pendingFilesRef.current.set(id, file);
       setAos(prev => [entry, ...prev]);
       setSelectedId(id);
@@ -2710,7 +2610,10 @@ export function PresalesWorkflow() {
     }
   }
 
-  async function startAnalysis(id: string) {
+  // force=true : relance une analyse fraîche (ignore le cache disque backend) —
+  // utilisé par le bouton « Refaire l'analyse ». Le fichier est conservé en mémoire
+  // (pendingFilesRef) tant que le dossier n'est pas supprimé, pour permettre le rejeu.
+  async function startAnalysis(id: string, force = false) {
     const file = pendingFilesRef.current.get(id);
     if (!file) {
       setAos(prev => prev.map(a => a.id === id
@@ -2718,15 +2621,13 @@ export function PresalesWorkflow() {
         : a));
       return;
     }
-    setAos(prev => prev.map(a => a.id === id ? { ...a, status: "scoring" } : a));
+    setAos(prev => prev.map(a => a.id === id ? { ...a, status: "scoring", errorMessage: undefined } : a));
     try {
-      const result = await scoreAO(file);
+      const result = await scoreAO(file, force);
       setAos(prev => prev.map(a => a.id === id ? { ...a, status: "scored", scoringResult: result } : a));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
       setAos(prev => prev.map(a => a.id === id ? { ...a, status: "error", errorMessage: msg } : a));
-    } finally {
-      pendingFilesRef.current.delete(id);
     }
   }
 
@@ -2742,6 +2643,7 @@ export function PresalesWorkflow() {
   }
 
   function removeAO(id: string) {
+    pendingFilesRef.current.delete(id);
     setAos(prev => prev.filter(a => a.id !== id));
     if (selectedId === id) setSelectedId(null);
     if (aos.filter(a => a.id !== id).length === 0) {
@@ -2800,6 +2702,30 @@ export function PresalesWorkflow() {
     } finally {
       setGeneratingStrategy(false);
       setValidatingDecision(false);
+    }
+  }
+
+  // Refaire la génération de la stratégie (étape 3) sans repasser par la décision.
+  async function regenerateStrategy(aoId: string) {
+    const ao = aos.find(a => a.id === aoId);
+    if (!ao?.scoringResult || !ao.decision || ao.decision === "no_bid") return;
+    setGeneratingStrategy(true);
+    try {
+      const strategy = await generateBidStrategy(
+        ao.scoringResult,
+        ao.decision === "go" ? "GO" : "CONDITIONAL",
+        ao.clientName,
+        ao.decisionReason,
+      );
+      updateAO(aoId, {
+        bidStrategy: strategy,
+        strategyText: strategy.strategy_text,
+        responsePlan: strategy.response_plan,
+      });
+    } catch (e) {
+      console.error("Strategy regeneration failed:", e);
+    } finally {
+      setGeneratingStrategy(false);
     }
   }
 
@@ -3042,9 +2968,10 @@ export function PresalesWorkflow() {
                 </div>
               ) : (
                 <>
-                  <div className="grid grid-cols-[1.7fr_1.1fr_1fr_1.1fr_1.1fr_150px] gap-3 px-5 py-3 border-b border-line text-[11px] uppercase tracking-[0.05em] text-muted bg-panel-2/60">
+                  <div className="grid grid-cols-[1.6fr_1fr_1fr_0.9fr_1.1fr_1fr_120px] gap-3 px-5 py-3 border-b border-line text-[11px] uppercase tracking-[0.05em] text-muted bg-panel-2/60">
                     <div>Appel d&apos;offre</div>
                     <div>Client</div>
+                    <div>Saisi par</div>
                     <div>Échéance</div>
                     <div>Statut</div>
                     <div>Avancement</div>
@@ -3057,7 +2984,7 @@ export function PresalesWorkflow() {
                     return (
                       <div
                         key={ao.id}
-                        className="grid grid-cols-[1.7fr_1.1fr_1fr_1.1fr_1.1fr_150px] gap-3 items-center px-5 py-3.5 border-b border-line last:border-0 hover:bg-panel-2/60 transition group"
+                        className="grid grid-cols-[1.6fr_1fr_1fr_0.9fr_1.1fr_1fr_120px] gap-3 items-center px-5 py-3.5 border-b border-line last:border-0 hover:bg-panel-2/60 transition group"
                       >
                         <div className="min-w-0">
                           <p className="text-[13px] font-semibold text-text truncate">{ao.filename}</p>
@@ -3067,6 +2994,9 @@ export function PresalesWorkflow() {
                         </div>
                         <div className="text-[12.5px] text-text truncate">
                           {ao.clientName || <span className="text-muted">Non renseigné</span>}
+                        </div>
+                        <div className="text-[12.5px] text-text truncate">
+                          {ao.owner || <span className="text-muted">—</span>}
                         </div>
                         <div className="text-[12px] font-mono text-muted flex items-center gap-1 min-w-0">
                           <CalendarDays size={11} className="text-line shrink-0" />
@@ -3091,21 +3021,12 @@ export function PresalesWorkflow() {
                           <span className="text-[11px] font-mono text-muted tabular-nums w-9 text-right">{prog}%</span>
                         </div>
                         <div className="flex items-center justify-end gap-1">
-                          {ao.status === "pending_analysis" ? (
-                            <button
-                              onClick={() => startAnalysis(ao.id)}
-                              className="inline-flex items-center gap-1 text-[11.5px] px-3 py-1.5 rounded-lg bg-ai text-white hover:brightness-110 transition font-medium"
-                            >
-                              <Play size={12} /> Démarrer
-                            </button>
-                          ) : (
-                            <button
-                              onClick={() => openDossier(ao.id)}
-                              className="inline-flex items-center gap-1 text-[11.5px] px-3 py-1.5 rounded-lg bg-ai text-white hover:brightness-110 transition font-medium"
-                            >
-                              Ouvrir <ArrowRight size={12} />
-                            </button>
-                          )}
+                          <button
+                            onClick={() => openDossier(ao.id)}
+                            className="inline-flex items-center gap-1 text-[11.5px] px-3 py-1.5 rounded-lg bg-ai text-white hover:brightness-110 transition font-medium"
+                          >
+                            Ouvrir <ArrowRight size={12} />
+                          </button>
                           <button
                             onClick={() => removeAO(ao.id)}
                             className="opacity-0 group-hover:opacity-100 p-1.5 text-line hover:text-bad transition"
@@ -3159,13 +3080,34 @@ export function PresalesWorkflow() {
           </div>
 
           <div className="flex flex-col gap-4">
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <div className="mb-1.5 text-[11px] text-muted">Nom du client</div>
+                <input
+                  value={newClientName}
+                  onChange={e => setNewClientName(e.target.value)}
+                  placeholder="Ex. BSIC"
+                  className="w-full rounded-[9px] border border-line bg-panel px-2.5 py-2 text-[13px] text-text focus:border-ai focus:outline-none"
+                />
+              </div>
+              <div>
+                <div className="mb-1.5 text-[11px] text-muted">Saisi par</div>
+                <input
+                  value={newOwner}
+                  onChange={e => setNewOwner(e.target.value)}
+                  placeholder="Nom de la personne"
+                  className="w-full rounded-[9px] border border-line bg-panel px-2.5 py-2 text-[13px] text-text focus:border-ai focus:outline-none"
+                />
+              </div>
+            </div>
+
             <div>
-              <div className="mb-1.5 text-[11px] text-muted">Nom du client</div>
+              <div className="mb-1.5 text-[11px] text-muted">Date d&apos;échéance</div>
               <input
-                value={newClientName}
-                onChange={e => setNewClientName(e.target.value)}
-                placeholder="Ex. BSIC"
-                className="w-full rounded-[9px] border border-line bg-panel px-2.5 py-2 text-[13px] text-text focus:border-ai focus:outline-none"
+                type="date"
+                value={newDeadline}
+                onChange={e => setNewDeadline(e.target.value)}
+                className="w-full sm:w-60 rounded-[9px] border border-line bg-panel px-2.5 py-2 text-[13px] text-text focus:border-ai focus:outline-none"
               />
             </div>
 
@@ -3182,9 +3124,9 @@ export function PresalesWorkflow() {
               onDrop={e => {
                 e.preventDefault();
                 setDragOver(false);
-                handleFiles(e.dataTransfer.files, newClientName.trim());
+                handleFiles(e.dataTransfer.files, { clientName: newClientName.trim(), owner: newOwner.trim(), deadline: newDeadline });
                 setShowAddModal(false);
-                setNewClientName("");
+                setNewClientName(""); setNewOwner(""); setNewDeadline("");
               }}
             >
               <div className="w-14 h-14 rounded-xl bg-[#ececee] flex items-center justify-center mx-auto mb-3">
@@ -3208,9 +3150,9 @@ export function PresalesWorkflow() {
                 className="hidden"
                 onChange={e => {
                   if (e.target.files && e.target.files.length) {
-                    handleFiles(e.target.files, newClientName.trim());
+                    handleFiles(e.target.files, { clientName: newClientName.trim(), owner: newOwner.trim(), deadline: newDeadline });
                     setShowAddModal(false);
-                    setNewClientName("");
+                    setNewClientName(""); setNewOwner(""); setNewDeadline("");
                   }
                 }}
               />
@@ -3357,19 +3299,30 @@ export function PresalesWorkflow() {
                   </button>
                   <div className="min-w-0">
                     <div className="mb-1 font-mono text-[11.5px] uppercase tracking-[0.14em] text-ai">
-                      ● avant-vente — dossier
+                      ● Appel d'offre — dossier
                     </div>
                     <h1 className="text-xl font-semibold tracking-[-0.01em] text-text truncate">
                       {selectedAO.filename}
                     </h1>
-                    <div className="mt-1 flex items-center gap-1 text-[13px] text-muted">
-                      <span>Client :</span>
-                      <input
-                        value={selectedAO.clientName}
-                        onChange={e => updateAO(selectedAO.id, { clientName: e.target.value })}
-                        placeholder="Saisir le nom du client..."
-                        className="text-[13px] text-text bg-transparent border-b border-transparent hover:border-line focus:border-ai focus:outline-none px-1 min-w-0 w-48 placeholder:text-line"
-                      />
+                    <div className="mt-1 flex items-center gap-x-4 gap-y-1 flex-wrap text-[13px] text-muted">
+                      <span className="inline-flex items-center gap-1">
+                        <span>Client :</span>
+                        <input
+                          value={selectedAO.clientName}
+                          onChange={e => updateAO(selectedAO.id, { clientName: e.target.value })}
+                          placeholder="Saisir le nom du client..."
+                          className="text-[13px] text-text bg-transparent border-b border-transparent hover:border-line focus:border-ai focus:outline-none px-1 min-w-0 w-40 placeholder:text-line"
+                        />
+                      </span>
+                      <span className="inline-flex items-center gap-1">
+                        <span>Saisi par :</span>
+                        <input
+                          value={selectedAO.owner ?? ""}
+                          onChange={e => updateAO(selectedAO.id, { owner: e.target.value })}
+                          placeholder="Nom de la personne..."
+                          className="text-[13px] text-text bg-transparent border-b border-transparent hover:border-line focus:border-ai focus:outline-none px-1 min-w-0 w-40 placeholder:text-line"
+                        />
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -3434,9 +3387,16 @@ export function PresalesWorkflow() {
                     {selectedAO.errorMessage}
                   </p>
                   <p className="text-xs text-muted mt-2">
-                    Supprimez cette entrée (icône poubelle) et re-déposez le fichier pour réessayer.
+                    Relancez l&apos;analyse ci-dessous. Si le fichier n&apos;est plus disponible (page rechargée),
+                    supprimez cette entrée et re-déposez le fichier.
                   </p>
                 </div>
+                <button
+                  onClick={() => startAnalysis(selectedAO.id, true)}
+                  className="inline-flex items-center gap-1.5 text-sm px-4 py-2 bg-ai hover:brightness-95 text-white rounded-lg font-medium transition"
+                >
+                  <Play size={14} /> Refaire l&apos;analyse
+                </button>
               </div>
             )}
 
@@ -3500,6 +3460,7 @@ export function PresalesWorkflow() {
                       onExportMatrix={() => handleExportMatrix(selectedAO.id)}
                       exportingMatrix={exportingMatrix}
                       onNext={() => setViewStep(2)}
+                      onReanalyze={() => startAnalysis(selectedAO.id, true)}
                     />
                   )}
                   {viewStep === 2 && (
@@ -3522,6 +3483,7 @@ export function PresalesWorkflow() {
                       }}
                       onExport={() => handleExportStrategy(selectedAO.id)}
                       exporting={exportingStrategy}
+                      onRegenerate={() => regenerateStrategy(selectedAO.id)}
                     />
                   )}
                   {viewStep === 5 && (

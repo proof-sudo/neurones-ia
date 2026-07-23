@@ -257,7 +257,7 @@ export async function generateClientDecisionAction(
   }
 }
 
-// ---------- Dashboard : projection IA à la demande ----------
+// ---------- Dashboard : analyse automatique de la courbe CA affichée ----------
 
 export type DashboardAnalysisActionResult =
   | { ok: true; analysis: string }
@@ -267,12 +267,20 @@ interface DashboardAnalysisResponse {
   analysis: string;
 }
 
-/** Projection & recommandation du cockpit (Claude, sur les KPIs réels). */
-export async function generateDashboardAnalysisAction(): Promise<DashboardAnalysisActionResult> {
+/**
+ * Analyse la courbe CA réellement affichée (mois + valeurs déjà calculés
+ * côté client selon le filtre de période actif) — Claude commente la
+ * tendance de CETTE courbe précise, jamais recalculée côté serveur.
+ */
+export async function generateDashboardAnalysisAction(
+  months: string[],
+  valuesMFcfa: number[],
+): Promise<DashboardAnalysisActionResult> {
   const { backendFetch, BackendError } = await import("@/lib/backend");
   try {
     const data = await backendFetch<DashboardAnalysisResponse>("/v1/dashboard/analysis", {
       method: "POST",
+      body: JSON.stringify({ months, values_m_fcfa: valuesMFcfa }),
     });
     return { ok: true, analysis: data.analysis };
   } catch (e) {

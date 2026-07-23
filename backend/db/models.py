@@ -96,6 +96,7 @@ class SaleOrderModel(Base):
     salesperson_name: Mapped[str] = mapped_column(String(255), default="")
     dossier_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     order_lines: Mapped[list] = mapped_column(JSON, default=list)
+    invoice_ids: Mapped[list] = mapped_column(JSON, default=list)  # IDs Odoo des account.move liées (sale.order.invoice_ids)
     synced_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
@@ -246,6 +247,7 @@ class OpportunityModel(Base):
     salesperson_name: Mapped[str] = mapped_column(String(255), default="")
     deadline: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
+    order_ids: Mapped[list] = mapped_column(JSON, default=list)  # IDs Odoo des sale.order générés par cette opportunité
     synced_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

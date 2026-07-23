@@ -16,7 +16,7 @@ from api.v1.dependencies import require_views
 from modules.uc_forecast.aggregation import build_pipeline_forecast, month_labels
 from modules.uc_forecast.decision_client import build_client_decision
 from modules.uc_forecast.narratif import build_forecast_analysis
-from modules.uc_dashboard.narratif import build_dashboard_analysis
+from modules.uc_dashboard.narratif import build_trend_analysis
 from modules.uc_performance.narratif import build_performance_analysis
 from modules.uc_tresorerie.decision_recouvrement import build_recouvrement_decision
 from modules.uc_tresorerie.narratif import build_tresorerie_analysis
@@ -73,32 +73,40 @@ def _m_fcfa_dashboard(xof: float) -> int:
     return round((xof or 0) / 1_000_000)
 
 
-@router.post("/analysis", dependencies=[Depends(require_views("dashboard"))])
-async def dashboard_analysis(request: Request, year: int | None = Query(default=None)):
-    """Projection & recommandation du tableau de bord, rédigées par Claude à
-    partir des chiffres réels déjà calculés (jamais recalculés par le LLM)."""
-    crm = _crm(request)
-    y = year or datetime.now().year
-    current = await crm.get_year_stats(y)
-    previous = await crm.get_year_stats(y - 1)
-    open_pipeline = await crm.get_open_pipeline_stats()
-    win_rate = await crm.get_win_rate()
-    margins = await crm.get_margin_stats()
+class TrendAnalysisRequest(BaseModel):
+    months: list[str]
+    values_m_fcfa: list[float]
 
-    ecart = current["revenue_xof"] - previous["revenue_xof"]
+
+@router.post("/analysis", dependencies=[Depends(require_views("dashboard"))])
+async def dashboard_analysis(request: Request, body: TrendAnalysisRequest):
+    """Analyse de la courbe CA réellement affichée (mois/valeurs déjà calculés
+    côté client selon le filtre de période actif) — se déclenche automatiquement
+    au chargement/changement de période, jamais recalculée par le LLM."""
+    months, values = body.months, body.values_m_fcfa
+    if not months or not values or all(v == 0 for v in values):
+        return {"analysis": "Pas assez de données sur cette période pour une analyse de tendance."}
+
+    debut, fin = values[0], values[-1]
+    variation_pct = round((fin - debut) / debut * 100, 1) if debut else 0.0
+    pic_idx = max(range(len(values)), key=lambda i: values[i])
+    creux_idx = min(range(len(values)), key=lambda i: values[i])
+
     ctx = {
-        "annee": y,
-        "annee_precedente": y - 1,
-        "ca_annee": _m_fcfa_dashboard(current["revenue_xof"]),
-        "ecart_pct": round(ecart / previous["revenue_xof"] * 100, 1) if previous["revenue_xof"] else 0.0,
-        "pipeline_pondere": _m_fcfa_dashboard(open_pipeline["ca_pondere_xof"]),
-        "nb_opportunites": open_pipeline["total_opportunites"],
-        "taux_victoire_nb": win_rate["taux_nb_pct"],
-        "taux_victoire_valeur": win_rate["taux_valeur_pct"],
-        "marge_definitive": margins["perc_marge_definitive_moyen"],
+        "nb_mois": len(values),
+        "periode_debut": months[0],
+        "periode_fin": months[-1],
+        "valeur_debut": round(debut),
+        "valeur_fin": round(fin),
+        "variation_pct": variation_pct,
+        "mois_pic": months[pic_idx],
+        "valeur_pic": round(values[pic_idx]),
+        "mois_creux": months[creux_idx],
+        "valeur_creux": round(values[creux_idx]),
+        "moyenne_periode": round(sum(values) / len(values)),
     }
     llm = getattr(request.app.state.container, "llm_sonnet", None)
-    analysis = await build_dashboard_analysis(llm, ctx)
+    analysis = await build_trend_analysis(llm, ctx)
     return {"analysis": analysis, "context": ctx}
 
 

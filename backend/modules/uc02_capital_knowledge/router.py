@@ -1452,6 +1452,13 @@ async def chat_query(
                                     for l in order["lines"] if l.get("product")
                                 ]
                                 lines_txt = "\nArticles :\n" + "\n".join(items) if items else "\n(Aucun article détaillé)"
+                            invoices_txt = ""
+                            if order.get("invoices"):
+                                items_i = [
+                                    f"  • {i['name']} | {i['amount']:,.0f} {order['currency']} | {i.get('status', '—')}"
+                                    for i in order["invoices"] if i.get("name")
+                                ]
+                                invoices_txt = "\nFactures liées :\n" + "\n".join(items_i) if items_i else ""
                             return (
                                 f"Bon de commande {ref_str} :\n"
                                 f"- Client : {order['client_name']}\n"
@@ -1460,6 +1467,7 @@ async def chat_query(
                                 f"- État : {order['state']}\n"
                                 f"- Commercial : {order.get('salesperson', '—')}"
                                 + lines_txt
+                                + invoices_txt
                             )
                         else:
                             return f"Le bon de commande {ref_str} est introuvable dans la base Odoo."

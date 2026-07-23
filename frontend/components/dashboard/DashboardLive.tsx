@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { clsx } from "clsx";
 import { AiChip } from "@/components/ui/AiChip";
 import { Panel, PanelHead } from "@/components/ui/Panel";
@@ -173,15 +173,6 @@ export function DashboardLive({
       : {}),
   };
 
-  function genererProjection() {
-    setAnalysisError(null);
-    startAnalyzing(async () => {
-      const res = await generateDashboardAnalysisAction();
-      if (res.ok) setAnalysis(res.analysis);
-      else setAnalysisError(res.error);
-    });
-  }
-
   const y = kpis.year.year;
   const caByMonth = useMemo(() => {
     const map = new Array(12).fill(0);
@@ -198,7 +189,10 @@ export function DashboardLive({
     ? Math.max(...kpis.monthly.map((m) => m.mois)) - 1
     : new Date().getMonth();
   const quarter = Math.floor(lastMonthIdx / 3); // trimestre du dernier mois de données
-  const quarterMonths = [quarter * 3, quarter * 3 + 1, quarter * 3 + 2].filter((i) => i <= lastMonthIdx);
+  const quarterMonths = useMemo(
+    () => [quarter * 3, quarter * 3 + 1, quarter * 3 + 2].filter((i) => i <= lastMonthIdx),
+    [quarter, lastMonthIdx],
+  );
 
   // ---- KPI CA + graphe selon la période (calcul client-side, comme le mockup) ----
   const periodCalc = useMemo(() => {
@@ -239,6 +233,25 @@ export function DashboardLive({
       lastChartMonthIdx: lastMonthIdx,
     };
   }, [period, caByMonth, caByMonthPrev, lastMonthIdx, quarter, quarterMonths, y, kpis.year.revenue_xof]);
+
+  // ---- Analyse IA automatique de la courbe CA affichée (plus de bouton :
+  // se redéclenche à chaque changement de période, sur les points réels). ----
+  useEffect(() => {
+    let cancelled = false;
+    startAnalyzing(async () => {
+      const res = await generateDashboardAnalysisAction(periodCalc.months, periodCalc.realise);
+      if (cancelled) return;
+      if (res.ok) {
+        setAnalysis(res.analysis);
+        setAnalysisError(null);
+      } else {
+        setAnalysisError(res.error);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [periodCalc.months, periodCalc.realise, startAnalyzing]);
 
   // ---- Courbe « Prévision IA » : prolonge le CA réalisé de 2 mois futurs, à
   // partir du forecast pondéré réel (mêmes buckets que le module Forecast).
@@ -468,9 +481,6 @@ export function DashboardLive({
           <h1 className="text-2xl font-semibold tracking-[-0.01em]">
             Bonjour, voici votre lecture du jour
           </h1>
-          <div className="mt-1 text-[13px] text-muted">
-            Neurones Technologies — Sales IA — Cockpit prédictif
-          </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <div className="flex gap-1 rounded-[10px] border border-line bg-panel p-1">
@@ -603,27 +613,15 @@ export function DashboardLive({
             <AiChip>projection</AiChip>
             Projection IA &amp; recommandation
           </h3>
-          <button
-            onClick={genererProjection}
-            disabled={analyzing}
-            className="cursor-pointer rounded-lg bg-ai px-3 py-[7px] text-[11.5px] font-semibold text-white disabled:opacity-50"
-          >
-            🔮 Générer une projection
-          </button>
+          <span className="text-[10.5px] text-muted">
+            Analyse automatique de la courbe CA ci-dessus — se met à jour avec le filtre de période
+          </span>
         </div>
 
-        {analyzing && <AiChip>calcul de la projection…</AiChip>}
+        {analyzing && <AiChip>analyse de la courbe en cours…</AiChip>}
 
         {!analyzing && analysisError && (
-          <div className="text-[12.5px] text-bad">Projection indisponible : {analysisError}</div>
-        )}
-
-        {!analyzing && !analysisError && !analysis && (
-          <div className="text-[12.5px] text-muted">
-            Cliquez sur « Générer une projection » pour une projection chiffrée de la
-            trajectoire à venir, avec une recommandation concrète associée — basée sur le
-            pipeline pondéré réel.
-          </div>
+          <div className="text-[12.5px] text-bad">Analyse indisponible : {analysisError}</div>
         )}
 
         {!analyzing && analysis && (

@@ -1,8 +1,14 @@
-"""Offre à fort impact (UC10) : contexte enrichi + parse tolérant + garde-fou qualité."""
+"""Offre sans template (UC10) : contexte enrichi + parse tolérant du plan de document
++ repli déterministe + construction .docx de bout en bout."""
+from io import BytesIO
+
+from docx import Document as DocxDocument
+
 from core.domain.offer import ScoringResult, ExtractedItem, Risk, BidRecommendation
 from modules.uc10_presales.offer_generator import (
-    _offer_user_context, _loads_offer_json, _offer_quality_warnings,
+    _offer_user_context, _parse_document, _fallback_document, _sanitize_block,
 )
+from modules.uc10_presales.offer_docx_builder import build_offer_docx
 
 
 def _scoring(**kw) -> ScoringResult:
@@ -15,42 +21,56 @@ def _scoring(**kw) -> ScoringResult:
     return ScoringResult(**base)
 
 
-def test_loads_valid_json():
-    raw = '{"titre_projet": "Déploiement Odoo", "fonctionnalites": ["A", "B"]}'
-    data = _loads_offer_json(raw)
-    assert data["titre_projet"] == "Déploiement Odoo"
-    assert data["fonctionnalites"] == ["A", "B"]
+# ── Parse du plan de document ─────────────────────────────────────────────────
 
-
-def test_loads_tronque_recupere_la_prose():
-    # JSON coupé en plein milieu d'un module : les blocs de prose déjà fermés doivent survivre.
+def test_parse_document_valide():
     raw = (
-        '{"titre_projet": "Mise en place d\'une plateforme bancaire",'
-        ' "expression_besoins": ["§1 contexte BGFI secteur bancaire.",'
-        ' "§2 besoins fonctionnels précis.", "§3 objectifs attendus."],'
-        ' "objectifs_reponse": ["obj A", "obj B"],'
-        ' "modules": [{"titre": "Module 1 — Gestion'  # ← tronqué ici
+        '{"cover": {"titre": "Déploiement Odoo", "sous_titre": "Offre technique"},'
+        ' "blocks": [{"type": "heading", "level": 1, "text": "Besoin"},'
+        ' {"type": "paragraph", "text": "Contexte."},'
+        ' {"type": "bullets", "items": ["a", "b"]}]}'
     )
-    data = _loads_offer_json(raw)
-    assert data["titre_projet"].startswith("Mise en place")
-    assert len(data["expression_besoins"]) == 3
-    assert data["objectifs_reponse"] == ["obj A", "obj B"]
-    assert "modules" not in data  # bloc tronqué non récupéré → retombera sur le défaut
+    doc = _parse_document(raw)
+    assert doc["cover"]["titre"] == "Déploiement Odoo"
+    assert [b["type"] for b in doc["blocks"]] == ["heading", "paragraph", "bullets"]
 
 
-def test_loads_garbage_renvoie_vide_et_qualite_alerte():
-    data = _loads_offer_json("ceci n'est pas du JSON du tout")
-    assert data == {}
-    warnings = _offer_quality_warnings(data)
-    assert warnings and "illisible" in warnings[0].lower()
+def test_parse_document_tronque_recupere_les_blocs():
+    # JSON coupé en plein milieu d'un bloc : les blocs déjà fermés doivent survivre.
+    raw = (
+        '{"cover": {"titre": "Plateforme bancaire"},'
+        ' "blocks": [{"type": "heading", "level": 1, "text": "Compréhension"},'
+        ' {"type": "paragraph", "text": "BGFI, secteur bancaire."},'
+        ' {"type": "table", "titre": "Stack", "headers": ["Composant'  # ← tronqué ici
+    )
+    doc = _parse_document(raw)
+    assert doc["cover"]["titre"].startswith("Plateforme")
+    assert len(doc["blocks"]) == 2  # heading + paragraph récupérés, table tronquée ignorée
+    assert doc["blocks"][0]["type"] == "heading"
 
 
-def test_quality_signale_les_sections_manquantes():
-    data = {"titre_projet": "X", "expression_besoins": ["a"], "objectifs_reponse": ["b"],
-            "presentation_reponse": ["c"], "fonctionnalites": ["d"], "stack_technique": [{}]}
-    warnings = _offer_quality_warnings(data)
-    assert any("modules" in w for w in warnings)  # modules absent → signalé
+def test_parse_document_garbage_renvoie_vide():
+    assert _parse_document("ceci n'est pas du JSON du tout") == {}
 
+
+def test_sanitize_bloc_type_inconnu_ignore():
+    assert _sanitize_block({"type": "video", "src": "x"}) is None
+    assert _sanitize_block({"type": "heading", "text": ""}) is None  # heading vide rejeté
+    assert _sanitize_block({"type": "heading", "level": 9, "text": "T"})["level"] == 3
+
+
+# ── Repli déterministe ────────────────────────────────────────────────────────
+
+def test_fallback_document_non_vide():
+    sc = _scoring(besoins=[ExtractedItem("Migration comptable")], strengths=["Expertise Odoo"])
+    doc = _fallback_document(sc, "BGFI")
+    assert doc["cover"]["titre"]
+    assert doc["blocks"]  # jamais vide
+    texts = " ".join(b.get("text", "") + " ".join(b.get("items", [])) for b in doc["blocks"])
+    assert "Migration comptable" in texts
+
+
+# ── Contexte utilisateur ──────────────────────────────────────────────────────
 
 def test_contexte_enrichi_contient_atouts_et_risques():
     sc = _scoring(
@@ -63,3 +83,29 @@ def test_contexte_enrichi_contient_atouts_et_risques():
     assert "ATOUTS" in ctx and "RISQUES" in ctx
     assert "Partenariat BI" in ctx
     assert "BGFI" in ctx
+
+
+# ── Construction du .docx (sans template) ─────────────────────────────────────
+
+def test_build_offer_docx_produit_un_docx_valide():
+    cover = {"titre": "Déploiement d'une plateforme", "sous_titre": "Offre technique",
+             "accroche": "Une solution sur mesure."}
+    blocks = [
+        {"type": "heading", "level": 1, "text": "Compréhension du besoin"},
+        {"type": "paragraph", "text": "Le client souhaite moderniser son SI."},
+        {"type": "bullets", "items": ["Point 1", "Point 2"]},
+        {"type": "table", "titre": "Stack technique",
+         "headers": ["Composant", "Version"], "rows": [["PostgreSQL", "15"], ["Nginx", "—"]]},
+    ]
+    data = build_offer_docx(cover=cover, blocks=blocks, client_name="BGFI Bank")
+    assert isinstance(data, bytes) and len(data) > 0
+    doc = DocxDocument(BytesIO(data))
+    full = "\n".join(p.text for p in doc.paragraphs)
+    # Titre couverture + bloc IA + blocs cannés (présentation/méthodologie/certifications) + équipe
+    assert "Déploiement d'une plateforme" in full
+    assert "Compréhension du besoin" in full
+    assert "Présentation de Neurones Technologies" in full
+    assert "Méthodologie et gestion de projet" in full
+    assert "Équipe projet dédiée" in full
+    # Le tableau IA + le tableau équipe sont présents
+    assert len(doc.tables) >= 2

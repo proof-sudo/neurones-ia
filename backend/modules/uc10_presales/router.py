@@ -25,14 +25,9 @@ from modules.uc10_presales.schemas import (
     RequiredProfileSchema, EligibilityThresholdSchema, FinancialDataSchema,
     CapabilityDealSchema, CapabilityMatchSchema, ClientContextSchema,
     OfferSectionsSchema, OfferSectionsResponse, OfferRenderRequest,
-    TemplateCheckSchema, TemplateValidationSchema,
 )
 from modules.uc10_presales.use_case import PresalesUseCase
 from modules.uc10_presales.offer_generator import OfferGenerator
-from modules.uc10_presales.template_validator import (
-    TemplateValidation, validate_template, make_validation, validate_domain_template,
-)
-from modules.uc10_presales.template_contract import DEFAULT_DOMAIN
 from core.domain.offer import ScoringResult, BidStrategy, Partner, Appendix
 # Matrice de conformité : build_matrice / render_matrix_xlsx étaient UTILISÉS sans être
 # importés (NameError latent sur /export-matrix) → import explicite. + assesseur IA,
@@ -275,47 +270,6 @@ async def offer_render(body: OfferRenderRequest, request: Request):
         media_type=_DOCX_MIME,
         headers=_attachment_headers(draft.filename),
     )
-
-
-def _validation_to_schema(v: TemplateValidation) -> TemplateValidationSchema:
-    return TemplateValidationSchema(
-        ok=v.ok, domain=v.domain, template_path=v.template_path,
-        errors=v.errors, warnings=v.warnings,
-        checks=[
-            TemplateCheckSchema(label=c.label, ok=c.ok, detail=c.detail, severity=c.severity)
-            for c in v.checks
-        ],
-    )
-
-
-@router.post("/template/validate", response_model=TemplateValidationSchema)
-async def validate_offer_template(
-    domain: str = DEFAULT_DOMAIN,
-    file: UploadFile | None = File(None),
-):
-    """Vérifie qu'un template .docx d'offre respecte le contrat attendu par le générateur.
-
-    - **Sans fichier** : valide le template présent dans la GED pour `domain`.
-    - **Avec fichier .docx** : valide le fichier uploadé (préflight, avant dépôt en GED).
-
-    Renvoie un rapport ✅/❌ par exigence (ancres de titres, noms legacy, tableaux,
-    phases du planning) + le détail de ce qu'il faut corriger dans le .docx. `ok=false`
-    dès qu'une exigence de sévérité « error » échoue (les « warning » n'invalident pas).
-    """
-    if file is not None:
-        if not (file.filename or "").lower().endswith(".docx"):
-            raise HTTPException(status_code=400, detail="Le template doit être un fichier .docx.")
-        data = await file.read()
-        if len(data) > 10 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="Fichier trop volumineux (max 10 MB).")
-        try:
-            checks = validate_template(BytesIO(data))
-        except Exception as exc:
-            raise HTTPException(status_code=422, detail=f".docx illisible : {type(exc).__name__}: {exc}")
-        result = make_validation(domain=domain, template_path=file.filename, checks=checks)
-    else:
-        result = validate_domain_template(domain)
-    return _validation_to_schema(result)
 
 
 @router.post("/bid-strategy", response_model=BidStrategySchema)

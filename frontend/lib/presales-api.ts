@@ -456,59 +456,30 @@ export async function exportChecklist(
 
 // ── Génération d'offre ────────────────────────────────────────────────────────
 
-export interface TemplateCheck {
-  label: string;
-  ok: boolean;
-  detail: string;
-  severity: "error" | "warning";
+// Plan de document produit par l'IA (plus de gabarit) : couverture + blocs typés.
+// Le builder backend met ces blocs en forme dans le .docx. Cf. offer_docx_builder.py.
+export interface OfferCover {
+  titre: string;
+  sous_titre?: string;
+  accroche?: string;
 }
 
-export interface TemplateValidation {
-  ok: boolean;
-  domain: string;
-  template_path: string | null;
-  errors: number;
-  warnings: number;
-  checks: TemplateCheck[];
-}
+export type OfferBlockType =
+  | "heading" | "paragraph" | "bullets" | "numbered" | "table" | "page_break";
 
-/**
- * Vérifie qu'un modèle d'offre .docx respecte le contrat attendu par le générateur.
- * Sans `file` : valide le modèle présent dans la GED pour `domain`.
- * Avec `file` : valide un .docx uploadé (préflight avant dépôt en GED).
- */
-export async function validateTemplate(domain?: string, file?: File): Promise<TemplateValidation> {
-  const qs = domain ? `?domain=${encodeURIComponent(domain)}` : "";
-  let body: BodyInit | undefined;
-  if (file) {
-    const form = new FormData();
-    form.append("file", file);
-    body = form; // pas de Content-Type manuel : le navigateur fixe la frontière multipart
-  }
-  const response = await apiFetch(`${API_BASE}/presales/template/validate${qs}`, {
-    method: "POST",
-    body,
-  }, 60_000);
-  if (!response.ok) throw new Error(`Template validate error: ${response.status}`);
-  return response.json();
+export interface OfferBlock {
+  type: OfferBlockType;
+  level?: number;          // heading
+  text?: string;           // heading / paragraph
+  items?: string[];        // bullets / numbered
+  titre?: string;          // table
+  headers?: string[];      // table
+  rows?: string[][];       // table
 }
-
-export interface OfferModule { titre: string; description: string; }
-export interface OfferStackItem { composant: string; version: string; }
-export interface OfferPlanningItem { phase: string; activite: string; jh: string; }
-export interface OfferRepartitionItem { fonctionnalite: string; composant: string; }
 
 export interface OfferSections {
-  titre_projet: string;
-  expression_besoins: string[];
-  objectifs_reponse: string[];
-  presentation_reponse: string[];
-  fonctionnalites: string[];
-  modules: OfferModule[];
-  stack_technique: OfferStackItem[];
-  planning: OfferPlanningItem[];
-  // Tableau Fonctionnalité → Composant (inséré à {{Répartition des fonctionnalités}}).
-  repartition?: OfferRepartitionItem[];
+  cover: OfferCover;
+  blocks: OfferBlock[];
 }
 
 export interface OfferSectionsResponse {
