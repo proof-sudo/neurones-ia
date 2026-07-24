@@ -89,6 +89,13 @@ _CONDITIONAL_MIN_SCORE = 35
 _FRAME_OUTPUT_BUDGET_TOKENS = 6_000
 _REQUIREMENTS_OUTPUT_BUDGET_TOKENS = 16_000
 
+# step1.extract (besoins/critères/prérequis/ressources/vigilance) : 8000 de base, mais un
+# AO dense (97 pages, ex. SIB CCTP) a tronqué à ce plafond (JSON invalide, tout perdu en
+# silence). Retry unique à budget élargi — même patron que le résumé exécutif ci-dessus :
+# mieux vaut un aller-retour de plus que perdre les besoins/critères d'un AO réel.
+_EXTRACT_OUTPUT_BUDGET_TOKENS = 8_000
+_EXTRACT_OUTPUT_RETRY_TOKENS = 12_000
+
 _EXTRACT_SYSTEM = """Tu es un extracteur d'appels d'offres IT. Ton rôle est d'EXTRAIRE, pas de RÉSUMER.
 
 OBJECTIF : restituer chaque exigence avec son niveau de détail D'ORIGINE. La valeur métier est
@@ -268,10 +275,10 @@ annexes numérotées). Code/référence EXACT. N'invente aucune pièce génériq
 
 Réponds UNIQUEMENT avec le JSON valide, sans balises markdown."""
 
-_SUMMARY_SYSTEM = """Tu es un expert en avant-vente IT. Rédige un résumé exécutif CONCRET de cet appel d'offres.
-
-OBJECTIF : un résumé qui DONNE LES FAITS, pas des généralités. Un lecteur doit savoir, dès la
-lecture, DE QUOI parle précisément ce marché — sans avoir à ouvrir le document.
+_SUMMARY_SYSTEM = """Tu es un expert en avant-vente IT. Produis une FICHE DE LECTURE RAPIDE de cet
+appel d'offres — pas une note de synthèse en prose. Le lecteur doit saisir l'essentiel en scannant
+15 secondes, sans avoir à ouvrir le document ni à lire un pavé de texte qui redonne l'impression de
+relire le cahier des charges.
 
 RÈGLE — concret avant tout :
 - NOMME les éléments précis du texte : solution/technologie (ex: GLPI, Commvault), client et
@@ -280,27 +287,28 @@ RÈGLE — concret avant tout :
 - Préfère TOUJOURS le terme exact au terme générique : "solution GLPI multi-filiales" plutôt que
   "un outil de gestion" ; "authentification Azure AD/O365" plutôt que "une authentification".
 - N'INVENTE rien : ne cite que ce qui est dans le texte. Si une info n'y est pas, ne la mentionne pas.
+  Si une section entière n'a pas de contenu pertinent dans l'AO, OMETS-la (jamais de section vide
+  ou de "non précisé" en puce).
 
-RÈGLE — formulation et mise en forme :
-- HIÉRARCHISE comme une note de synthèse, pas comme un inventaire. Conserve INTÉGRALEMENT les
-  faits décisifs : critères éliminatoires, montants, seuils et garanties chiffrés, périmètre
-  (nombre de sites/pays/utilisateurs), délais et durée, barème d'évaluation, technologies
-  structurantes. Les énumérations secondaires (listes de modules, certifications, livrables...)
-  peuvent être synthétisées : cite les 2-3 éléments les plus significatifs et agrège le reste
-  (ex : "les modules Deposits, Loans et 4 autres modules S/4HANA for Banking"). En condensant,
-  ne déforme ni n'invente rien.
-- Rédaction soignée et professionnelle : phrases complètes et bien construites, ton de note de
-  synthèse destinée à une direction commerciale. Évite les phrases interminables : découpe les
-  longues énumérations en plusieurs phrases courtes et lisibles.
-- Structure le résumé en 3 à 5 paragraphes thématiques (ex : contexte et objectif ; périmètre et
-  exigences techniques ; enjeux et contraintes ; technologies, planning et livrables ; modalités
-  d'évaluation et de paiement), chacun de 2 à 4 phrases. Vise 250 à 400 mots au total : le résumé
-  doit TOUJOURS se terminer par une phrase complète de conclusion, jamais en cours d'énumération.
-- OBLIGATOIRE : sépare chaque paragraphe par une LIGNE VIDE (deux retours à la ligne consécutifs),
-  sinon les paragraphes seront fusionnés à l'affichage.
-- NE commence PAS par un titre (pas de "RÉSUMÉ EXÉCUTIF" ni équivalent) : entre directement dans
-  le premier paragraphe.
-IMPORTANT : réponds en texte brut uniquement, sans markdown, sans titres, sans puces, sans caractères gras."""
+RÈGLE — format (OBLIGATOIRE, réponds en Markdown) :
+- Ligne 1 : une phrase d'accroche en **gras**, le "pitch" du marché en une ligne (qui commande
+  quoi, pour quel enjeu) — pas un titre du type "RÉSUMÉ EXÉCUTIF", une vraie phrase.
+- Puis des sections courtes, chacune un titre en **gras** suivi de puces Markdown (`- `) :
+  **Client & périmètre** (autorité contractante, sites/pays/utilisateurs concernés),
+  **Ce qui est demandé** (solution/techno précise, fonctionnalités structurantes),
+  **Exigences clés** (seuils techniques et critères éliminatoires — les 3 à 5 plus décisifs,
+  pas une liste exhaustive), **Calendrier** (deadline de remise, durée du marché, jalons
+  critiques), **Évaluation** (barème chiffré type 70/30, critères de notation). N'inclus que
+  les sections qui ont un contenu réel à rapporter.
+- Une puce = un fait, une phrase courte. Jamais de sous-liste imbriquée dans une puce, jamais une
+  puce qui fait plusieurs lignes. Les énumérations secondaires (modules, certifications) : cite
+  les 2-3 plus significatives et agrège le reste (ex. "Deposits, Loans et 4 autres modules
+  S/4HANA for Banking") — sans déformer ni inventer.
+- Mets en **gras** les chiffres et noms propres qui comptent (deadlines, montants, seuils,
+  technologies) pour qu'un lecteur les repère au premier coup d'œil.
+- Vise 120 à 180 mots au total (hors titres de section) : c'est un tableau de bord de lecture,
+  pas un résumé narratif. Aucune phrase de conclusion nécessaire — la fiche s'arrête à la
+  dernière puce utile."""
 
 _ANALYSIS_SYSTEM = """Tu es un directeur commercial senior en IT.
 On te fournit une GRILLE D'ÉVALUATION (critères avec points max) et nos références (RAG).
@@ -752,13 +760,6 @@ class ScoringPipeline:
 
     async def _step1_extract(self, ao_text: str) -> tuple[list[KeyElement], dict]:
         snippet = _truncate_by_tokens(ao_text, self._llm, _EXTRACT_INPUT_BUDGET_TOKENS, step="extract")
-        # 8000 tokens (était 5500) : chaque item des 5 listes thématiques porte désormais
-        # {texte, source_section} → le pire cas (73 items + réfs) ~6000 tok (cf. gate), 8000
-        # garde ~20% de marge. Gate : test_extract_output_budget.py.
-        raw = await self._llm.extract(
-            prompt=_EXTRACT_SYSTEM, text=snippet, max_tokens=8000,
-            temperature=_TEMP_DETERMINISTIC,
-        )
         empty_extra: dict = {
             "criteres_selection": [], "besoins": [], "prerequis": [],
             "ressources_demandees": [], "points_vigilance": [], "date_remise": "",
@@ -777,6 +778,28 @@ class ScoringPipeline:
                 if item.texte:
                     out.append(item)
             return out
+
+        # Sur un AO dense (ex. 97 pages, tableaux nombreux), le plafond de base peut tronquer
+        # le JSON en plein milieu — perdant TOUS les besoins/critères/prérequis de l'AO en
+        # silence si on ne fait rien. Retry unique à budget élargi (même patron que le résumé
+        # exécutif) avant d'accepter une extraction vide.
+        raw = ""
+        for budget in (_EXTRACT_OUTPUT_BUDGET_TOKENS, _EXTRACT_OUTPUT_RETRY_TOKENS):
+            try:
+                raw = await self._llm.extract(
+                    prompt=_EXTRACT_SYSTEM, text=snippet, max_tokens=budget,
+                    raise_on_truncation=True, temperature=_TEMP_DETERMINISTIC,
+                )
+                break
+            except OutputTruncatedError:
+                logger.warning(
+                    "step1.extract tronqué au plafond de %d tokens — %s.",
+                    budget,
+                    "retry à budget élargi" if budget < _EXTRACT_OUTPUT_RETRY_TOKENS
+                    else "abandon, extraction vide (AO hors norme)",
+                )
+        else:
+            return [], empty_extra
 
         try:
             cleaned = _clean_json(raw)
@@ -841,6 +864,20 @@ class ScoringPipeline:
         calendar = self._parse_calendar(data.get("calendar"))
         evaluation = self._parse_evaluation(data.get("evaluation_modalities"))
         criteria = self._parse_criteria(data.get("criteria")) or self._load_standard_grid()
+        if criteria and sum(c.max_points for c in criteria) == 0:
+            # Grille non vide mais dégénérée (critères sans le moindre point chiffré,
+            # ex. AO qui décrit ses critères en prose sans grille pondérée explicite) —
+            # `or` ci-dessus ne l'attrape pas (liste non vide = truthy). Un score sur une
+            # grille à 0 point total est structurellement inexploitable (division par
+            # zéro évitée en amont, mais le score resterait toujours 0/NO_BID à tort).
+            # Repli sur la grille standard ESN, marquée `is_inferred` — jamais présentée
+            # comme si elle venait de l'AO.
+            logger.warning(
+                "Grille extraite mais sans points chiffrés (%d critères, total=0 pt) — "
+                "repli sur la grille standard ESN plausible (is_inferred=True).",
+                len(criteria),
+            )
+            criteria = self._load_standard_grid()
 
         raw_identity = data.get("market_identity") or {}
         raw_eval = data.get("evaluation_modalities") or {}
