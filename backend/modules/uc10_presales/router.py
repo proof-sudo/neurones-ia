@@ -87,6 +87,7 @@ def _get_use_case(request: Request) -> PresalesUseCase:
         rag_engine=container.rag_engine,
         pdf_parser=container.pdf_parser,
         docx_parser=container.docx_parser,
+        vision_ocr=container.presales_vision_ocr,
     )
 
 
