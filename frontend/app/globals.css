@@ -50,13 +50,53 @@ h3 {
   background: var(--color-ai-dim);
 }
 
+/* Scrollbar fine et discrète, appliquée globalement */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-line) transparent;
+}
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #deded7;
+  background: var(--color-line);
   border-radius: 10px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-muted);
+}
+
+/* Scrollbar fine et discrète (apparaît au survol) — à appliquer sur un conteneur scrollable */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.scrollbar-thin:hover {
+  scrollbar-color: var(--color-line) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 10px;
+}
+.scrollbar-thin:hover::-webkit-scrollbar-thumb {
+  background: var(--color-line);
+}
+
+/* Scrollbar totalement invisible (le scroll reste actif) */
+.scrollbar-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
 }
 
 /* ---------- animations partagées ---------- */
