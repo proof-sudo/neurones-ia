@@ -300,7 +300,7 @@ export function DocumentsView({
       />
 
       {tab === "bibliotheque" && (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-[240px_1fr]">
+        <div className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[240px_1fr]">
           <Panel>
             <PanelHead title="Catégories" />
             <FolderTree categories={categories} selected={folder} onSelect={setFolder} />
@@ -608,14 +608,14 @@ function FileTable({
     return <p className="text-[12.5px] text-muted">Aucun fichier.</p>;
   }
   return (
-    <div className="overflow-x-auto">
+    <div className="max-h-[65vh] overflow-y-auto overflow-x-auto">
       <table className="w-full border-collapse text-[12.5px]">
         <thead>
           <tr>
             {["Fichier", "Catégorie", "Taille", "Statut", ""].map((h) => (
               <th
                 key={h}
-                className="border-b border-line px-2 pb-2 text-left text-[11px] font-medium uppercase tracking-[0.05em] text-muted"
+                className="sticky top-0 z-10 border-b border-line bg-panel px-2 pb-2 pt-1 text-left text-[11px] font-medium uppercase tracking-[0.05em] text-muted"
               >
                 {h}
               </th>
