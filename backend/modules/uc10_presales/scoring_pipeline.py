@@ -453,8 +453,12 @@ class ScoringPipeline:
     Utilise LLMGateway (interface) → indépendant du modèle.
     """
 
-    def __init__(self, llm: LLMGateway, rag_engine: RAGEngine):
+    def __init__(self, llm: LLMGateway, rag_engine: RAGEngine, llm_analysis: LLMGateway | None = None):
+        # llm : extraction + reranks (tâches mécaniques → Haiku).
+        # llm_analysis : ÉTAPE 4 uniquement (analyse/notation/reco = jugement → Sonnet).
+        # Repli sur `llm` si non fourni (rétrocompat + tests).
         self._llm = llm
+        self._llm_analysis = llm_analysis or llm
         self._rag_engine = rag_engine
 
     async def _timed(self, label: str, coro):
@@ -1282,7 +1286,7 @@ class ScoringPipeline:
         rag_context: str,
         criteria: list[ScoringCriterion],
     ) -> _AnalysisOutput:
-        ao_snippet = _truncate_by_tokens(ao_text, self._llm, _ANALYZE_INPUT_BUDGET_TOKENS, step="analyze")
+        ao_snippet = _truncate_by_tokens(ao_text, self._llm_analysis, _ANALYZE_INPUT_BUDGET_TOKENS, step="analyze")
         grille_json = json.dumps(
             [{"id": c.id, "label": c.label, "max_points": c.max_points, "category": c.category}
              for c in criteria],
@@ -1301,7 +1305,7 @@ class ScoringPipeline:
         # JSON tronqué qui retombe en silence sur un faux score=50.
         truncated = False
         try:
-            raw = await self._llm.generate(
+            raw = await self._llm_analysis.generate(
                 system=_ANALYSIS_SYSTEM,
                 user=user_prompt,
                 max_tokens=_ANALYZE_OUTPUT_BUDGET_TOKENS,
