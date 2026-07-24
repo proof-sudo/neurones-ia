@@ -96,6 +96,12 @@ except ImportError:
 # observé à 781s pour pymupdf4llm seul. Passé ce délai, on n'attend plus ce chemin.
 _PYMUPDF4LLM_TIMEOUT_S = 25
 
+# Au-delà de ce nombre de pages, on saute pymupdf4llm PROACTIVEMENT plutôt que d'attendre
+# le timeout ci-dessus : le pipeline texte/OCR de repli est déjà mesuré rapide même sur de
+# gros documents (88s pour 97 pages, OCR ciblé compris), alors qu'un essai pymupdf4llm voué
+# à l'échec fait perdre _PYMUPDF4LLM_TIMEOUT_S à chaque fois pour rien.
+_PYMUPDF4LLM_MAX_PAGES = 40
+
 
 class PDFAdapter(DocumentParser):
     """
@@ -128,19 +134,26 @@ class PDFAdapter(DocumentParser):
         page-par-page, structurellement borné par page plutôt que par le document
         entier."""
         if _PYMUPDF4LLM_AVAILABLE:
-            try:
-                markdown = await asyncio.wait_for(
-                    asyncio.to_thread(self._try_pymupdf4llm_if_faithful, file_path),
-                    timeout=_PYMUPDF4LLM_TIMEOUT_S,
+            n_pages = await asyncio.to_thread(self._page_count, file_path)
+            if n_pages and n_pages > _PYMUPDF4LLM_MAX_PAGES:
+                logger.info(
+                    "pymupdf4llm sauté (%d pages > %d) — pipeline texte/OCR directement : %s",
+                    n_pages, _PYMUPDF4LLM_MAX_PAGES, file_path,
                 )
-                if markdown:
-                    return markdown
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "pymupdf4llm > %ds sur %s — abandonné (thread laissé à finir seul), "
-                    "repli sur le pipeline texte/OCR page par page.",
-                    _PYMUPDF4LLM_TIMEOUT_S, file_path,
-                )
+            else:
+                try:
+                    markdown = await asyncio.wait_for(
+                        asyncio.to_thread(self._try_pymupdf4llm_if_faithful, file_path),
+                        timeout=_PYMUPDF4LLM_TIMEOUT_S,
+                    )
+                    if markdown:
+                        return markdown
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "pymupdf4llm > %ds sur %s — abandonné (thread laissé à finir seul), "
+                        "repli sur le pipeline texte/OCR page par page.",
+                        _PYMUPDF4LLM_TIMEOUT_S, file_path,
+                    )
         return await asyncio.to_thread(self._parse_fallback_sync, file_path)
 
     def _try_pymupdf4llm_if_faithful(self, file_path: str) -> str:
