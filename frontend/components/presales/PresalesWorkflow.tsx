@@ -14,7 +14,7 @@ import { Modal } from "@/components/ui/Modal";
 import {
   generateBidStrategy, exportAnalysis, exportScoring, exportStrategy,
   exportMatrix, exportChecklist, buildOfferSections, renderOffer,
-  fetchGEDFiles, uploadGEDFile, itemText,
+  fetchGEDFiles, uploadGEDFile, itemText, getMatrix,
   createDossier, listDossiers, patchDossier, deleteDossier, analyzeDossier, downloadDossierFile,
   type GEDFile, type ExtractedItem,
   type ScoringResult, type BidStrategy, type OfferSections,
@@ -22,6 +22,7 @@ import {
   type ScoringCriterion, type Risk, type Precondition,
   type StrategyPhase, type Appendix,
   type RequiredProfile, type EligibilityThreshold, type FinancialData,
+  type ConformityMatrix,
 } from "@/lib/presales-api";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -201,7 +202,12 @@ function isStepDone(ao: AOEntry, step: number): boolean {
   return false;
 }
 
-function generateChecklist(r: ScoringResult): ChecklistItem[] {
+// Statuts IA de la matrice de conformité qui valent "pièce déjà couverte" —
+// coche automatiquement l'item plutôt que de faire recommencer le travail
+// déjà fait par le moteur de conformité (assessMatrix/matrix_store).
+const _STATUTS_DEJA_COUVERTS = new Set(["CONFORME", "CONFORME_PARTIEL"]);
+
+function generateChecklist(r: ScoringResult, matrix?: ConformityMatrix | null): ChecklistItem[] {
   const uid = () => genId();
   const items: ChecklistItem[] = [];
 
@@ -220,14 +226,36 @@ function generateChecklist(r: ScoringResult): ChecklistItem[] {
   items.push({ id: uid(), category: "Administratif", label: "Attestation de régularité CNPS", required: true, checked: false, note: "" });
   items.push({ id: uid(), category: "Administratif", label: "Statuts de la société et pouvoirs du signataire", required: true, checked: false, note: "" });
   items.push({ id: uid(), category: "Administratif", label: "Bilans financiers des 3 derniers exercices", required: false, checked: false, note: "" });
-  const docKeywords = ["certif", "assur", "agré", "habilit", "attestation", "autorisation", "label", "norme", "iso", "bilan", "capacité financ"];
-  (r.prerequis ?? []).forEach(p => {
-    const txt = itemText(p);
-    const lp = txt.toLowerCase();
-    if (docKeywords.some(k => lp.includes(k))) {
-      items.push({ id: uid(), category: "Administratif", label: txt, required: true, checked: false, note: "" });
-    }
-  });
+
+  if (matrix && matrix.exigences.length > 0) {
+    // La matrice de conformité (déjà assessée par l'IA à l'étape 1) connaît les
+    // pièces/prérequis RÉELS de CET AO, avec un statut suggéré par exigence —
+    // plus riche et plus fiable qu'un ré-appariement par mots-clés sur du texte
+    // brut. On réutilise ce travail au lieu de le refaire à moitié ici.
+    matrix.exigences
+      .filter(ex => ex.type === "PREREQUIS" || ex.type === "ANNEXE")
+      .forEach(ex => {
+        items.push({
+          id: uid(),
+          category: "Administratif",
+          label: ex.texte,
+          required: ex.blocking,
+          checked: _STATUTS_DEJA_COUVERTS.has(ex.statut_suggere),
+          note: ex.justification_ia ? `IA : ${ex.justification_ia}` : "",
+        });
+      });
+  } else {
+    // Repli si l'étape 1 n'a jamais assessé de matrice pour cet AO (comportement
+    // historique — inférence par mots-clés sur les prérequis bruts).
+    const docKeywords = ["certif", "assur", "agré", "habilit", "attestation", "autorisation", "label", "norme", "iso", "bilan", "capacité financ"];
+    (r.prerequis ?? []).forEach(p => {
+      const txt = itemText(p);
+      const lp = txt.toLowerCase();
+      if (docKeywords.some(k => lp.includes(k))) {
+        items.push({ id: uid(), category: "Administratif", label: txt, required: true, checked: false, note: "" });
+      }
+    });
+  }
 
   // ── Commercial ─────────────────────────────────────────────────────────────
   items.push({ id: uid(), category: "Commercial", label: "Offre financière / BPU complétée et signée", required: true, checked: false, note: "" });
@@ -3425,10 +3453,21 @@ export function PresalesWorkflow({ currentUserName = "" }: { currentUserName?: s
                   {viewStep === 5 && (
                     <Step5
                       ao={selectedAO}
-                      onValidate={() => {
-                        const items = selectedAO.checklist.length === 0 && selectedAO.scoringResult
-                          ? generateChecklist(selectedAO.scoringResult)
-                          : selectedAO.checklist;
+                      onValidate={async () => {
+                        let items = selectedAO.checklist;
+                        if (selectedAO.checklist.length === 0 && selectedAO.scoringResult) {
+                          // La matrice de conformité (étape 1) peut déjà avoir été
+                          // assessée — on la réutilise pour une checklist fondée sur
+                          // les vraies pièces de CET AO plutôt qu'une inférence par
+                          // mots-clés. Absence de matrice (404) = repli silencieux.
+                          let matrix: ConformityMatrix | null = null;
+                          try {
+                            matrix = await getMatrix(selectedAO.scoringResult.ao_filename);
+                          } catch {
+                            matrix = null;
+                          }
+                          items = generateChecklist(selectedAO.scoringResult, matrix);
+                        }
                         updateAO(selectedAO.id, { offerValidated: true, checklist: items });
                         setViewStep(6);
                       }}

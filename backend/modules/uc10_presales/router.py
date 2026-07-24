@@ -403,7 +403,7 @@ async def offer_render(body: OfferRenderRequest, request: Request):
         body.selected_cvs, body.selected_abes,
     )
     try:
-        draft = use_case.render_offer(
+        draft = await use_case.render_offer(
             scoring, body.sections.model_dump(), body.client_name or "",
             selected_cvs=body.selected_cvs, selected_abes=body.selected_abes,
         )

@@ -3,6 +3,7 @@ import json
 import logging
 from pathlib import Path
 
+import aiosqlite
 import yaml
 
 from config.settings import settings
@@ -27,6 +28,28 @@ _EXPRESS_THRESHOLD_DAYS = 7
 def _strategy_skeleton_path(express: bool) -> Path:
     name = "express" if express else "standard"
     return Path(settings.uploads_path).parent / "strategy_phases" / f"{name}.yaml"
+
+
+async def _fetch_kb_team(db_path, selected_cvs: list[str]) -> dict[str, tuple[str, str]]:
+    """Résout (nom_complet, titre_poste) réels depuis `kb_cv` pour les CV choisis
+    (clé = `fichier_source`, alimenté par l'indexation GED). CV non encore
+    résolus dans la base de connaissance : absents du dict, `offer_docx_builder`
+    retombe alors sur le nom de fichier (comportement inchangé pour ceux-là)."""
+    if not selected_cvs:
+        return {}
+    placeholders = ",".join("?" for _ in selected_cvs)
+    try:
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute(
+                f"SELECT fichier_source, nom_complet, titre_poste FROM kb_cv "
+                f"WHERE fichier_source IN ({placeholders})",
+                selected_cvs,
+            )
+            rows = await cursor.fetchall()
+    except Exception:
+        logger.warning("Résolution kb_cv de l'équipe échouée — repli sur le nom de fichier", exc_info=True)
+        return {}
+    return {fichier: (nom or "", titre or "") for fichier, nom, titre in rows if fichier}
 
 
 def _days_until(date_str: str) -> int | None:
@@ -262,7 +285,7 @@ class PresalesUseCase:
                 self._generator.build_sections(scoring=scoring, client_name=client_name),
                 "offer.build_sections")
 
-    def render_offer(
+    async def render_offer(
         self,
         scoring: ScoringResult,
         sections: dict,
@@ -270,8 +293,15 @@ class PresalesUseCase:
         selected_cvs: list[str] | None = None,
         selected_abes: list[str] | None = None,
     ) -> OfferDraft:
-        """Étape 2 : .docx à partir des sections (éventuellement éditées)."""
-        return self._generator.render(scoring, sections, client_name, selected_cvs, selected_abes)
+        """Étape 2 : .docx à partir des sections (éventuellement éditées).
+
+        Le tableau « Équipe projet » est alimenté par les vraies données
+        `kb_cv` (nom complet, titre de poste) quand elles sont disponibles,
+        plutôt que devinées depuis le nom de fichier du CV."""
+        kb_team = await _fetch_kb_team(settings.local_db_path, selected_cvs or [])
+        return self._generator.render(
+            scoring, sections, client_name, selected_cvs, selected_abes, kb_team=kb_team
+        )
 
     async def generate_bid_strategy(
         self,
