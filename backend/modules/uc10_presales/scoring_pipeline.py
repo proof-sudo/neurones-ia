@@ -777,36 +777,40 @@ class ScoringPipeline:
 
         # Sur un AO dense (ex. 97 pages, tableaux nombreux), le plafond de base peut tronquer
         # le JSON en plein milieu — perdant TOUS les besoins/critères/prérequis de l'AO en
-        # silence si on ne fait rien. Retry unique à budget élargi (même patron que le résumé
-        # exécutif) avant d'accepter une extraction vide.
-        raw = ""
+        # silence si on ne fait rien. Retry à budget élargi (même patron que le résumé
+        # exécutif) avant d'accepter une extraction vide. Le retry couvre aussi le JSON
+        # COMPLET mais mal formé (ex. "Expecting ',' delimiter" observé en prod sur un AO
+        # dense) : ce n'est pas une troncature, mais un nouvel essai (budget plus large)
+        # reste la seule option avant de renoncer honnêtement — on n'invente jamais le
+        # contenu manquant.
+        data: dict | None = None
         for budget in (_EXTRACT_OUTPUT_BUDGET_TOKENS, _EXTRACT_OUTPUT_RETRY_TOKENS):
+            is_last = budget >= _EXTRACT_OUTPUT_RETRY_TOKENS
             try:
                 raw = await self._llm.extract(
                     prompt=_EXTRACT_SYSTEM, text=snippet, max_tokens=budget,
                     raise_on_truncation=True, temperature=_TEMP_DETERMINISTIC,
                 )
-                break
             except OutputTruncatedError:
                 logger.warning(
                     "step1.extract tronqué au plafond de %d tokens — %s.",
-                    budget,
-                    "retry à budget élargi" if budget < _EXTRACT_OUTPUT_RETRY_TOKENS
-                    else "abandon, extraction vide (AO hors norme)",
+                    budget, "abandon, extraction vide (AO hors norme)" if is_last else "retry à budget élargi",
                 )
-        else:
-            return [], empty_extra
+                continue
+            try:
+                data = json.loads(_clean_json(raw))
+                break
+            except (json.JSONDecodeError, ValueError) as exc:
+                dump_path = _dump_failure(raw, exc, "extract")
+                logger.warning(
+                    "Extraction JSON échouée (%s) au plafond de %d tokens — %s. "
+                    "Réponse complète sauvée dans %s. Aperçu (2000 chars) :\n%s",
+                    exc, budget, "abandon, extraction vide (AO hors norme)" if is_last else "retry à budget élargi",
+                    dump_path, raw[:2000],
+                )
+                continue
 
-        try:
-            cleaned = _clean_json(raw)
-            data = json.loads(cleaned)
-        except (json.JSONDecodeError, ValueError) as exc:
-            dump_path = _dump_failure(raw, exc, "extract")
-            logger.warning(
-                "Extraction JSON échouée (%s). Réponse complète sauvée dans %s. "
-                "Aperçu (2000 chars) :\n%s",
-                exc, dump_path, raw[:2000],
-            )
+        if data is None:
             return [], empty_extra
 
         # key_points : liste libre [{label, value}] fournie par l'IA

@@ -23,6 +23,7 @@ from datetime import date, datetime
 from pathlib import Path
 
 from sqlalchemy import select
+from sqlalchemy.orm.exc import StaleDataError
 
 from config.settings import settings
 from db.database import AsyncSessionLocal
@@ -112,7 +113,14 @@ async def get_file_meta(dossier_id: str) -> tuple[str, str] | None:
 
 
 async def patch(dossier_id: str, changes: dict) -> dict | None:
-    """Fusion superficielle de `changes` dans l'état persisté, puis re-sauvegarde."""
+    """Fusion superficielle de `changes` dans l'état persisté, puis re-sauvegarde.
+
+    Un `analyze` en arrière-plan peut encore être en train de tourner quand
+    l'utilisateur supprime le dossier depuis l'UI : la ligne lue par `session.get`
+    ci-dessous a pu disparaître (DELETE d'une autre session) avant le COMMIT de ce
+    PATCH, faisant échouer l'UPDATE (0 ligne touchée). Un dossier supprimé n'a plus
+    besoin de son résultat — on l'ignore silencieusement plutôt que de laisser
+    remonter une StaleDataError en 500."""
     async with AsyncSessionLocal() as session:
         row = await session.get(PresalesDossierModel, dossier_id)
         if row is None:
@@ -128,7 +136,15 @@ async def patch(dossier_id: str, changes: dict) -> dict | None:
         if "status" in changes:
             row.status = str(changes.get("status") or "")
         row.updated_at = datetime.utcnow()
-        await session.commit()
+        try:
+            await session.commit()
+        except StaleDataError:
+            logger.info(
+                "Patch dossier %s ignoré — supprimé entre-temps (analyse en arrière-plan concurrente).",
+                dossier_id,
+            )
+            await session.rollback()
+            return None
         return merged
 
 
