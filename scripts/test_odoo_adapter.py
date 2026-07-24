@@ -1,20 +1,29 @@
 """
 Teste l'OdooAdapter corrigé (session persistante) et affiche les stats réelles.
-Usage: python scripts/test_odoo_adapter.py
+Usage: ODOO_URL=... ODOO_DB=... ODOO_USERNAME=... ODOO_PASSWORD=... python scripts/test_odoo_adapter.py
+(ou : lit ces variables depuis backend/.env si présent — jamais de credentials en dur ici.)
 """
 import asyncio
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
 
-# Monkey-patch settings avant import
+REQUIRED = ("ODOO_URL", "ODOO_DB", "ODOO_USERNAME", "ODOO_PASSWORD")
+missing = [name for name in REQUIRED if not os.environ.get(name)]
+if missing:
+    print(f"Variables d'environnement manquantes : {', '.join(missing)}")
+    print("Renseigne-les (ou charge backend/.env) avant de relancer ce script.")
+    sys.exit(1)
+
+# Monkey-patch settings avant import — valeurs lues depuis l'environnement,
+# jamais codées en dur (mandat sécurité : aucun credential réel dans le repo).
 import types
 settings_mod = types.ModuleType("config.settings")
 class _S:
-    odoo_url      = "https://erpntci.neuronestech.com"
-    odoo_db       = "Neurones_Prod"
-    odoo_username = "odooAgent@neurone"
-    odoo_password = "OdooAgent2024!"
+    odoo_url      = os.environ["ODOO_URL"]
+    odoo_db       = os.environ["ODOO_DB"]
+    odoo_username = os.environ["ODOO_USERNAME"]
+    odoo_password = os.environ["ODOO_PASSWORD"]
 settings_mod.settings = _S()
 sys.modules["config"] = types.ModuleType("config")
 sys.modules["config.settings"] = settings_mod
