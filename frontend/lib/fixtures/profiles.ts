@@ -4,7 +4,7 @@ import type { Profile, Role } from "../types";
 export const PROFILES: Profile[] = [
   {
     role: "admin",
-    nom: "Boyer Othniel Néhémie",
+    nom: "Administrateur",
     email: "oboyer@neuronestech.com",
     icon: "⚙",
     initiales: "BN",

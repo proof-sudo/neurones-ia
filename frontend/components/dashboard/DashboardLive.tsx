@@ -204,6 +204,8 @@ export function DashboardLive({
         caLabel: `CA commandé (${MONTH_FULL[lastMonthIdx]} ${y})`,
         ca: fmtM(cur),
         caDelta: deltaTxt(cur, prev, `vs ${MONTH_FULL[lastMonthIdx]} ${y - 1}`),
+        prevRaw: prev,
+        prevPeriodLabel: `${MONTH_FULL[lastMonthIdx]} ${y - 1}`,
         months: chartMonths.map((i) => MONTH_LABELS[i]),
         realise: chartMonths.map((i) => Math.round(caByMonth[i] / 1_000_000)),
         lastChartMonthIdx: lastMonthIdx,
@@ -216,6 +218,8 @@ export function DashboardLive({
         caLabel: `CA commandé (T${quarter + 1} ${y})`,
         ca: fmtM(cur),
         caDelta: deltaTxt(cur, prev, `vs T${quarter + 1} ${y - 1}`),
+        prevRaw: prev,
+        prevPeriodLabel: `T${quarter + 1} ${y - 1}`,
         months: quarterMonths.map((i) => MONTH_LABELS[i]),
         realise: quarterMonths.map((i) => Math.round(caByMonth[i] / 1_000_000)),
         lastChartMonthIdx: quarterMonths[quarterMonths.length - 1] ?? lastMonthIdx,
@@ -228,6 +232,8 @@ export function DashboardLive({
       caLabel: `CA commandé (${y}, jan-${MONTH_LABELS[lastMonthIdx].toLowerCase()})`,
       ca: fmtM(cur),
       caDelta: deltaTxt(cur, prevComparable, `vs jan-${MONTH_LABELS[lastMonthIdx].toLowerCase()} ${y - 1}`),
+      prevRaw: prevComparable,
+      prevPeriodLabel: `jan-${MONTH_LABELS[lastMonthIdx].toLowerCase()} ${y - 1}`,
       months: allMonths.map((i) => MONTH_LABELS[i]),
       realise: allMonths.map((i) => Math.round(caByMonth[i] / 1_000_000)),
       lastChartMonthIdx: lastMonthIdx,
@@ -287,10 +293,13 @@ export function DashboardLive({
     variant: periodCalc.caDelta.variant,
   };
 
-  // ---- Rythme vs N-1 (comparable YTD) ----
+  // ---- Rythme vs N-1 (comparable YTD, pour le narratif IA — indépendant du filtre) ----
   const ytdMonths = Array.from({ length: lastMonthIdx + 1 }, (_, i) => i);
   const ytdPrev = sum(ytdMonths.map((i) => caByMonthPrev[i]));
-  const rythme = deltaTxt(kpis.year.revenue_xof, ytdPrev, "");
+
+  // ---- Rythme vs N-1 (jauge) : même logique que la jauge CA commandé, sur la
+  // même période sélectionnée (Mois / Trimestre / Année). ----
+  const rythme = periodCalc.caDelta;
 
   // ---- Drill-down par gauge : détails réels (mêmes emplacements que le mockup) ----
   // Calcul direct (léger) — le React Compiler mémoïse lui-même.
@@ -408,7 +417,7 @@ export function DashboardLive({
       topColor: "var(--color-ai)",
       label: `Rythme vs ${y - 1}`,
       value: rythme.txt.split(" %")[0] + " %",
-      delta: `${y - 1} même période : ${fmtM(ytdPrev)}`,
+      delta: `${periodCalc.prevPeriodLabel} : ${fmtM(periodCalc.prevRaw)}`,
       variant: "flag",
     },
     {

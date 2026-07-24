@@ -83,6 +83,21 @@ class GEDIndexer:
         self._classifier = classifier
         self._entity_resolver = entity_resolver
         self._vision = vision_extractor
+        # Sérialise les passes d'indexation par fichier : un upload déclenche À LA FOIS
+        # une tâche de fond immédiate (api/v1/ged.py) ET le watcher filesystem (3 s de
+        # debounce) sur le même fichier. Sans verrou, les deux lisent le registre avant
+        # que l'une n'ait committé, et la seconde tente un INSERT en double sur
+        # file_path (UNIQUE) → IntegrityError. Un verrou par chemin force la seconde
+        # passe à attendre la première ; elle retrouve alors un registre à jour (hash
+        # identique → skip, ou doc_id correct à réutiliser).
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def _lock_for(self, file_str: str) -> asyncio.Lock:
+        lock = self._locks.get(file_str)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._locks[file_str] = lock
+        return lock
 
     async def process(
         self,
@@ -108,7 +123,17 @@ class GEDIndexer:
         # fichier est enregistré sous deux clés → indexation en double.
         file_path = Path(file_path).resolve()
         file_str = str(file_path)
+        async with self._lock_for(file_str):
+            return await self._process_locked(file_path, file_str, doc_type, force, bypass_validation)
 
+    async def _process_locked(
+        self,
+        file_path: Path,
+        file_str: str,
+        doc_type: DocumentType,
+        force: bool,
+        bypass_validation: bool,
+    ) -> bool:
         # ── 1. Hash check ──────────────────────────────────────────────────
         current_hash = await asyncio.to_thread(self._compute_hash_sync, file_path)
         existing = await self._registry.get_entry(file_str)

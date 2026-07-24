@@ -1237,10 +1237,18 @@ class LocalCRMAdapter(CRMRepository):
         ]
 
     async def get_top_suppliers(self, limit: int = 20) -> list[dict]:
-        """Fournisseurs réels (purchase_orders, synchronisés depuis Odoo)."""
+        """Fournisseurs réels (purchase_orders, synchronisés depuis Odoo). Pas de
+        notion de dette/impayé ici : seules les factures clients (out_invoice)
+        sont synchronisées, pas les factures fournisseurs (in_invoice) — voir
+        [[operations-dirops-module]]. L'« engagement » exposé est donc calculé
+        sur les commandes d'achat réelles (montant, ancienneté, activité récente),
+        jamais un solde comptable inventé."""
         from sqlalchemy import text
+        depuis_12m = (datetime.utcnow() - timedelta(days=365)).isoformat()
         sql = """
-            SELECT client_name, SUM(amount), COUNT(*), MAX(date_order)
+            SELECT client_name, SUM(amount), COUNT(*), MAX(date_order), MIN(date_order),
+                   SUM(CASE WHEN date_order >= :depuis_12m THEN amount ELSE 0 END),
+                   COUNT(CASE WHEN date_order >= :depuis_12m THEN 1 END)
             FROM purchase_orders
             WHERE client_name IS NOT NULL AND client_name != ''
             GROUP BY client_name
@@ -1248,9 +1256,9 @@ class LocalCRMAdapter(CRMRepository):
             LIMIT :limit
         """
         async with AsyncSessionLocal() as session:
-            rows = (await session.execute(text(sql), {"limit": limit})).fetchall()
+            rows = (await session.execute(text(sql), {"limit": limit, "depuis_12m": depuis_12m})).fetchall()
             suppliers = []
-            for name, total, nb, last_date in rows:
+            for name, total, nb, last_date, first_date, montant_12m, nb_12m in rows:
                 detail_sql = """
                     SELECT name, amount, date_order FROM purchase_orders
                     WHERE client_name = :name
@@ -1262,6 +1270,10 @@ class LocalCRMAdapter(CRMRepository):
                     "montant_total_xof": round(total or 0),
                     "nb_commandes": nb,
                     "derniere_commande": last_date[:10] if last_date else None,
+                    "premiere_commande": first_date[:10] if first_date else None,
+                    "montant_moyen_xof": round((total or 0) / nb) if nb else 0,
+                    "montant_engage_12m_xof": round(montant_12m or 0),
+                    "nb_commandes_12m": nb_12m or 0,
                     "commandes_recentes": [
                         {"ref": r[0], "montant_xof": round(r[1] or 0), "date": r[2][:10] if r[2] else None}
                         for r in detail_rows

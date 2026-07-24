@@ -12,3 +12,16 @@ export function fmtInt(n: number): string {
 export function fmtPct(n: number): string {
   return `${n.toFixed(1).replace(".", ",")} %`;
 }
+
+/** Taille de fichier lisible : 1536 → « 1,5 Ko ». */
+export function fmtBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} o`;
+  const units = ["Ko", "Mo", "Go"];
+  let value = bytes / 1024;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i++;
+  }
+  return `${value.toFixed(1).replace(".", ",")} ${units[i]}`;
+}

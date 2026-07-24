@@ -15,6 +15,10 @@ export interface Supplier {
   montant_total_xof: number;
   nb_commandes: number;
   derniere_commande: string | null;
+  premiere_commande: string | null;
+  montant_moyen_xof: number;
+  montant_engage_12m_xof: number;
+  nb_commandes_12m: number;
   commandes_recentes: SupplierOrder[];
 }
 

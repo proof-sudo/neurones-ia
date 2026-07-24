@@ -107,7 +107,9 @@ class CRMRepository(ABC):
     @abstractmethod
     async def get_top_suppliers(self, limit: int = 20) -> list[dict]:
         """Fournisseurs réels (purchase_orders) : montant commandé, nb commandes,
-        dernière commande, détail des commandes récentes."""
+        première/dernière commande, montant moyen, engagement sur les 12
+        derniers mois glissants, détail des commandes récentes. Pas de dette
+        (factures fournisseurs non synchronisées depuis Odoo)."""
 
     @abstractmethod
     async def get_client_portfolio(self, limit: int = 50) -> list[dict]:
