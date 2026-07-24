@@ -17,7 +17,6 @@ jamais un document vide, même si le LLM échoue totalement.
 import json
 import logging
 import re
-from pathlib import Path
 
 from core.ports.llm_gateway import LLMGateway, OutputTruncatedError
 from core.domain.offer import ScoringResult, OfferDraft
@@ -188,7 +187,7 @@ def _salvage_blocks(text: str) -> list[dict]:
     if not m:
         return []
     out: list[dict] = []
-    i, depth, start = m.end(), 0, None
+    depth, start = 0, None
     for j in range(m.end(), len(text)):
         ch = text[j]
         if ch == "{":
