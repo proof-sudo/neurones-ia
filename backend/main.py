@@ -4,7 +4,11 @@ from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
+from config.rate_limit import limiter
 from config.settings import settings
 from config.container import Container
 from db.database import init_db
@@ -23,8 +27,25 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+_DEFAULT_SECRET_KEY = "change-me-in-production-use-openssl-rand-hex-32"
+
+
+def _refuse_insecure_secret_in_prod() -> None:
+    """Refuse de démarrer en environnement non-dev avec la clé JWT par défaut
+    codée en dur (`config/settings.py`) — sinon tout token est forgeable par
+    quiconque lit le code source. Mieux vaut un crash au démarrage, explicite
+    et immédiat, qu'une exposition silencieuse en production."""
+    if settings.app_env != "development" and settings.secret_key == _DEFAULT_SECRET_KEY:
+        raise RuntimeError(
+            "SECRET_KEY par défaut détectée en environnement non-dev "
+            f"(APP_ENV={settings.app_env!r}). Renseigne un SECRET_KEY réel "
+            "(ex. `openssl rand -hex 32`) dans backend/.env.prod avant de démarrer."
+        )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    _refuse_insecure_secret_in_prod()
     logger.info("Démarrage Neurones IA v%s [%s]", settings.app_version, settings.app_env)
     await init_db()
     container = Container()
@@ -43,6 +64,12 @@ app = FastAPI(
 )
 
 _origins = [o.strip() for o in settings.allowed_origins.split(",") if o.strip()]
+
+# Rate-limiting (slowapi) — protège /auth/login (voir décorateur sur l'endpoint)
+# du brute-force/credential stuffing, qui n'avait jusqu'ici aucune friction.
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # GZip pour toutes les réponses JSON > 1 Ko (exclut SSE — Content-Encoding incompatible)
 app.add_middleware(GZipMiddleware, minimum_size=1000)

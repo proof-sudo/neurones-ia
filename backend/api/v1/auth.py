@@ -1,13 +1,14 @@
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from adapters.auth.jwt_adapter import create_access_token, hash_password, verify_password
 from api.v1.dependencies import get_current_user, invalidate_user_cache
+from config.rate_limit import limiter
 from config.permissions import (
     DEFAULT_MODULE_ACCESS,
     EDITABLE_ROLES,
@@ -82,7 +83,10 @@ def _user_payload(user: UserModel, views: list[str] | None) -> dict:
 
 
 @router.post("/login", response_model=LoginResponse)
-async def login(body: LoginRequest, session: AsyncSession = Depends(get_session)):
+@limiter.limit("5/minute")  # ≈10/minute réel cumulé sur les 2 workers — voir config/rate_limit.py
+async def login(
+    request: Request, body: LoginRequest, session: AsyncSession = Depends(get_session)
+):
     result = await session.execute(
         select(UserModel).where(UserModel.email == body.email.lower().strip())
     )
