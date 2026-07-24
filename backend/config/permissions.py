@@ -56,7 +56,7 @@ DEFAULT_MODULE_ACCESS: dict[str, dict[str, bool]] = {
     "partenaires":   {"dg": False, "dir_commercial": True,  "dir_operations": True,  "presale": False, "dir_financier": False, "commercial": False},
     "pipeline":      {"dg": True,  "dir_commercial": True,  "dir_operations": True,  "presale": True,  "dir_financier": False, "commercial": True},
     "catalogue":     {"dg": False, "dir_commercial": True,  "dir_operations": True,  "presale": True,  "dir_financier": False, "commercial": True},
-    "documents":     {"dg": False, "dir_commercial": True,  "dir_operations": True,  "presale": True,  "dir_financier": False, "commercial": True},
+    "documents":     {"dg": False, "dir_commercial": False, "dir_operations": True,  "presale": False, "dir_financier": False, "commercial": False},
     "admin":         {"dg": False, "dir_commercial": False, "dir_operations": False, "presale": False, "dir_financier": False, "commercial": False},
 }
 

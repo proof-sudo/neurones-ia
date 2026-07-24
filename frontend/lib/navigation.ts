@@ -14,6 +14,7 @@ export const NAV_MODULES: NavModule[] = [
   { view: "crosssell", icon: "✚", label: "Montée en valeur" },
   { view: "clients", icon: "◈", label: "Clients" },
   { view: "partenaires", icon: "◈", label: "Fournisseurs" },
+  { view: "documents", icon: "▤", label: "Documents" },
   { view: "admin", icon: "⚙", label: "Administration" },
 ];
 
@@ -33,7 +34,7 @@ export const NAV_GROUPS: NavGroup[] = [
   },
   {
     label: "Configuration",
-    views: ["admin"],
+    views: ["documents", "admin"],
   },
 ];
 
@@ -55,6 +56,7 @@ export const MODULE_ACCESS: ModuleAccess = {
   crosssell:    { admin: true, dg: false, dir_commercial: true,  dir_operations: false, presale: false, dir_financier: false, commercial: true },
   clients:      { admin: true, dg: true,  dir_commercial: true,  dir_operations: true,  presale: false, dir_financier: true,  commercial: true },
   partenaires:  { admin: true, dg: false, dir_commercial: true,  dir_operations: true,  presale: false, dir_financier: false, commercial: false },
+  documents:    { admin: true, dg: false, dir_commercial: false, dir_operations: true,  presale: false, dir_financier: false, commercial: false },
   pipeline:     { admin: true, dg: true,  dir_commercial: true,  dir_operations: true,  presale: true,  dir_financier: false, commercial: true },
   presales:     { admin: true, dg: true,  dir_commercial: false, dir_operations: true,  presale: true,  dir_financier: false, commercial: false },
   admin:        { admin: true, dg: false, dir_commercial: false, dir_operations: false, presale: false, dir_financier: false, commercial: false },

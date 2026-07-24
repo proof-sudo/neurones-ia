@@ -27,6 +27,14 @@ function joursDepuisCommande(dateStr: string | null): number | null {
   return Math.round((Date.now() - new Date(dateStr).getTime()) / 86_400_000);
 }
 
+function ancienneteLabel(dateStr: string | null): string {
+  if (!dateStr) return "—";
+  const jours = Math.round((Date.now() - new Date(dateStr).getTime()) / 86_400_000);
+  if (jours < 30) return `${jours} j`;
+  if (jours < 365) return `${Math.round(jours / 30)} mois`;
+  return `${(jours / 365).toFixed(1)} ans`;
+}
+
 export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
   const [analysis, setAnalysis] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
@@ -189,6 +197,16 @@ function SupplierModal({
                   color={jours === null ? undefined : inactif ? "var(--color-bad)" : "var(--color-good)"}
                 />
               </div>
+              <h4 className="mb-2 text-[12.5px] font-semibold text-text">État de la relation</h4>
+              <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <Stat k="Fournisseur depuis" v={ancienneteLabel(supplier.premiere_commande)} />
+                <Stat k="Montant moyen / commande" v={fmtM(supplier.montant_moyen_xof)} />
+                <Stat
+                  k="Engagement actif (12 mois)"
+                  v={`${fmtM(supplier.montant_engage_12m_xof)} · ${fmtInt(supplier.nb_commandes_12m)} cmd.`}
+                />
+              </div>
+
               <h4 className="mb-2 text-[12.5px] font-semibold text-text">Historique réel des commandes</h4>
               <table className="w-full border-collapse text-[12.5px]">
                 <thead>
