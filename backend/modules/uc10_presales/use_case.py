@@ -219,7 +219,8 @@ class PresalesUseCase:
         self._odoo_enrichment = OdooEnrichmentService(db_path=settings.local_db_path, llm=llm_haiku)
 
     async def score_ao(self, filename: str, file_bytes: bytes) -> ScoringResult:
-        text = await self._extract_text(filename, file_bytes)
+        with timer("score_ao.extract_text"):
+            text = await self._extract_text(filename, file_bytes)
         if not text.strip():
             raise ValueError(
                 f"Impossible d'extraire le texte de « {filename} ». "
@@ -232,7 +233,8 @@ class PresalesUseCase:
             result = await with_timeout(
                 self._pipeline.run(ao_filename=filename, ao_text=text), "pipeline.run")
         # Étape 6 — enrichissement Odoo (non-bloquant : ne casse jamais le scoring)
-        await self._odoo_enrichment.enrich(result)
+        with timer("score_ao.odoo_enrich"):
+            await self._odoo_enrichment.enrich(result)
         return result
 
     async def generate_offer(

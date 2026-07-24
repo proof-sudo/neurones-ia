@@ -14,9 +14,9 @@ import { Modal } from "@/components/ui/Modal";
 import {
   generateBidStrategy, exportAnalysis, exportScoring, exportStrategy,
   exportMatrix, exportChecklist, buildOfferSections, renderOffer,
-  fetchGEDFiles, uploadGEDFile, itemText, assessMatrix, confirmMatrix,
+  fetchGEDFiles, uploadGEDFile, itemText,
   createDossier, listDossiers, patchDossier, deleteDossier, analyzeDossier, downloadDossierFile,
-  type GEDFile, type ExtractedItem, type ConformityExigence,
+  type GEDFile, type ExtractedItem,
   type ScoringResult, type BidStrategy, type OfferSections,
   type MarketIdentity, type CalendarEvent, type EvaluationModalities,
   type ScoringCriterion, type Risk, type Precondition,
@@ -25,6 +25,26 @@ import {
 } from "@/lib/presales-api";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+
+// ── Chrono visuel de l'analyse AO ─────────────────────────────────────────────
+// Affiche le temps écoulé (mm:ss) tant que le panneau « Analyse en cours » est monté.
+// Anti-dérive : recalcule depuis un t0 figé au montage plutôt que d'incrémenter un compteur.
+function AnalysisTimer() {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    const start = Date.now();
+    const id = setInterval(() => setElapsed(Math.floor((Date.now() - start) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const mm = String(Math.floor(elapsed / 60)).padStart(2, "0");
+  const ss = String(elapsed % 60).padStart(2, "0");
+  return (
+    <div className="inline-flex items-center gap-1.5 rounded-full bg-[#ececee] px-3 py-1 text-sm font-semibold text-ai tabular-nums">
+      <Clock size={14} className="animate-pulse" />
+      <span>{mm}:{ss}</span>
+    </div>
+  );
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -1997,173 +2017,6 @@ function Step5({ ao, onValidate, triggerDownload, onOfferReady }: {
   );
 }
 
-// ── Conformité : checklist validée par l'IA + contrôle humain par cochage ────────
-
-const _STATUT_LABEL: Record<string, string> = {
-  CONFORME: "Conforme", CONFORME_PARTIEL: "Partiel", NON_CONFORME: "Non conforme",
-  NON_APPLICABLE: "N/A", A_TRAITER: "À évaluer",
-};
-const _STATUT_STYLE: Record<string, string> = {
-  CONFORME: "bg-good/10 text-good border-good/35",
-  CONFORME_PARTIEL: "bg-warn/10 text-warn border-warn/35",
-  NON_CONFORME: "bg-bad/10 text-bad border-bad/35",
-  NON_APPLICABLE: "bg-panel-2 text-muted border-line",
-  A_TRAITER: "bg-panel-2 text-muted border-line",
-};
-const _STATUT_OPTIONS = ["CONFORME", "CONFORME_PARTIEL", "NON_CONFORME", "NON_APPLICABLE"];
-
-function ConformityPanel({ ao }: { ao: AOEntry }) {
-  const [items, setItems] = useState<ConformityExigence[] | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [confirmed, setConfirmed] = useState<Set<string>>(new Set());
-  const [statuts, setStatuts] = useState<Record<string, string>>({});
-  const [saving, setSaving] = useState(false);
-  const [savedMsg, setSavedMsg] = useState("");
-
-  const aoName = ao.scoringResult?.ao_filename ?? ao.filename;
-
-  async function runAssess() {
-    if (!ao.scoringResult) return;
-    setLoading(true); setError(""); setSavedMsg("");
-    try {
-      const m = await assessMatrix(ao.scoringResult, ao.clientName);
-      setItems(m.exigences);
-      const conf = new Set<string>();
-      const st: Record<string, string> = {};
-      for (const ex of m.exigences) {
-        if (ex.confirme) conf.add(ex.id);
-        st[ex.id] = ex.confirme && ex.statut_conformite !== "A_TRAITER" ? ex.statut_conformite : ex.statut_suggere;
-      }
-      setConfirmed(conf); setStatuts(st);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Échec de l'analyse de conformité.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  function toggleConfirm(id: string) {
-    setConfirmed(prev => {
-      const s = new Set(prev);
-      if (s.has(id)) s.delete(id); else s.add(id);
-      return s;
-    });
-  }
-  function setStatut(id: string, v: string) { setStatuts(prev => ({ ...prev, [id]: v })); }
-
-  async function saveConfirmations() {
-    if (!items) return;
-    setSaving(true); setError(""); setSavedMsg("");
-    try {
-      const confirmations = items.map(ex => ({
-        id: ex.id,
-        confirme: confirmed.has(ex.id),
-        statut_confirme: confirmed.has(ex.id) ? (statuts[ex.id] ?? ex.statut_suggere) : undefined,
-      }));
-      const res = await confirmMatrix(aoName, confirmations);
-      setItems(res.exigences);
-      setSavedMsg(`${res.confirmes}/${res.total} exigence(s) confirmée(s) et enregistrée(s).`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Échec de l'enregistrement des confirmations.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  if (!ao.scoringResult) return null;
-
-  const total = items?.length ?? 0;
-  const nbConfirmed = items ? items.filter(ex => confirmed.has(ex.id)).length : 0;
-
-  return (
-    <SectionCard title="Conformité — validée par l'IA, confirmée par cochage" icon={<FileCheck size={15} />}>
-      {!items ? (
-        <div className="space-y-3">
-          <p className="text-xs text-muted">
-            L'IA pré-statue chaque exigence de l'AO (conforme / partiel / non conforme) à partir de
-            l'analyse du scoring. Vous confirmez ensuite, par cochage, que chaque élément validé est
-            effectivement réuni.
-          </p>
-          <button
-            onClick={runAssess}
-            disabled={loading}
-            className="flex items-center gap-2 px-4 py-2 bg-ai hover:brightness-110 text-white rounded-xl text-sm font-medium disabled:opacity-50 transition-colors"
-          >
-            {loading ? <Loader2 size={14} className="animate-spin" /> : <Sparkles size={14} />}
-            Analyser la conformité (IA)
-          </button>
-          {error && <p className="text-xs text-bad">{error}</p>}
-        </div>
-      ) : (
-        <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-text">{nbConfirmed}/{total} confirmée(s)</span>
-            <button onClick={runAssess} disabled={loading} className="text-xs text-muted hover:text-ai">
-              {loading ? "…" : "Recalculer"}
-            </button>
-          </div>
-          <div className="space-y-1.5 max-h-[28rem] overflow-y-auto pr-1">
-            {items.map(ex => (
-              <div key={ex.id} className="border border-line rounded-lg p-2.5">
-                <div className="flex items-start gap-2.5">
-                  <input
-                    type="checkbox"
-                    checked={confirmed.has(ex.id)}
-                    onChange={() => toggleConfirm(ex.id)}
-                    className="mt-0.5 w-4 h-4 rounded border-line text-ai cursor-pointer shrink-0 accent-[#ff6a00]"
-                    title="Confirmer que cette exigence est réunie"
-                  />
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span className={cn("text-[10px] font-semibold px-1.5 py-0.5 rounded border", _STATUT_STYLE[ex.statut_suggere] ?? _STATUT_STYLE.A_TRAITER)}>
-                        IA : {_STATUT_LABEL[ex.statut_suggere] ?? ex.statut_suggere}
-                      </span>
-                      {ex.blocking && (
-                        <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded border bg-bad/10 text-bad border-bad/35">éliminatoire</span>
-                      )}
-                      {ex.confiance_ia > 0 && (
-                        <span className="text-[10px] text-muted">conf. {Math.round(ex.confiance_ia * 100)}%</span>
-                      )}
-                    </div>
-                    <p className="text-xs text-text mt-1 leading-relaxed">{ex.texte}</p>
-                    {ex.justification_ia && (
-                      <p className="text-[11px] text-muted italic mt-0.5">{ex.justification_ia}</p>
-                    )}
-                  </div>
-                  {confirmed.has(ex.id) && (
-                    <select
-                      value={statuts[ex.id] ?? ex.statut_suggere}
-                      onChange={e => setStatut(ex.id, e.target.value)}
-                      className="text-[11px] border border-line rounded-lg px-1.5 py-1 bg-panel shrink-0"
-                    >
-                      {_STATUT_OPTIONS.map(s => <option key={s} value={s}>{_STATUT_LABEL[s]}</option>)}
-                    </select>
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            {savedMsg
-              ? <span className="text-xs text-good font-medium">{savedMsg}</span>
-              : <span className="text-xs text-muted">Cochez les exigences réunies, ajustez le statut, puis enregistrez.</span>}
-            <button
-              onClick={saveConfirmations}
-              disabled={saving}
-              className="flex items-center gap-2 px-4 py-2 bg-ai hover:brightness-95 text-white rounded-xl text-sm font-medium disabled:opacity-50 transition-colors shrink-0"
-            >
-              {saving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
-              Enregistrer les confirmations
-            </button>
-          </div>
-          {error && <p className="text-xs text-bad">{error}</p>}
-        </div>
-      )}
-    </SectionCard>
-  );
-}
-
 // ── Step 6 — Checklist dossier ────────────────────────────────────────────────
 
 function Step6({ ao, onToggle, onNoteChange, onAddItem, onDeleteItem, onExport, exporting, onValidate }: {
@@ -2196,8 +2049,6 @@ function Step6({ ao, onToggle, onNoteChange, onAddItem, onDeleteItem, onExport, 
 
   return (
     <div className="space-y-4">
-      {/* Conformité validée par l'IA + cochage humain (contrôle de complétude) */}
-      <ConformityPanel ao={ao} />
       {/* Progress */}
       <div className="bg-panel border border-line rounded-xl p-4">
         <div className="flex items-center justify-between mb-2">
@@ -3216,7 +3067,7 @@ export function PresalesWorkflow({ currentUserName = "" }: { currentUserName?: s
               </div>
               <p className="text-sm font-semibold text-text">Déposer un appel d&apos;offres</p>
               <p className="text-xs text-muted mt-1">
-                PDF ou DOCX — max 10 Mo · Analyse automatique en 7 étapes
+                PDF ou DOCX (scan accepté) — max 25 Mo · Analyse automatique en 7 étapes
               </p>
               <button
                 onClick={e => { e.stopPropagation(); fileInputRef.current?.click(); }}
@@ -3453,6 +3304,9 @@ export function PresalesWorkflow({ currentUserName = "" }: { currentUserName?: s
                 <div className="text-center">
                   <p className="font-semibold text-text">Analyse de l'appel d'offres en cours...</p>
                   <p className="text-sm text-muted mt-1">Extraction · Résumé · Matching GED · Scoring</p>
+                  <div className="mt-3 flex justify-center">
+                    <AnalysisTimer />
+                  </div>
                 </div>
               </div>
             )}

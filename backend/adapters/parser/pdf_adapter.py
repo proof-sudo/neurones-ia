@@ -11,6 +11,7 @@ from adapters.parser.markdown_fidelity import (
     alnum_count as _alnum_count,
     is_faithful as _is_faithful,
     FIDELITY_MIN_RATIO as _FIDELITY_MIN_RATIO,
+    FIDELITY_MIN_BASELINE as _FIDELITY_MIN_BASELINE,
 )
 
 logger = logging.getLogger(__name__)
@@ -105,7 +106,14 @@ class PDFAdapter(DocumentParser):
         # du contenu (les PDF scannés/CV à page-image ne donnent pas un Markdown fidèle).
         if _PYMUPDF4LLM_AVAILABLE:
             markdown = self._try_pymupdf4llm(file_path)
-            if markdown:
+            # On n'accepte le raccourci Markdown que s'il porte VRAIMENT du texte. Sur un PDF
+            # scanné (pages-images), pymupdf4llm rend chaque page en règle horizontale « ----- »
+            # sans contenu alphanumérique. _is_faithful() jugeait alors ces tirets « fidèles » à
+            # une couche texte de référence elle aussi vide (baseline < seuil → True) et les
+            # retournait, COURT-CIRCUITANT l'OCR → le LLM ne recevait que des tirets. On exige donc
+            # un minimum de contenu réel (≥ FIDELITY_MIN_BASELINE car. alphanum.) avant de shortcut ;
+            # sinon on tombe dans le pipeline texte/OCR page-par-page, qui sait lire les scans.
+            if markdown and _alnum_count(markdown) >= _FIDELITY_MIN_BASELINE:
                 baseline = self._plain_text_baseline(file_path)
                 if _is_faithful(markdown, baseline):
                     logger.info(
@@ -118,6 +126,12 @@ class PDFAdapter(DocumentParser):
                     "repli sur le pipeline texte/OCR : %s",
                     _alnum_count(markdown), _alnum_count(baseline),
                     _FIDELITY_MIN_RATIO * 100, file_path,
+                )
+            elif markdown:
+                logger.info(
+                    "PDF → Markdown ignoré (contenu réel insuffisant : %d car. alphanum. < %d) — "
+                    "probable PDF scanné, repli sur le pipeline texte/OCR : %s",
+                    _alnum_count(markdown), _FIDELITY_MIN_BASELINE, file_path,
                 )
 
         # Décision OCR PAGE PAR PAGE (et non sur la moyenne du document) : un CV peut

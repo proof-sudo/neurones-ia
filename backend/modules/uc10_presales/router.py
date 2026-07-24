@@ -134,8 +134,11 @@ async def score_ao(
         raise HTTPException(status_code=400, detail="Format non supporté. Utilisez PDF ou DOCX.")
 
     file_bytes = await file.read()
-    if len(file_bytes) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Fichier trop volumineux (max 10 MB).")
+    if len(file_bytes) > settings.presales_max_upload_mb * 1024 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Fichier trop volumineux (max {settings.presales_max_upload_mb} Mo).",
+        )
 
     # Cache disque désactivé en prod (settings.score_cache_enabled=False) : évite de saturer
     # le disque du serveur. Quand actif, sert le résultat mémorisé par empreinte SHA-256.
@@ -215,8 +218,11 @@ async def create_dossier(
     if file.content_type not in _ALLOWED_TYPES and not file.filename.endswith((".pdf", ".docx")):
         raise HTTPException(status_code=400, detail="Format non supporté. Utilisez PDF ou DOCX.")
     file_bytes = await file.read()
-    if len(file_bytes) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="Fichier trop volumineux (max 10 MB).")
+    if len(file_bytes) > settings.presales_max_upload_mb * 1024 * 1024:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Fichier trop volumineux (max {settings.presales_max_upload_mb} Mo).",
+        )
     try:
         state_dict = json.loads(state)
     except json.JSONDecodeError:
