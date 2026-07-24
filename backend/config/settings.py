@@ -122,6 +122,11 @@ class Settings(BaseSettings):
     # Modèle de rédaction des sections d'offre : "haiku" (défaut, rapide) ou "sonnet"
     # (offre plus qualitative / à fort impact, plus lente). Bascule sans toucher au code.
     offer_sections_model: str = "haiku"
+    # Modèle de l'ÉTAPE 4 (analyse + notation + recommandation GO/NO-BID). C'est l'étape
+    # décisionnelle : on la fait tourner sur "sonnet" (jugement supérieur) plutôt que haiku,
+    # alors que l'extraction (étapes 1/1b, tâche mécanique) reste sur haiku. "haiku" ramène
+    # tout le pipeline sur le modèle rapide. Bascule sans toucher au code.
+    presales_analysis_model: str = "sonnet"
     # Pré-statut de conformité IA des exigences au moment de l'export/assess de la matrice.
     matrix_assess_on_export: bool = True
     # Taille max (Mo) d'un AO uploadé (endpoints /presales/score et /presales/dossiers).

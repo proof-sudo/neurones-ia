@@ -318,33 +318,63 @@ export async function deleteDossier(dossierId: string): Promise<void> {
   if (!r.ok && r.status !== 404) throw new Error(`Erreur suppression du dossier (${r.status})`);
 }
 
-/** (Re)lance le scoring sur le fichier PERSISTÉ du dossier — plus besoin de File en mémoire. */
+/** État courant d'un dossier persisté (source du polling de scoring en arrière-plan). */
+export async function getDossier(dossierId: string): Promise<Record<string, unknown>> {
+  const r = await apiFetch(`${API_BASE}/presales/dossiers/${dossierId}`, {}, 30_000);
+  if (!r.ok) throw new Error(`Erreur chargement du dossier (${r.status})`);
+  return r.json();
+}
+
+/**
+ * (Re)lance le scoring sur le fichier PERSISTÉ du dossier — plus besoin de File en mémoire.
+ *
+ * Modèle ASYNCHRONE : on déclenche l'analyse (le backend répond 202 immédiatement et lance
+ * le pipeline en tâche de fond), puis on interroge le dossier jusqu'à ce que son `status`
+ * passe à `scored` (→ on renvoie le `scoringResult`) ou `error` (→ on lève l'`errorMessage`).
+ * Remplace l'ancien appel qui attendait ~2 min la réponse streamée : Next.js la bufferisait
+ * et le frontal Traefik coupait vers ~100s → 504. Plus aucune requête longue = plus de 504.
+ */
 export async function analyzeDossier(dossierId: string, force = false): Promise<ScoringResult> {
+  // 1) Déclenchement (202 attendu).
   const url = `${API_BASE}/presales/dossiers/${dossierId}/analyze${force ? "?force=true" : ""}`;
-  let response: Response;
+  let kick: Response;
   try {
-    response = await fetch(url, { method: "POST" });
-  } catch (e) {
-    const name = (e != null && typeof e === "object" && "name" in e) ? (e as { name: unknown }).name : "";
-    const msg = String(e instanceof Error ? e.message : e);
-    if (name === "AbortError" || msg.toLowerCase().includes("abort")) {
-      throw new Error("Analyse annulée — connexion interrompue.");
-    }
+    kick = await apiFetch(url, { method: "POST" }, 60_000);
+  } catch {
     throw new Error("Serveur inaccessible — vérifiez que le backend est démarré.");
   }
-  if (response.status === 401) {
-    window.location.replace("/");
+  if (kick.status === 401) {
+    // apiFetch a déjà redirigé vers la connexion.
     throw new Error("Session expirée — reconnexion en cours…");
   }
-  if (!response.ok) {
-    const error = await response.json().catch(() => ({})) as Record<string, string>;
-    throw new Error((error as { detail?: string }).detail ?? `Erreur serveur ${response.status}`);
+  if (!kick.ok && kick.status !== 202) {
+    const error = await kick.json().catch(() => ({})) as { detail?: string };
+    throw new Error(error.detail ?? `Erreur serveur ${kick.status}`);
   }
-  const data = await response.json() as ScoringResult & { __error__?: number; detail?: string };
-  if (data && typeof data.__error__ === "number") {
-    throw new Error(data.detail ?? `Erreur serveur ${data.__error__}`);
+
+  // 2) Polling du dossier jusqu'à l'issue. Borne de sécurité large : le pipeline dépasse
+  //    rarement quelques minutes, mais on ne veut pas boucler indéfiniment si le backend
+  //    ne conclut jamais.
+  const POLL_INTERVAL_MS = 3_000;
+  const DEADLINE = Date.now() + 20 * 60_000; // 20 min
+  while (Date.now() < DEADLINE) {
+    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    let dossier: Record<string, unknown>;
+    try {
+      dossier = await getDossier(dossierId);
+    } catch {
+      continue; // aléa réseau transitoire : on retente au prochain tick
+    }
+    const status = dossier.status as string | undefined;
+    if (status === "scored" && dossier.scoringResult) {
+      return dossier.scoringResult as ScoringResult;
+    }
+    if (status === "error") {
+      throw new Error((dossier.errorMessage as string) || "Erreur pendant l'analyse.");
+    }
+    // status "scoring" (ou transitoire) → on continue à interroger.
   }
-  return data as ScoringResult;
+  throw new Error("Analyse trop longue — délai dépassé. Réessayez plus tard.");
 }
 
 // ── Matrice de conformité ─────────────────────────────────────────────────────

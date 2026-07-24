@@ -36,6 +36,22 @@ _VISION_SYSTEM = (
 
 _EMPTY = {"contenu": "", "certifications": []}
 
+# OCR vision d'un document ENTIER (AO scanné) — transcription verbatim en TEXTE BRUT,
+# contrairement à _VISION_SYSTEM qui vise les pages-images/certifs et rend du JSON.
+_OCR_SYSTEM = (
+    "Tu reçois une ou plusieurs images de pages d'un document (appel d'offres, cahier des "
+    "charges…). TRANSCRIS FIDÈLEMENT ET INTÉGRALEMENT tout le texte lisible, page par page, "
+    "dans l'ordre. Conserve la structure : titres, numéros d'articles/sections, listes, et "
+    "les TABLEAUX (rends chaque tableau ligne par ligne, cellules séparées par ' | '). "
+    "N'invente RIEN, ne résume RIEN, n'ajoute aucun commentaire. Si un passage est illisible, "
+    "écris [illisible]. Réponds UNIQUEMENT avec le texte transcrit, sans balises ni préambule."
+)
+
+# Pages par appel vision : borne la taille de sortie (une page dense ≈ 800-1500 tokens de
+# texte ; 4 pages tiennent largement sous le plafond max_tokens ci-dessous sans troncature).
+_OCR_PAGES_PER_CALL = 4
+_OCR_MAX_TOKENS = 8000
+
 
 def _normalize(text: str) -> str:
     nfkd = unicodedata.normalize("NFKD", text or "")
@@ -136,6 +152,64 @@ class DocumentVisionExtractor:
                 len(pages), path.name, len(result["certifications"]), len(result["contenu"]),
             )
         return result
+
+    async def transcribe_pdf_bytes(self, file_bytes: bytes, max_pages: int | None = None) -> str:
+        """OCR VISION d'un PDF entier (AO scanné) → texte brut transcrit, best-effort.
+
+        Rend chaque page en PNG (jusqu'à `max_pages`) et la transcrit par lots de
+        `_OCR_PAGES_PER_CALL` (borne la sortie pour éviter la troncature). Renvoie '' si la
+        vision est indisponible, si PyMuPDF est absent, ou si le PDF est illisible — jamais
+        d'exception. Ouvre le PDF depuis les octets (pas de fichier temporaire)."""
+        if not self.available:
+            return ""
+        try:
+            import fitz  # PyMuPDF
+        except ImportError:
+            logger.debug("PyMuPDF absent — OCR vision désactivé.")
+            return ""
+        cap = max_pages if max_pages and max_pages > 0 else self._max_pages
+        try:
+            doc = fitz.open(stream=file_bytes, filetype="pdf")
+        except Exception as exc:
+            logger.warning("OCR vision : ouverture PDF échouée : %s", exc)
+            return ""
+        try:
+            images: list[tuple[str, bytes]] = []
+            for i, page in enumerate(doc):
+                if i >= cap:
+                    logger.warning(
+                        "OCR vision TRONQUÉ : PDF de %d pages, cap=%d — pages restantes non lues "
+                        "(relever settings.ocr_max_pages).", doc.page_count, cap,
+                    )
+                    break
+                pix = page.get_pixmap(dpi=self._dpi)
+                images.append(("image/png", pix.tobytes("png")))
+        except Exception as exc:
+            logger.warning("OCR vision : rendu des pages échoué : %s", exc)
+            return ""
+        finally:
+            doc.close()
+        if not images:
+            return ""
+
+        parts: list[str] = []
+        for start in range(0, len(images), _OCR_PAGES_PER_CALL):
+            batch = images[start : start + _OCR_PAGES_PER_CALL]
+            user = (
+                f"Pages {start + 1} à {start + len(batch)} du document. "
+                "Transcris fidèlement et intégralement."
+            )
+            try:
+                raw = await self._llm.generate_with_images(
+                    system=_OCR_SYSTEM, user=user, images=batch,
+                    max_tokens=_OCR_MAX_TOKENS, temperature=0.0,
+                )
+            except Exception as exc:
+                logger.warning("OCR vision : lot pages %d+ échoué : %s", start + 1, exc)
+                continue
+            if raw and raw.strip():
+                parts.append(raw.strip())
+        return "\n\n".join(parts)
 
     @staticmethod
     def _dedup(names: list[str]) -> list[str]:

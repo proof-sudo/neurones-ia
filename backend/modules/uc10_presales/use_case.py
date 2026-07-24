@@ -232,25 +232,36 @@ class PresalesUseCase:
         rag_engine: RAGEngine,
         pdf_parser: DocumentParser,
         docx_parser: DocumentParser,
+        vision_ocr=None,
     ):
-        self._pipeline = ScoringPipeline(llm=llm_haiku, rag_engine=rag_engine)
+        # Étape 4 (analyse/notation/reco = décision) sur Sonnet ; extraction sur Haiku.
+        # Bascule via settings.presales_analysis_model sans toucher au code.
+        analysis_llm = llm_sonnet if settings.presales_analysis_model == "sonnet" else llm_haiku
+        self._pipeline = ScoringPipeline(llm=llm_haiku, rag_engine=rag_engine, llm_analysis=analysis_llm)
         # llm_premium=Sonnet → offre + qualitative si settings.offer_sections_model == "sonnet".
         self._generator = OfferGenerator(llm=llm_haiku, llm_premium=llm_sonnet)
         self._llm_sonnet = llm_sonnet
         self._pdf_parser = pdf_parser
         self._docx_parser = docx_parser
+        # Repli vision (transcription Claude) pour les AO scannés : DocumentVisionExtractor
+        # exposant transcribe_pdf_bytes, ou None si la vision est désactivée. Voir _vision_ocr.
+        self._vision_ocr = vision_ocr
         self._odoo_enrichment = OdooEnrichmentService(db_path=settings.local_db_path, llm=llm_haiku)
 
     async def score_ao(self, filename: str, file_bytes: bytes) -> ScoringResult:
         with timer("score_ao.extract_text"):
             text = await self._extract_text(filename, file_bytes)
+        # AO scanné (aucune couche texte extraite) → repli sur la transcription vision Claude
+        # avant d'abandonner. Ne se déclenche que si l'extraction texte/OCR n'a rien donné.
+        if not text.strip():
+            text = await self._vision_ocr_fallback(filename, file_bytes)
         if not text.strip():
             raise ValueError(
                 f"Impossible d'extraire le texte de « {filename} ». "
-                "Ce PDF semble être entièrement scanné (images sans couche texte). "
-                "Assurez-vous que Tesseract OCR est installé "
-                "(https://github.com/UB-Mannheim/tesseract/wiki) "
-                "avec le pack de langue français (fra), puis relancez le backend."
+                "Ce PDF semble être entièrement scanné (images sans couche texte) et la "
+                "transcription automatique n'a rien pu lire. Vérifiez que le document est "
+                "lisible, ou installez Tesseract OCR avec le pack français (fra) "
+                "(https://github.com/UB-Mannheim/tesseract/wiki), puis relancez."
             )
         with timer("score_ao.pipeline"):
             result = await with_timeout(
@@ -530,6 +541,28 @@ class PresalesUseCase:
             ))
 
         return TeamMatchResponse(profiles=profiles, query_used=query[:200])
+
+    async def _vision_ocr_fallback(self, filename: str, file_bytes: bytes) -> str:
+        """Transcrit un AO PDF scanné via la vision Claude quand l'extraction texte/OCR
+        n'a rien donné. Best-effort : renvoie '' (jamais d'exception) si la vision est
+        indisponible, si le fichier n'est pas un PDF, ou si la transcription échoue —
+        `score_ao` lèvera alors le ValueError explicite."""
+        ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+        if ext != "pdf" or self._vision_ocr is None or not getattr(self._vision_ocr, "available", False):
+            return ""
+        try:
+            with timer("score_ao.vision_ocr"):
+                text = await self._vision_ocr.transcribe_pdf_bytes(
+                    file_bytes, max_pages=settings.ocr_max_pages)
+        except Exception:
+            logger.warning("Transcription vision de l'AO « %s » échouée", filename, exc_info=True)
+            return ""
+        if text.strip():
+            logger.info(
+                "AO scanné « %s » transcrit par vision Claude (%d caractères) — "
+                "repli après extraction texte/OCR vide.", filename, len(text),
+            )
+        return text
 
     async def _extract_text(self, filename: str, file_bytes: bytes) -> str:
         import tempfile
