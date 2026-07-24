@@ -124,6 +124,10 @@ class Settings(BaseSettings):
     offer_sections_model: str = "haiku"
     # Pré-statut de conformité IA des exigences au moment de l'export/assess de la matrice.
     matrix_assess_on_export: bool = True
+    # Taille max (Mo) d'un AO uploadé (endpoints /presales/score et /presales/dossiers).
+    # Relevée de 10 à 25 pour accepter les AO SCANNÉS (22 pages en images ≈ 15-30 Mo).
+    # Ajustable via .env (PRESALES_MAX_UPLOAD_MB) sans toucher au code.
+    presales_max_upload_mb: int = 25
 
     # OCR PDF
     # tessdata local au projet (eng+osd+fra) — permet d'ajouter le pack FR sans droits admin

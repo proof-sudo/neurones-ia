@@ -30,6 +30,7 @@ from core.domain.offer import (
     FinancialData,
 )
 from core.domain.document import Source
+from modules.uc10_presales.latency import timer
 
 logger = logging.getLogger(__name__)
 
@@ -448,6 +449,15 @@ class ScoringPipeline:
         self._llm = llm
         self._rag_engine = rag_engine
 
+    async def _timed(self, label: str, coro):
+        """Chronomètre une sous-étape (loggée en `[perf]` si presales_perf_log).
+
+        Purement observationnel : n'altère ni le résultat ni le comportement. Sert à
+        localiser la latence par étape (parsing, chaque extraction LLM, matching, analyse).
+        """
+        with timer(label):
+            return await coro
+
     async def run(self, ao_filename: str, ao_text: str) -> ScoringResult:
         logger.info("Pipeline scoring démarré pour : %s", ao_filename)
 
@@ -460,10 +470,10 @@ class ScoringPipeline:
             (appendices, profils_demandes, seuils_eligibilite, donnees_financieres),
             summary,
         ) = await asyncio.gather(
-            self._step1_extract(ao_text),
-            self._step1b_extract_frame(ao_text),
-            self._step1b_extract_requirements(ao_text),
-            self._step2_summarize(ao_text),
+            self._timed("step1.extract", self._step1_extract(ao_text)),
+            self._timed("step1b.frame", self._step1b_extract_frame(ao_text)),
+            self._timed("step1b.requirements", self._step1b_extract_requirements(ao_text)),
+            self._timed("step2.summary", self._step2_summarize(ao_text)),
         )
         logger.info(
             "Steps 1+1b+2 done : key_elements=%d, criteres=%d, besoins=%d, ressources=%d, "
@@ -492,18 +502,25 @@ class ScoringPipeline:
         project_query = f"{summary} {' '.join(e.value for e in key_elements[:4])}"
 
         cv_sources, project_sources = await asyncio.gather(
-            self._match_cvs(profils_demandes, extra.get("ressources_demandees", []), summary),
-            self._rag_engine.search_diverse(
-                query=project_query,
-                doc_types=["offre_technique", "abe", "pv_recette", "marches_similaires"],
-                per_type=2,
-                min_dense_score=settings.project_min_similarity,  # levier ① projets
+            self._timed(
+                "step3.match_cvs",
+                self._match_cvs(profils_demandes, extra.get("ressources_demandees", []), summary),
+            ),
+            self._timed(
+                "step3.search_projects",
+                self._rag_engine.search_diverse(
+                    query=project_query,
+                    doc_types=["offre_technique", "abe", "pv_recette", "marches_similaires"],
+                    per_type=2,
+                    min_dense_score=settings.project_min_similarity,  # levier ① projets
+                ),
             ),
         )
         # Levier ③ projets : le LLM écarte les références hors-domaine (ex. ABE Cisco/Fortinet
         # pour un AO Odoo) que le plancher seul ne distingue pas.
         if self._llm and settings.project_llm_rerank and project_sources:
-            project_sources = await self._rerank_projects(project_sources, project_query)
+            project_sources = await self._timed(
+                "step3.rerank_projects", self._rerank_projects(project_sources, project_query))
 
         team_matches = [
             MatchedDocument(
@@ -553,22 +570,23 @@ class ScoringPipeline:
         # Budgets larges : l'étape analyse a 120K tokens d'entrée et l'AO n'en pèse que ~38K,
         # on peut donc envoyer le contenu réel des CV/offres (et pas des bribes) pour que les
         # critères RH/certifications soient notés sur du concret (cf. faille D).
-        cv_context, project_context = await asyncio.gather(
-            self._rag_engine.build_context(cv_sources, max_tokens=5000),
-            self._rag_engine.build_context(project_sources, max_tokens=5000),
-        )
+        with timer("step4.build_context"):
+            cv_context, project_context = await asyncio.gather(
+                self._rag_engine.build_context(cv_sources, max_tokens=5000),
+                self._rag_engine.build_context(project_sources, max_tokens=5000),
+            )
         rag_parts = []
         if cv_context:
             rag_parts.append("### CV de notre équipe (GED)\n" + cv_context)
         if project_context:
             rag_parts.append("### Projets & offres similaires (GED)\n" + project_context)
         rag_context = "\n\n".join(rag_parts)
-        analysis = await self._step4_analyze(
+        analysis = await self._timed("step4.analyze", self._step4_analyze(
             ao_text=ao_text,
             summary=summary,
             rag_context=rag_context,
             criteria=criteria,
-        )
+        ))
         logger.info("Pipeline terminé : score=%d, recommandation=%s", analysis.score, analysis.recommendation)
 
         return ScoringResult(
