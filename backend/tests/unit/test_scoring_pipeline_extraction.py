@@ -72,6 +72,32 @@ def test_step1_extract_vide_honnetement_si_toujours_tronque():
     assert extra["besoins"] == []  # honnête : vide, pas de contenu inventé
 
 
+def test_step1_extract_retente_si_json_malforme_non_tronque():
+    # Réponse COMPLÈTE (pas de troncature) mais syntaxiquement invalide — cas réel observé
+    # en prod ("Expecting ',' delimiter") sur un AO dense, distinct d'une troncature.
+    malformed = '{"key_points": [], "besoins": [{"texte": "A" "source_section": "1"}]}'
+    ok_json = '{"key_points": [], "besoins": [{"texte": "Migration Odoo", "source_section": "3.1"}]}'
+    llm = FakeLLM([malformed, ok_json])
+    pipeline = _pipeline(llm)
+
+    elements, extra = asyncio.run(pipeline._step1_extract("texte de l'AO"))
+
+    assert llm.calls == 2
+    assert len(extra["besoins"]) == 1
+    assert extra["besoins"][0].texte == "Migration Odoo"
+
+
+def test_step1_extract_vide_honnetement_si_json_toujours_malforme():
+    malformed = '{"key_points": [], "besoins": [{"texte": "A" "source_section": "1"}]}'
+    llm = FakeLLM([malformed, malformed])
+    pipeline = _pipeline(llm)
+
+    elements, extra = asyncio.run(pipeline._step1_extract("texte de l'AO"))
+
+    assert llm.calls == 2
+    assert extra["besoins"] == []
+
+
 def test_frame_grille_degeneree_retombe_sur_grille_standard(monkeypatch):
     # Critères extraits (liste non vide) mais tous à 0 point — cas réel rencontré sur
     # un AO qui décrit ses critères en prose sans grille pondérée explicite.

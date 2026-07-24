@@ -2440,6 +2440,10 @@ export function PresalesWorkflow({ currentUserName = "" }: { currentUserName?: s
   // perdu (fusion des patches successifs, pas juste le dernier).
   const pendingPatchRef = useRef<Map<string, Partial<AOEntry>>>(new Map());
   const patchTimerRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // Le dossier apparaît dans la liste (donc le bouton "Analyser" est cliquable) dès
+  // setAos(), AVANT que createDossier() ait fini côté serveur — sans ce suivi, un clic
+  // trop rapide sur "Analyser" tombe sur un 404 (le dossier n'existe pas encore en base).
+  const creatingRef = useRef<Map<string, Promise<unknown>>>(new Map());
 
   const selectedAO = aos.find(a => a.id === selectedId) ?? null;
 
@@ -2491,13 +2495,17 @@ export function PresalesWorkflow({ currentUserName = "" }: { currentUserName?: s
       setAos(prev => [entry, ...prev]);
       setSelectedId(id);
       setViewStep(1);
+      const creation = createDossier(id, file, entry as unknown as Record<string, unknown>);
+      creatingRef.current.set(id, creation);
       try {
-        await createDossier(id, file, entry as unknown as Record<string, unknown>);
+        await creation;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         setAos(prev => prev.map(a => a.id === id
           ? { ...a, status: "error", errorMessage: `Échec de l'enregistrement du dossier : ${msg}` }
           : a));
+      } finally {
+        creatingRef.current.delete(id);
       }
     }
   }
@@ -2508,6 +2516,10 @@ export function PresalesWorkflow({ currentUserName = "" }: { currentUserName?: s
   async function startAnalysis(id: string, force = false) {
     setAos(prev => prev.map(a => a.id === id ? { ...a, status: "scoring", errorMessage: undefined } : a));
     try {
+      // Attend la fin de createDossier() si elle est encore en vol pour ce dossier —
+      // évite le 404 "dossier introuvable" d'un clic sur "Analyser" trop rapide après upload.
+      const pendingCreation = creatingRef.current.get(id);
+      if (pendingCreation) await pendingCreation.catch(() => {});
       const result = await analyzeDossier(id, force);
       setAos(prev => prev.map(a => a.id === id ? { ...a, status: "scored", scoringResult: result } : a));
     } catch (e: unknown) {
