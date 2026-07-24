@@ -94,6 +94,16 @@ except ImportError:
 
 # Mesuré en réel : cas normal < 5s ; cas pathologique (97 pages, tableaux denses)
 # observé à 781s pour pymupdf4llm seul. Passé ce délai, on n'attend plus ce chemin.
+#
+# Volontairement PAS de seuil de pages en complément : un seul document pathologique
+# mesuré (97 pages, tableaux denses) ne suffit pas à établir que "beaucoup de pages"
+# est LA cause — ça pourrait tout aussi bien être la densité des tableaux, indépendante
+# du nombre de pages. Un seuil de pages sacrifierait la qualité (Markdown structuré,
+# tableaux propres) de gros documents par ailleurs simples et rapides à traiter, alors
+# que ce sont souvent les documents les plus susceptibles de contenir les tableaux
+# (bordereaux de prix, grilles d'exigences) où pymupdf4llm apporte le plus de valeur.
+# Le timeout ci-dessus suffit : borné par le comportement réel observé, pas par une
+# hypothèse non vérifiée sur sa cause.
 _PYMUPDF4LLM_TIMEOUT_S = 25
 
 

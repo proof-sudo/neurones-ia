@@ -89,6 +89,13 @@ _CONDITIONAL_MIN_SCORE = 35
 _FRAME_OUTPUT_BUDGET_TOKENS = 6_000
 _REQUIREMENTS_OUTPUT_BUDGET_TOKENS = 16_000
 
+# step1.extract (besoins/critères/prérequis/ressources/vigilance) : 8000 de base, mais un
+# AO dense (97 pages, ex. SIB CCTP) a tronqué à ce plafond (JSON invalide, tout perdu en
+# silence). Retry unique à budget élargi — même patron que le résumé exécutif ci-dessus :
+# mieux vaut un aller-retour de plus que perdre les besoins/critères d'un AO réel.
+_EXTRACT_OUTPUT_BUDGET_TOKENS = 8_000
+_EXTRACT_OUTPUT_RETRY_TOKENS = 12_000
+
 _EXTRACT_SYSTEM = """Tu es un extracteur d'appels d'offres IT. Ton rôle est d'EXTRAIRE, pas de RÉSUMER.
 
 OBJECTIF : restituer chaque exigence avec son niveau de détail D'ORIGINE. La valeur métier est
@@ -748,13 +755,6 @@ class ScoringPipeline:
 
     async def _step1_extract(self, ao_text: str) -> tuple[list[KeyElement], dict]:
         snippet = _truncate_by_tokens(ao_text, self._llm, _EXTRACT_INPUT_BUDGET_TOKENS, step="extract")
-        # 8000 tokens (était 5500) : chaque item des 5 listes thématiques porte désormais
-        # {texte, source_section} → le pire cas (73 items + réfs) ~6000 tok (cf. gate), 8000
-        # garde ~20% de marge. Gate : test_extract_output_budget.py.
-        raw = await self._llm.extract(
-            prompt=_EXTRACT_SYSTEM, text=snippet, max_tokens=8000,
-            temperature=_TEMP_DETERMINISTIC,
-        )
         empty_extra: dict = {
             "criteres_selection": [], "besoins": [], "prerequis": [],
             "ressources_demandees": [], "points_vigilance": [], "date_remise": "",
@@ -773,6 +773,28 @@ class ScoringPipeline:
                 if item.texte:
                     out.append(item)
             return out
+
+        # Sur un AO dense (ex. 97 pages, tableaux nombreux), le plafond de base peut tronquer
+        # le JSON en plein milieu — perdant TOUS les besoins/critères/prérequis de l'AO en
+        # silence si on ne fait rien. Retry unique à budget élargi (même patron que le résumé
+        # exécutif) avant d'accepter une extraction vide.
+        raw = ""
+        for budget in (_EXTRACT_OUTPUT_BUDGET_TOKENS, _EXTRACT_OUTPUT_RETRY_TOKENS):
+            try:
+                raw = await self._llm.extract(
+                    prompt=_EXTRACT_SYSTEM, text=snippet, max_tokens=budget,
+                    raise_on_truncation=True, temperature=_TEMP_DETERMINISTIC,
+                )
+                break
+            except OutputTruncatedError:
+                logger.warning(
+                    "step1.extract tronqué au plafond de %d tokens — %s.",
+                    budget,
+                    "retry à budget élargi" if budget < _EXTRACT_OUTPUT_RETRY_TOKENS
+                    else "abandon, extraction vide (AO hors norme)",
+                )
+        else:
+            return [], empty_extra
 
         try:
             cleaned = _clean_json(raw)
@@ -837,6 +859,20 @@ class ScoringPipeline:
         calendar = self._parse_calendar(data.get("calendar"))
         evaluation = self._parse_evaluation(data.get("evaluation_modalities"))
         criteria = self._parse_criteria(data.get("criteria")) or self._load_standard_grid()
+        if criteria and sum(c.max_points for c in criteria) == 0:
+            # Grille non vide mais dégénérée (critères sans le moindre point chiffré,
+            # ex. AO qui décrit ses critères en prose sans grille pondérée explicite) —
+            # `or` ci-dessus ne l'attrape pas (liste non vide = truthy). Un score sur une
+            # grille à 0 point total est structurellement inexploitable (division par
+            # zéro évitée en amont, mais le score resterait toujours 0/NO_BID à tort).
+            # Repli sur la grille standard ESN, marquée `is_inferred` — jamais présentée
+            # comme si elle venait de l'AO.
+            logger.warning(
+                "Grille extraite mais sans points chiffrés (%d critères, total=0 pt) — "
+                "repli sur la grille standard ESN plausible (is_inferred=True).",
+                len(criteria),
+            )
+            criteria = self._load_standard_grid()
 
         raw_identity = data.get("market_identity") or {}
         raw_eval = data.get("evaluation_modalities") or {}
