@@ -1,5 +1,6 @@
 import logging
 import mimetypes
+import re
 import shutil
 import unicodedata
 from pathlib import Path
@@ -43,6 +44,16 @@ def _safe_resolve(rel_path: str) -> Path:
         return resolved
     except (ValueError, RuntimeError):
         raise HTTPException(status_code=400, detail="Chemin invalide ou hors de la GED")
+
+
+def _safe_filename(name: str) -> str:
+    """Neutralise tout séparateur/chemin dans un nom de fichier fourni par le
+    client (`UploadFile.filename` n'est pas fiable — un `../../etc/x` ou un
+    chemin absolu y écraserait `target_dir` sans cette normalisation)."""
+    ascii_name = unicodedata.normalize("NFKD", name or "").encode("ascii", "ignore").decode()
+    ascii_name = Path(ascii_name).name  # ne garde que le composant final
+    ascii_name = re.sub(r"[^A-Za-z0-9._-]+", "_", ascii_name).strip("_. ")
+    return ascii_name or "document"
 
 
 def _build_subtree(folder: Path, rel: str) -> dict:
@@ -376,7 +387,8 @@ async def upload_file(
     folder_path: str = Form(...),
 ):
     """Upload un fichier dans la GED et lance l'indexation en arrière-plan."""
-    suffix = Path(file.filename).suffix.lower()
+    safe_name = _safe_filename(file.filename)
+    suffix = Path(safe_name).suffix.lower()
     if suffix not in _SUPPORTED_EXT:
         raise HTTPException(
             status_code=400,
@@ -391,7 +403,7 @@ async def upload_file(
     target_dir.mkdir(parents=True, exist_ok=True)
 
     content = await file.read()
-    dest = target_dir / file.filename
+    dest = target_dir / safe_name
     dest.write_bytes(content)
 
     doc_type: DocumentType = _TYPE_MAP.get(parts[0], {}).get("doc_type", DocumentType.UNKNOWN)
@@ -400,7 +412,7 @@ async def upload_file(
 
     logger.info("Upload GED : %s → %s", file.filename, dest)
     return {
-        "filename": file.filename,
+        "filename": safe_name,
         "folder_path": folder_path,
         "doc_type": doc_type.value,
         "size_bytes": len(content),

@@ -1,16 +1,24 @@
 """
 Script d'exploration Odoo — teste la connexion et affiche les données disponibles.
-Usage: python scripts/explore_odoo.py
+Usage: ODOO_URL=... ODOO_DB=... ODOO_USERNAME=... ODOO_PASSWORD=... python scripts/explore_odoo.py
+Jamais de credentials en dur ici (mandat sécurité) — variables d'environnement uniquement.
 """
 import json
+import os
 import sys
 import urllib.request
 import urllib.error
 
-ODOO_URL  = "https://erpntci.neuronestech.com"
-ODOO_DB   = "Neurones_Prod"
-ODOO_USER = "odooAgent@neurone"
-ODOO_PASS = "OdooAgent2024!"
+REQUIRED = ("ODOO_URL", "ODOO_DB", "ODOO_USERNAME", "ODOO_PASSWORD")
+missing = [name for name in REQUIRED if not os.environ.get(name)]
+if missing:
+    print(f"Variables d'environnement manquantes : {', '.join(missing)}")
+    sys.exit(1)
+
+ODOO_URL  = os.environ["ODOO_URL"]
+ODOO_DB   = os.environ["ODOO_DB"]
+ODOO_USER = os.environ["ODOO_USERNAME"]
+ODOO_PASS = os.environ["ODOO_PASSWORD"]
 
 
 def rpc(endpoint: str, params: dict) -> dict:

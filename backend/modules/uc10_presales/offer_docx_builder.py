@@ -410,19 +410,36 @@ def _clean_person_name(filename: str) -> str:
     return name.replace("_", " ").replace("-", " ").strip()
 
 
-def _named_team_from_cvs(selected_cvs: list[str]) -> list[tuple[str, str]]:
-    """(Nom, Fonction) à partir des CV choisis : 1er = Chef de Projet, suivants = Consultant."""
-    names = [_clean_person_name(f).strip().title() for f in selected_cvs if f]
-    return [
-        (name, "Chef de Projet" if i == 0 else "Consultant / Développeur Senior")
-        for i, name in enumerate(names)
-    ]
+def _named_team_from_cvs(
+    selected_cvs: list[str], kb_team: dict[str, tuple[str, str]] | None = None
+) -> list[tuple[str, str]]:
+    """(Nom, Fonction) à partir des CV choisis.
+
+    Priorité à `kb_team` (nom_complet/titre_poste RÉELS, extraits du CV et
+    persistés dans `kb_cv` par l'indexation GED) — le nom de fichier n'est
+    qu'un repli pour les CV non encore résolus dans la base de connaissance
+    (jamais de "Chef de Projet" arbitraire sur le 1er de la liste si une
+    vraie fonction est disponible)."""
+    kb_team = kb_team or {}
+    people: list[tuple[str, str]] = []
+    for i, filename in enumerate(f for f in selected_cvs if f):
+        resolved = kb_team.get(filename)
+        if resolved and resolved[0]:
+            nom = resolved[0]
+            fonction = resolved[1] or ("Chef de Projet" if i == 0 else "Consultant / Développeur Senior")
+        else:
+            nom = _clean_person_name(filename).strip().title()
+            fonction = "Chef de Projet" if i == 0 else "Consultant / Développeur Senior"
+        people.append((nom, fonction))
+    return people
 
 
-def _build_team_section(doc: DocxDocument, selected_cvs: list[str]) -> None:
+def _build_team_section(
+    doc: DocxDocument, selected_cvs: list[str], kb_team: dict[str, tuple[str, str]] | None = None
+) -> None:
     """Section « Équipe projet dédiée » : tableau NOM | FONCTION depuis les CV choisis.
     Sans CV, un tableau générique de rôles est produit (repli)."""
-    people = _named_team_from_cvs(selected_cvs)
+    people = _named_team_from_cvs(selected_cvs, kb_team)
     if not people:
         people = [
             ("Chef de Projet", "Coordination et pilotage du projet"),
@@ -535,6 +552,7 @@ def build_offer_docx(
     client_name: str,
     selected_cvs: list[str] | None = None,
     selected_abes: list[str] | None = None,
+    kb_team: dict[str, tuple[str, str]] | None = None,
 ) -> bytes:
     """Construit le .docx complet à partir du plan de document produit par l'IA.
 
@@ -552,7 +570,7 @@ def build_offer_docx(
     _render_blocks(doc, presentation_neurones_blocks())
     _render_blocks(doc, blocks or [])
     _render_blocks(doc, methodologie_blocks())
-    _build_team_section(doc, selected_cvs or [])
+    _build_team_section(doc, selected_cvs or [], kb_team)
     _render_blocks(doc, certifications_blocks())
 
     ged_root = Path(settings.ged_path)

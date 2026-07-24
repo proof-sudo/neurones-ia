@@ -330,8 +330,13 @@ class OfferGenerator:
         client_name: str = "",
         selected_cvs: list[str] | None = None,
         selected_abes: list[str] | None = None,
+        kb_team: dict[str, tuple[str, str]] | None = None,
     ) -> OfferDraft:
-        """Étape 2 : produit le .docx à partir du plan de document (éventuellement édité)."""
+        """Étape 2 : produit le .docx à partir du plan de document (éventuellement édité).
+
+        `kb_team` : { fichier_source CV → (nom_complet, titre_poste) } résolu depuis
+        `kb_cv` (base de connaissance GED) — le tableau équipe utilise ces vraies
+        données plutôt que de deviner un nom/rôle depuis le nom de fichier."""
         if not client_name or not client_name.strip():
             client_name = _extract_client_from_scoring(scoring)
         cover = sections.get("cover") or {}
@@ -339,6 +344,7 @@ class OfferGenerator:
         docx_bytes = build_offer_docx(
             cover=cover, blocks=blocks, client_name=client_name,
             selected_cvs=selected_cvs or [], selected_abes=selected_abes or [],
+            kb_team=kb_team,
         )
         filename = self.build_filename(scoring, client_name)
         logger.info("Offre rendue : %s (%d bloc(s) IA)", filename, len(blocks))

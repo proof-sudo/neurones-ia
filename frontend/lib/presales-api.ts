@@ -416,6 +416,20 @@ export async function confirmMatrix(
   return r.json();
 }
 
+/** Recharge la matrice déjà assessée pour cet AO (`null` si jamais assessée —
+ * cas normal si l'étape 1 « Matrice de conformité » n'a pas été exportée). */
+export async function getMatrix(aoFilename: string): Promise<ConformityMatrix | null> {
+  const r = await apiFetch(
+    `${API_BASE}/presales/matrix?ao_filename=${encodeURIComponent(aoFilename)}`, {}, 30_000,
+  );
+  if (r.status === 404) return null;
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({})) as { detail?: string };
+    throw new Error(e.detail ?? `Erreur chargement matrice (${r.status})`);
+  }
+  return r.json() as Promise<ConformityMatrix>;
+}
+
 // ── GED (lecture + upload, pour le workflow AO) ──────────────────────────────
 
 export interface GEDFile {

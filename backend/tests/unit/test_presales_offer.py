@@ -8,7 +8,7 @@ from core.domain.offer import ScoringResult, ExtractedItem, Risk, BidRecommendat
 from modules.uc10_presales.offer_generator import (
     _offer_user_context, _parse_document, _fallback_document, _sanitize_block,
 )
-from modules.uc10_presales.offer_docx_builder import build_offer_docx
+from modules.uc10_presales.offer_docx_builder import build_offer_docx, _named_team_from_cvs
 
 
 def _scoring(**kw) -> ScoringResult:
@@ -109,3 +109,35 @@ def test_build_offer_docx_produit_un_docx_valide():
     assert "Équipe projet dédiée" in full
     # Le tableau IA + le tableau équipe sont présents
     assert len(doc.tables) >= 2
+
+
+# ── Tableau équipe : priorité aux vraies données kb_cv ────────────────────────
+
+def test_equipe_utilise_kb_cv_quand_disponible():
+    kb_team = {"CV_Jean_Konan.pdf": ("Jean Konan", "Architecte Cloud")}
+    people = _named_team_from_cvs(
+        ["CV_Jean_Konan.pdf", "CV_inconnu.pdf"], kb_team=kb_team
+    )
+    assert people[0] == ("Jean Konan", "Architecte Cloud")
+    # Le 2e CV n'a pas de correspondance kb_cv → repli sur le nom de fichier
+    assert people[1][0] == "Inconnu"
+    assert people[1][1] == "Consultant / Développeur Senior"
+
+
+def test_equipe_repli_complet_sans_kb_team():
+    people = _named_team_from_cvs(["CV_Awa_Diallo.pdf"], kb_team=None)
+    assert people == [("Awa Diallo", "Chef de Projet")]
+
+
+def test_build_offer_docx_accepte_kb_team():
+    data = build_offer_docx(
+        cover={"titre": "Test"}, blocks=[], client_name="Client",
+        selected_cvs=["CV_Jean_Konan.pdf"],
+        kb_team={"CV_Jean_Konan.pdf": ("Jean Konan", "Architecte Cloud")},
+    )
+    doc = DocxDocument(BytesIO(data))
+    full = "\n".join(
+        cell.text for table in doc.tables for row in table.rows for cell in row.cells
+    )
+    assert "Jean Konan" in full
+    assert "Architecte Cloud" in full
