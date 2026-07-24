@@ -1,3 +1,4 @@
+import asyncio
 import io
 import logging
 import os
@@ -101,6 +102,19 @@ class PDFAdapter(DocumentParser):
     """
 
     async def parse(self, file_path: str) -> str:
+        """Point d'entrée async — délègue tout le travail CPU/IO-bound (pymupdf4llm,
+        pdfplumber, PyMuPDF, OCR Tesseract page par page) à un thread séparé.
+
+        CRITIQUE : `_parse_sync` ci-dessous est entièrement synchrone. L'appeler
+        directement depuis une coroutine bloquerait la boucle d'événements du worker
+        uvicorn pendant TOUTE la durée de l'extraction — sur un PDF de plusieurs
+        dizaines de pages avec OCR, ça peut durer plusieurs minutes, rendant ce worker
+        injoignable pour toute autre requête (login, dashboard, autres utilisateurs)
+        pendant ce temps. `asyncio.to_thread` libère la boucle d'événements ; seul un
+        thread du pool est occupé, le serveur reste réactif pour le reste du trafic."""
+        return await asyncio.to_thread(self._parse_sync, file_path)
+
+    def _parse_sync(self, file_path: str) -> str:
         # Étape 0 : Markdown structuré (pymupdf4llm) — préserve titres, tableaux, listes.
         # Garde-fou : repli sur le pipeline texte/OCR page-par-page si la conversion perd
         # du contenu (les PDF scannés/CV à page-image ne donnent pas un Markdown fidèle).
