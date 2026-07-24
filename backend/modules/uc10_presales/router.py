@@ -282,12 +282,55 @@ async def delete_dossier(dossier_id: str):
     return {"deleted": True}
 
 
-@router.post("/dossiers/{dossier_id}/analyze")
+# Analyses en cours : référence FORTE aux tâches détachées. asyncio ne conserve qu'une
+# weakref sur les tâches créées par create_task ; sans ce set, une analyse longue peut
+# être ramassée par le GC en plein vol. On retire la tâche via un done_callback.
+_ANALYSIS_TASKS: set[asyncio.Task] = set()
+
+
+async def _run_analysis_task(
+    dossier_id: str, filename: str, file_bytes: bytes, use_case: PresalesUseCase,
+) -> None:
+    """Exécute le pipeline de scoring EN ARRIÈRE-PLAN et persiste l'issue dans le dossier
+    (`status` → `scored` + `scoringResult`, ou `error` + `errorMessage`). Découplé du cycle
+    de vie de la requête HTTP : le client déclenche via `POST .../analyze` (202 immédiat)
+    puis interroge `GET /dossiers/{id}` jusqu'à `scored`/`error`.
+
+    Pourquoi : le pipeline dure ~2 min. En streaming, Next.js bufferisait la réponse (le
+    heartbeat n'atteignait jamais le proxy) et le frontal Traefik coupait à ~100s → 504.
+    Sans connexion longue, plus de 504 possible."""
+    try:
+        result = await use_case.score_ao(filename=filename, file_bytes=file_bytes)
+    except ValueError as e:
+        await dossier_store.patch(dossier_id, {"status": "error", "errorMessage": str(e)})
+        return
+    except Exception as e:
+        logger.exception("Erreur pipeline scoring AO (dossier %s)", dossier_id)
+        await dossier_store.patch(dossier_id, {
+            "status": "error",
+            "errorMessage": f"Erreur analyse AO : {type(e).__name__}: {e}",
+        })
+        return
+
+    schema = _to_schema(result)
+    await dossier_store.patch(dossier_id, {
+        "status": "scored",
+        "scoringResult": schema.model_dump(mode="json"),
+        "errorMessage": None,
+    })
+
+
+@router.post("/dossiers/{dossier_id}/analyze", status_code=202)
 async def analyze_dossier(dossier_id: str, request: Request, force: bool = False):
-    """(Re)lance le pipeline de scoring sur le fichier PERSISTÉ du dossier — c'est ce qui
-    permet de « refaire l'analyse » à tout moment, y compris après un rechargement de page
-    (plus besoin que le File soit encore en mémoire navigateur). Même contrat de streaming
-    (heartbeat + sentinelle d'erreur) que `/presales/score`."""
+    """(Re)lance le pipeline de scoring sur le fichier PERSISTÉ du dossier — permet de
+    « refaire l'analyse » à tout moment, y compris après un rechargement de page (plus
+    besoin que le File soit encore en mémoire navigateur).
+
+    Modèle ASYNCHRONE : le scoring part en tâche de fond et l'endpoint répond **202
+    immédiatement** avec `{"status": "scoring", "dossier_id": ...}`. Le client interroge
+    ensuite `GET /dossiers/{id}` jusqu'à ce que `status` passe à `scored` (résultat dans
+    `scoringResult`) ou `error` (message dans `errorMessage`). Remplace l'ancien streaming
+    heartbeat qui provoquait des 504 (cf. `_run_analysis_task`)."""
     file_path = await dossier_store.get_file_path(dossier_id)
     if file_path is None:
         raise HTTPException(status_code=404, detail="Dossier introuvable.")
@@ -305,36 +348,11 @@ async def analyze_dossier(dossier_id: str, request: Request, force: bool = False
     await dossier_store.patch(dossier_id, {"status": "scoring", "errorMessage": None})
     use_case = _get_use_case(request)
 
-    async def _stream():
-        task = asyncio.create_task(use_case.score_ao(filename=filename, file_bytes=file_bytes))
-        while not task.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(task), timeout=_SCORE_HEARTBEAT_SECONDS)
-            except asyncio.TimeoutError:
-                yield b" "
+    task = asyncio.create_task(_run_analysis_task(dossier_id, filename, file_bytes, use_case))
+    _ANALYSIS_TASKS.add(task)
+    task.add_done_callback(_ANALYSIS_TASKS.discard)
 
-        try:
-            result = task.result()
-        except ValueError as e:
-            await dossier_store.patch(dossier_id, {"status": "error", "errorMessage": str(e)})
-            yield json.dumps({"__error__": 422, "detail": str(e)}, ensure_ascii=False).encode()
-            return
-        except Exception as e:
-            logger.exception("Erreur pipeline scoring AO (dossier %s)", dossier_id)
-            msg = f"Erreur analyse AO : {type(e).__name__}: {e}"
-            await dossier_store.patch(dossier_id, {"status": "error", "errorMessage": msg})
-            yield json.dumps({"__error__": 500, "detail": msg}, ensure_ascii=False).encode()
-            return
-
-        schema = _to_schema(result)
-        await dossier_store.patch(dossier_id, {
-            "status": "scored",
-            "scoringResult": schema.model_dump(mode="json"),
-            "errorMessage": None,
-        })
-        yield json.dumps(schema.model_dump(mode="json"), ensure_ascii=False).encode()
-
-    return StreamingResponse(_stream(), media_type="application/json")
+    return {"status": "scoring", "dossier_id": dossier_id}
 
 
 @router.post("/generate")
