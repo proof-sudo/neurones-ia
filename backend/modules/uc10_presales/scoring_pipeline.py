@@ -275,10 +275,10 @@ annexes numérotées). Code/référence EXACT. N'invente aucune pièce génériq
 
 Réponds UNIQUEMENT avec le JSON valide, sans balises markdown."""
 
-_SUMMARY_SYSTEM = """Tu es un expert en avant-vente IT. Rédige un résumé exécutif CONCRET de cet appel d'offres.
-
-OBJECTIF : un résumé qui DONNE LES FAITS, pas des généralités. Un lecteur doit savoir, dès la
-lecture, DE QUOI parle précisément ce marché — sans avoir à ouvrir le document.
+_SUMMARY_SYSTEM = """Tu es un expert en avant-vente IT. Produis une FICHE DE LECTURE RAPIDE de cet
+appel d'offres — pas une note de synthèse en prose. Le lecteur doit saisir l'essentiel en scannant
+15 secondes, sans avoir à ouvrir le document ni à lire un pavé de texte qui redonne l'impression de
+relire le cahier des charges.
 
 RÈGLE — concret avant tout :
 - NOMME les éléments précis du texte : solution/technologie (ex: GLPI, Commvault), client et
@@ -287,27 +287,28 @@ RÈGLE — concret avant tout :
 - Préfère TOUJOURS le terme exact au terme générique : "solution GLPI multi-filiales" plutôt que
   "un outil de gestion" ; "authentification Azure AD/O365" plutôt que "une authentification".
 - N'INVENTE rien : ne cite que ce qui est dans le texte. Si une info n'y est pas, ne la mentionne pas.
+  Si une section entière n'a pas de contenu pertinent dans l'AO, OMETS-la (jamais de section vide
+  ou de "non précisé" en puce).
 
-RÈGLE — formulation et mise en forme :
-- HIÉRARCHISE comme une note de synthèse, pas comme un inventaire. Conserve INTÉGRALEMENT les
-  faits décisifs : critères éliminatoires, montants, seuils et garanties chiffrés, périmètre
-  (nombre de sites/pays/utilisateurs), délais et durée, barème d'évaluation, technologies
-  structurantes. Les énumérations secondaires (listes de modules, certifications, livrables...)
-  peuvent être synthétisées : cite les 2-3 éléments les plus significatifs et agrège le reste
-  (ex : "les modules Deposits, Loans et 4 autres modules S/4HANA for Banking"). En condensant,
-  ne déforme ni n'invente rien.
-- Rédaction soignée et professionnelle : phrases complètes et bien construites, ton de note de
-  synthèse destinée à une direction commerciale. Évite les phrases interminables : découpe les
-  longues énumérations en plusieurs phrases courtes et lisibles.
-- Structure le résumé en 3 à 5 paragraphes thématiques (ex : contexte et objectif ; périmètre et
-  exigences techniques ; enjeux et contraintes ; technologies, planning et livrables ; modalités
-  d'évaluation et de paiement), chacun de 2 à 4 phrases. Vise 250 à 400 mots au total : le résumé
-  doit TOUJOURS se terminer par une phrase complète de conclusion, jamais en cours d'énumération.
-- OBLIGATOIRE : sépare chaque paragraphe par une LIGNE VIDE (deux retours à la ligne consécutifs),
-  sinon les paragraphes seront fusionnés à l'affichage.
-- NE commence PAS par un titre (pas de "RÉSUMÉ EXÉCUTIF" ni équivalent) : entre directement dans
-  le premier paragraphe.
-IMPORTANT : réponds en texte brut uniquement, sans markdown, sans titres, sans puces, sans caractères gras."""
+RÈGLE — format (OBLIGATOIRE, réponds en Markdown) :
+- Ligne 1 : une phrase d'accroche en **gras**, le "pitch" du marché en une ligne (qui commande
+  quoi, pour quel enjeu) — pas un titre du type "RÉSUMÉ EXÉCUTIF", une vraie phrase.
+- Puis des sections courtes, chacune un titre en **gras** suivi de puces Markdown (`- `) :
+  **Client & périmètre** (autorité contractante, sites/pays/utilisateurs concernés),
+  **Ce qui est demandé** (solution/techno précise, fonctionnalités structurantes),
+  **Exigences clés** (seuils techniques et critères éliminatoires — les 3 à 5 plus décisifs,
+  pas une liste exhaustive), **Calendrier** (deadline de remise, durée du marché, jalons
+  critiques), **Évaluation** (barème chiffré type 70/30, critères de notation). N'inclus que
+  les sections qui ont un contenu réel à rapporter.
+- Une puce = un fait, une phrase courte. Jamais de sous-liste imbriquée dans une puce, jamais une
+  puce qui fait plusieurs lignes. Les énumérations secondaires (modules, certifications) : cite
+  les 2-3 plus significatives et agrège le reste (ex. "Deposits, Loans et 4 autres modules
+  S/4HANA for Banking") — sans déformer ni inventer.
+- Mets en **gras** les chiffres et noms propres qui comptent (deadlines, montants, seuils,
+  technologies) pour qu'un lecteur les repère au premier coup d'œil.
+- Vise 120 à 180 mots au total (hors titres de section) : c'est un tableau de bord de lecture,
+  pas un résumé narratif. Aucune phrase de conclusion nécessaire — la fiche s'arrête à la
+  dernière puce utile."""
 
 _ANALYSIS_SYSTEM = """Tu es un directeur commercial senior en IT.
 On te fournit une GRILLE D'ÉVALUATION (critères avec points max) et nos références (RAG).
