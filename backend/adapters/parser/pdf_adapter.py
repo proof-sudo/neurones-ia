@@ -180,8 +180,20 @@ class PDFAdapter(DocumentParser):
             ):
                 thin_pages.append(i)
 
+        # EXPÉRIMENTATION TEMPORAIRE (désactivée volontairement) : on mesure l'impact de
+        # l'OCR Tesseract sur la lenteur avant de décider de le remplacer par la vision
+        # de Claude (le modèle lit déjà les images nativement — pistes : coût tokens
+        # image, et l'OCR ne concerne QUE les pages "maigres" ci-dessus, pas tout le
+        # document). Les pages maigres restent donc telles quelles (texte partiel/vide),
+        # PAS d'appel Tesseract — on regarde si ça change le temps total sur le même AO.
+        if thin_pages:
+            logger.info(
+                "OCR DÉSACTIVÉ (expérimentation) — %d/%d page(s) maigre(s) de %s laissée(s) "
+                "sans OCR : pages %s",
+                len(thin_pages), n_pages, file_path, thin_pages,
+            )
         # OCR ciblé : seulement les pages à couche texte maigre (scans, certifs en image).
-        if thin_pages and _FITZ_AVAILABLE and _TESSERACT_AVAILABLE:
+        if False and thin_pages and _FITZ_AVAILABLE and _TESSERACT_AVAILABLE:
             logger.info(
                 "OCR ciblé sur %d/%d page(s) maigre(s) de %s : pages %s",
                 len(thin_pages), n_pages, file_path, thin_pages,
