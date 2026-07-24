@@ -3,6 +3,9 @@ import io
 import logging
 import os
 import platform
+import sys
+import tempfile
+from pathlib import Path
 
 import pdfplumber
 
@@ -106,6 +109,11 @@ except ImportError:
 # hypothèse non vérifiée sur sa cause.
 _PYMUPDF4LLM_TIMEOUT_S = 25
 
+# Chemin en constante de MODULE (pas recalculé inline) pour rester monkeypatchable
+# dans les tests — ex. pointer vers un faux worker lent pour vérifier le kill au
+# timeout sans dépendre d'un vrai document pathologique de plusieurs minutes.
+_WORKER_SCRIPT = Path(__file__).resolve().parent / "_pymupdf4llm_worker.py"
+
 
 class PDFAdapter(DocumentParser):
     """
@@ -119,72 +127,83 @@ class PDFAdapter(DocumentParser):
 
     async def parse(self, file_path: str) -> str:
         """Point d'entrée async — délègue tout le travail CPU/IO-bound (pymupdf4llm,
-        pdfplumber, PyMuPDF, OCR Tesseract page par page) à un thread séparé.
+        pdfplumber, PyMuPDF, OCR Tesseract page par page) hors de la boucle
+        d'événements uvicorn, pour que le serveur reste réactif au reste du trafic
+        (login, dashboard, autres utilisateurs) pendant l'extraction.
 
-        CRITIQUE : le travail réel est entièrement synchrone. L'appeler directement
-        depuis une coroutine bloquerait la boucle d'événements du worker uvicorn
-        pendant TOUTE la durée de l'extraction — sur un PDF de plusieurs dizaines de
-        pages, ça peut durer plusieurs minutes, rendant ce worker injoignable pour
-        toute autre requête (login, dashboard, autres utilisateurs) pendant ce temps.
-        `asyncio.to_thread` libère la boucle d'événements ; seul un thread du pool
-        est occupé, le serveur reste réactif pour le reste du trafic.
-
-        GARDE-FOU DE TEMPS sur pymupdf4llm : mesuré en réel sur un AO de 97 pages à
-        tableaux denses, `pymupdf4llm.to_markdown()` seul a mis 781s (13 min) — un
-        cas pathologique, pas la norme, mais qui doit rester BORNÉ. Passé
-        `_PYMUPDF4LLM_TIMEOUT_S`, on abandonne l'attente (le thread continue seul en
-        arrière-plan jusqu'à sa fin naturelle — on ne peut pas tuer un thread Python,
-        mais il ne bloque plus rien) et on retombe sur le pipeline texte/OCR
-        page-par-page, structurellement borné par page plutôt que par le document
-        entier."""
+        GARDE-FOU DE TEMPS sur pymupdf4llm, en SOUS-PROCESSUS (pas un thread) :
+        mesuré en réel sur un AO de 97 pages à tableaux denses, `pymupdf4llm.
+        to_markdown()` seul a mis 781s (13 min) — un cas pathologique, pas la norme,
+        mais qui doit rester BORNÉ. Un thread orphelin ne peut pas être tué et
+        continuerait de consommer un cœur CPU entier jusqu'à sa fin naturelle ; sur
+        un VPS partagé entre plusieurs projets (4 cœurs, 6 apps), ce cœur monopolisé
+        pendant de longues minutes dégraderait les AUTRES apps de la machine, pas
+        seulement la nôtre. Le sous-processus, lui, est vraiment `kill()`é au
+        timeout — le CPU est libéré immédiatement, pas juste la boucle d'événements."""
         if _PYMUPDF4LLM_AVAILABLE:
-            try:
-                markdown = await asyncio.wait_for(
-                    asyncio.to_thread(self._try_pymupdf4llm_if_faithful, file_path),
-                    timeout=_PYMUPDF4LLM_TIMEOUT_S,
-                )
-                if markdown:
+            markdown = await self._run_pymupdf4llm_subprocess(file_path)
+            if markdown and _alnum_count(markdown) >= _FIDELITY_MIN_BASELINE:
+                # On n'accepte le raccourci Markdown que s'il porte VRAIMENT du texte. Sur
+                # un PDF scanné (pages-images), pymupdf4llm rend chaque page en règle
+                # horizontale « ----- » sans contenu alphanumérique. _is_faithful() jugeait
+                # alors ces tirets « fidèles » à une couche texte de référence elle aussi
+                # vide (baseline < seuil → True) et les retournait, COURT-CIRCUITANT l'OCR
+                # → le LLM ne recevait que des tirets. D'où l'exigence d'un minimum de
+                # contenu réel avant de shortcut ; sinon repli sur le pipeline texte/OCR.
+                baseline = await asyncio.to_thread(self._plain_text_baseline, file_path)
+                if _is_faithful(markdown, baseline):
+                    logger.info(
+                        "PDF → Markdown via pymupdf4llm (%d caractères) : %s",
+                        len(markdown), file_path,
+                    )
                     return markdown
-            except asyncio.TimeoutError:
                 logger.warning(
-                    "pymupdf4llm > %ds sur %s — abandonné (thread laissé à finir seul), "
-                    "repli sur le pipeline texte/OCR page par page.",
-                    _PYMUPDF4LLM_TIMEOUT_S, file_path,
+                    "PDF → Markdown rejeté (fidélité %d/%d car. alphanum. < %.0f %%) — "
+                    "repli sur le pipeline texte/OCR : %s",
+                    _alnum_count(markdown), _alnum_count(baseline),
+                    _FIDELITY_MIN_RATIO * 100, file_path,
+                )
+            elif markdown:
+                logger.info(
+                    "PDF → Markdown ignoré (contenu réel insuffisant : %d car. alphanum. < %d) — "
+                    "probable PDF scanné, repli sur le pipeline texte/OCR : %s",
+                    _alnum_count(markdown), _FIDELITY_MIN_BASELINE, file_path,
                 )
         return await asyncio.to_thread(self._parse_fallback_sync, file_path)
 
-    def _try_pymupdf4llm_if_faithful(self, file_path: str) -> str:
-        """Tente pymupdf4llm et vérifie sa fidélité. "" si indisponible/rejeté — ne
-        lève jamais, le pipeline texte/OCR sait toujours prendre le relais."""
-        markdown = self._try_pymupdf4llm(file_path)
-        # On n'accepte le raccourci Markdown que s'il porte VRAIMENT du texte. Sur un PDF
-        # scanné (pages-images), pymupdf4llm rend chaque page en règle horizontale « ----- »
-        # sans contenu alphanumérique. _is_faithful() jugeait alors ces tirets « fidèles » à
-        # une couche texte de référence elle aussi vide (baseline < seuil → True) et les
-        # retournait, COURT-CIRCUITANT l'OCR → le LLM ne recevait que des tirets. On exige donc
-        # un minimum de contenu réel (≥ FIDELITY_MIN_BASELINE car. alphanum.) avant de shortcut ;
-        # sinon on tombe dans le pipeline texte/OCR page-par-page, qui sait lire les scans.
-        if markdown and _alnum_count(markdown) >= _FIDELITY_MIN_BASELINE:
-            baseline = self._plain_text_baseline(file_path)
-            if _is_faithful(markdown, baseline):
-                logger.info(
-                    "PDF → Markdown via pymupdf4llm (%d caractères) : %s",
-                    len(markdown), file_path,
+    async def _run_pymupdf4llm_subprocess(self, file_path: str) -> str:
+        """Lance `_pymupdf4llm_worker.py` dans un sous-processus séparé, avec un
+        timeout qui le TUE réellement (SIGKILL) s'il dépasse `_PYMUPDF4LLM_TIMEOUT_S`
+        — contrairement à un thread, aucun travail CPU orphelin ne survit à
+        l'abandon. "" si indisponible/tué/en échec : ne lève jamais, le pipeline
+        texte/OCR sait toujours prendre le relais."""
+        with tempfile.NamedTemporaryFile(suffix=".md", delete=False) as tmp:
+            output_path = tmp.name
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable, str(_WORKER_SCRIPT), file_path, output_path,
+                stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+            )
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=_PYMUPDF4LLM_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "pymupdf4llm > %ds sur %s — sous-processus TUÉ (CPU libéré "
+                    "immédiatement, aucun travail orphelin), repli sur le pipeline "
+                    "texte/OCR page par page.",
+                    _PYMUPDF4LLM_TIMEOUT_S, file_path,
                 )
-                return markdown
-            logger.warning(
-                "PDF → Markdown rejeté (fidélité %d/%d car. alphanum. < %.0f %%) — "
-                "repli sur le pipeline texte/OCR : %s",
-                _alnum_count(markdown), _alnum_count(baseline),
-                _FIDELITY_MIN_RATIO * 100, file_path,
+                proc.kill()
+                await proc.wait()
+                return ""
+            if proc.returncode != 0:
+                logger.debug("pymupdf4llm (sous-processus) échoué sur %s", file_path)
+                return ""
+            return await asyncio.to_thread(
+                lambda: Path(output_path).read_text(encoding="utf-8").strip()
             )
-        elif markdown:
-            logger.info(
-                "PDF → Markdown ignoré (contenu réel insuffisant : %d car. alphanum. < %d) — "
-                "probable PDF scanné, repli sur le pipeline texte/OCR : %s",
-                _alnum_count(markdown), _FIDELITY_MIN_BASELINE, file_path,
-            )
-        return ""
+        finally:
+            Path(output_path).unlink(missing_ok=True)
 
     def _parse_fallback_sync(self, file_path: str) -> str:
         # Décision OCR PAGE PAR PAGE (et non sur la moyenne du document) : un CV peut
@@ -274,16 +293,8 @@ class PDFAdapter(DocumentParser):
         return (len(text) / n_pages) >= settings.ocr_min_chars_per_page
 
     # ── Extracteurs ────────────────────────────────────────────────────────────
-
-    def _try_pymupdf4llm(self, file_path: str) -> str:
-        """Conversion PDF → Markdown (titres #, tableaux |…|, listes). Vide si échec."""
-        try:
-            import pymupdf4llm
-            md = pymupdf4llm.to_markdown(file_path)
-            return md.strip() if md else ""
-        except Exception as e:
-            logger.debug("pymupdf4llm échoué sur %s : %s", file_path, e)
-            return ""
+    # (la conversion pymupdf4llm elle-même vit dans _pymupdf4llm_worker.py,
+    # exécutée en sous-processus tuable — voir _run_pymupdf4llm_subprocess ci-dessus)
 
     def _plain_text_baseline(self, file_path: str) -> str:
         """Texte plat de référence pour juger la fidélité du Markdown (PyMuPDF puis pdfplumber)."""
