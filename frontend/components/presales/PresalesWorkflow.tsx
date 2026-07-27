@@ -1322,7 +1322,7 @@ function Step1({ ao, onExport, exporting, onExportMatrix, exportingMatrix, onNex
             {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
             Exporter en Word
           </button>
-          <button
+          {/* <button
             onClick={onExportMatrix}
             disabled={exportingMatrix}
             title="Matrice de conformité exhaustive (toutes les exigences, classées par domaine, avec leur référence source) — Excel"
@@ -1330,7 +1330,7 @@ function Step1({ ao, onExport, exporting, onExportMatrix, exportingMatrix, onNex
           >
             {exportingMatrix ? <Loader2 size={14} className="animate-spin" /> : <FileCheck size={14} />}
             Matrice de conformité
-          </button>
+          </button> */}
           <button
             onClick={onReanalyze}
             title="Relancer une analyse fraîche de l'AO (ignore le cache)"

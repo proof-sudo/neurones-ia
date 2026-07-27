@@ -4,7 +4,6 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { clsx } from "clsx";
 import { AiChip } from "@/components/ui/AiChip";
 import { Panel, PanelHead } from "@/components/ui/Panel";
-import { Modal } from "@/components/ui/Modal";
 import { CaChart } from "@/components/charts/DashboardCharts";
 import { fmtInt, fmtM, fmtPct } from "@/lib/format";
 import { generateDashboardAnalysisAction, fetchBriefingAction } from "@/app/actions";
@@ -76,26 +75,29 @@ export function DashboardLive({
 }) {
   const [period, setPeriod] = useState<PeriodKey>("trimestre");
   const [openDetail, setOpenDetail] = useState<string | null>(null);
-  const [analysis, setAnalysis] = useState<string | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [analyzing, startAnalyzing] = useTransition();
 
-  // ---- Débrief du jour (briefing) chargé à la demande dans un modal ----
-  const [briefingOpen, setBriefingOpen] = useState(false);
+  // ---- Débrief du jour (briefing) : chargé automatiquement, rafraîchissable via le card ----
   const [briefing, setBriefing] = useState<BriefingData | null>(null);
   const [briefingError, setBriefingError] = useState<string | null>(null);
   const [loadingBriefing, startBriefing] = useTransition();
+  const [briefingExpanded, setBriefingExpanded] = useState(false);
 
-  function openBriefing() {
-    setBriefingOpen(true);
-    if (briefing || loadingBriefing) return; // déjà chargé / en cours
+  function refreshBriefing() {
     setBriefingError(null);
+    setBriefingExpanded(false);
     startBriefing(async () => {
       const res = await fetchBriefingAction();
       if (res.ok) setBriefing(res.data);
       else setBriefingError(res.error);
     });
   }
+
+  useEffect(() => {
+    refreshBriefing();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // ---- Points de vigilance (données réelles du pipeline/impayés, quand accessibles au rôle) ----
   const topDebiteur = unpaid?.exposure.top_10_debiteurs[0] ?? null;
@@ -240,15 +242,25 @@ export function DashboardLive({
     };
   }, [period, caByMonth, caByMonthPrev, lastMonthIdx, quarter, quarterMonths, y, kpis.year.revenue_xof]);
 
-  // ---- Analyse IA automatique de la courbe CA affichée (plus de bouton :
-  // se redéclenche à chaque changement de période, sur les points réels). ----
+  // ---- Analyse IA automatique de la courbe CA affichée : se redéclenche à
+  // chaque changement de période, et rafraîchissable manuellement (icône). ----
+  function refreshAnalysis() {
+    startAnalyzing(async () => {
+      const res = await generateDashboardAnalysisAction(periodCalc.months, periodCalc.realise);
+      if (res.ok) {
+        setAnalysisError(null);
+      } else {
+        setAnalysisError(res.error);
+      }
+    });
+  }
+
   useEffect(() => {
     let cancelled = false;
     startAnalyzing(async () => {
       const res = await generateDashboardAnalysisAction(periodCalc.months, periodCalc.realise);
       if (cancelled) return;
       if (res.ok) {
-        setAnalysis(res.analysis);
         setAnalysisError(null);
       } else {
         setAnalysisError(res.error);
@@ -296,10 +308,6 @@ export function DashboardLive({
   // ---- Rythme vs N-1 (comparable YTD, pour le narratif IA — indépendant du filtre) ----
   const ytdMonths = Array.from({ length: lastMonthIdx + 1 }, (_, i) => i);
   const ytdPrev = sum(ytdMonths.map((i) => caByMonthPrev[i]));
-
-  // ---- Rythme vs N-1 (jauge) : même logique que la jauge CA commandé, sur la
-  // même période sélectionnée (Mois / Trimestre / Année). ----
-  const rythme = periodCalc.caDelta;
 
   // ---- Drill-down par gauge : détails réels (mêmes emplacements que le mockup) ----
   // Calcul direct (léger) — le React Compiler mémoïse lui-même.
@@ -415,10 +423,10 @@ export function DashboardLive({
     {
       key: "objectif",
       topColor: "var(--color-ai)",
-      label: `Rythme vs ${y - 1}`,
-      value: rythme.txt.split(" %")[0] + " %",
-      delta: `${periodCalc.prevPeriodLabel} : ${fmtM(periodCalc.prevRaw)}`,
-      variant: "flag",
+      label: `CA commandé (${periodCalc.prevPeriodLabel})`,
+      value: fmtM(periodCalc.prevRaw),
+      delta: "",
+      variant: "none",
     },
     {
       key: "marge",
@@ -491,28 +499,99 @@ export function DashboardLive({
             Bonjour, voici votre lecture du jour
           </h1>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="flex gap-1 rounded-[10px] border border-line bg-panel p-1">
-            {PERIODS.map((pp) => (
-              <button
-                key={pp.key}
-                onClick={() => setPeriod(pp.key)}
-                className={clsx(
-                  "cursor-pointer rounded-[7px] px-3 py-[7px] font-mono text-xs",
-                  period === pp.key ? "bg-ai text-white" : "text-muted",
-                )}
-              >
-                {pp.label}
-              </button>
-            ))}
+      </div>
+
+      {/* ===== CARD : DÉBRIEF DU JOUR (auto, rafraîchissable) ===== */}
+      <div className="mb-[22px] rounded-card border border-line bg-panel px-5 py-[18px]">
+        <div className="mb-3 flex items-start justify-between">
+          <div>
+            <div className="mb-1.5 font-mono text-[11.5px] uppercase tracking-[0.14em] text-ai">
+              ● synthèse quotidienne
+            </div>
+            <h2 className="text-[17px]">Débrief du jour</h2>
+            {briefing && (
+              <div className="mt-1 text-[12px] text-muted">
+                Pour {ROLE_LABELS[briefing.role] ?? briefing.role} — figé depuis le{" "}
+                {formatBriefingDate(briefing.generated_at)}, jusqu&apos;à minuit
+              </div>
+            )}
           </div>
           <button
-            onClick={openBriefing}
-            className="flex cursor-pointer items-center gap-1.5 rounded-lg bg-ai px-3 py-[9px] text-[12.5px] font-semibold text-white"
+            onClick={refreshBriefing}
+            disabled={loadingBriefing}
+            title="Rafraîchir le débrief"
+            className="cursor-pointer rounded-lg border border-line bg-panel-2 px-2.5 py-1.5 text-[13px] text-muted hover:border-ai hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
           >
-            <span className="inline-block animate-pulse text-base leading-none">✺</span>
-            Débrief du jour
+            <span className={clsx("inline-block", loadingBriefing && "animate-spin")}>⟳</span>
           </button>
+        </div>
+
+        {loadingBriefing ? (
+          <AiChip>chargement du débrief…</AiChip>
+        ) : briefingError ? (
+          <div className="text-[12.5px] text-bad">Débrief indisponible : {briefingError}</div>
+        ) : briefing?.section == null ? (
+          <div className="text-[12.5px] text-muted">
+            Le briefing de votre profil n&apos;a pas encore été généré aujourd&apos;hui.
+          </div>
+        ) : (
+          <>
+            <div className="mb-4 rounded-card border border-l-[3px] border-line border-l-ai bg-panel-2 p-4">
+              <div className="mb-2 flex items-center gap-2">
+                <AiChip>analyse</AiChip>
+                <span className="text-[13px] font-semibold">Ce qui compte aujourd&apos;hui</span>
+              </div>
+              <div className="flex flex-col gap-2 text-[12.5px] leading-relaxed text-text">
+                {briefing.section.analysis.split("\n\n").map((par, i) => (
+                  <p key={i}>{par}</p>
+                ))}
+              </div>
+            </div>
+
+            <button
+              onClick={() => setBriefingExpanded((v) => !v)}
+              className="cursor-pointer text-[12px] text-ai underline"
+            >
+              {briefingExpanded ? "Voir moins" : "Voir plus"}
+            </button>
+
+            {briefingExpanded && (
+              <>
+                <div className="mb-2 mt-3 flex items-center gap-2">
+                  <AiChip>données réelles</AiChip>
+                  <span className="text-[13px] font-semibold">Faits du jour</span>
+                </div>
+                <div className="flex flex-col gap-2">
+                  {briefing.section.bullets.map((b, i) => (
+                    <div
+                      key={i}
+                      className="rounded-lg border border-line border-l-2 border-l-ai bg-panel p-3 text-[12px] leading-relaxed"
+                    >
+                      {b}
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* ===== SÉLECTEUR DE PÉRIODE (sous le débrief) ===== */}
+      <div className="mb-[22px] flex justify-end">
+        <div className="flex gap-1 rounded-[10px] border border-line bg-panel p-1">
+          {PERIODS.map((pp) => (
+            <button
+              key={pp.key}
+              onClick={() => setPeriod(pp.key)}
+              className={clsx(
+                "cursor-pointer rounded-[7px] px-3 py-[7px] font-mono text-xs",
+                period === pp.key ? "bg-ai text-white" : "text-muted",
+              )}
+            >
+              {pp.label}
+            </button>
+          ))}
         </div>
       </div>
 
@@ -586,6 +665,44 @@ export function DashboardLive({
               prevision: chartData.prevision,
             }}
           />
+
+          <div className="mt-4 border-t border-line pt-3">
+            <div className="mb-2 flex items-center justify-between">
+              <h4 className="flex items-center gap-2 text-[13px] font-semibold">
+                <AiChip>projection</AiChip>
+                Projection IA
+              </h4>
+              <button
+                onClick={refreshAnalysis}
+                disabled={analyzing}
+                title="Rafraîchir la projection"
+                className="cursor-pointer rounded-lg border border-line bg-panel-2 px-2.5 py-1.5 text-[13px] text-muted hover:border-ai hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <span className={clsx("inline-block", analyzing && "animate-spin")}>⟳</span>
+              </button>
+            </div>
+
+            {analyzing && <AiChip>analyse de la courbe en cours…</AiChip>}
+
+            {!analyzing && analysisError && (
+              <div className="text-[12.5px] text-bad">Analyse indisponible : {analysisError}</div>
+            )}
+
+            {!analyzing && !analysisError && projection && (
+              <p className="text-[13px] leading-relaxed text-text">
+                Scénarios 6 mois (pipeline pondéré réel) : entre <b>{fmtM(projection.pessimiste)}</b>{" "}
+                (prudent) et <b>{fmtM(projection.optimiste)}</b> (optimiste), réaliste autour de{" "}
+                <b>{fmtM(projection.realiste)}</b>
+                {ecart !== 0 && (
+                  <>
+                    {" "}— le CA {y} est {ecart >= 0 ? "en avance de" : "en retrait de"}{" "}
+                    <b>{fmtM(Math.abs(ecart))}</b> par rapport à {y - 1} sur la même période
+                  </>
+                )}
+                .
+              </p>
+            )}
+          </div>
         </Panel>
         <Panel>
           <PanelHead title="Points de vigilance" />
@@ -614,115 +731,6 @@ export function DashboardLive({
           </div>
         </Panel>
       </div>
-
-      {/* ===== PROJECTION IA & RECOMMANDATION ===== */}
-      <Panel className="mt-4 border-l-[3px] border-l-good">
-        <div className="mb-3.5 flex flex-wrap items-center justify-between gap-2">
-          <h3 className="flex items-center gap-2 text-[14.5px] font-semibold">
-            <AiChip>projection</AiChip>
-            Projection IA &amp; recommandation
-          </h3>
-          <span className="text-[10.5px] text-muted">
-            Analyse automatique de la courbe CA ci-dessus — se met à jour avec le filtre de période
-          </span>
-        </div>
-
-        {analyzing && <AiChip>analyse de la courbe en cours…</AiChip>}
-
-        {!analyzing && analysisError && (
-          <div className="text-[12.5px] text-bad">Analyse indisponible : {analysisError}</div>
-        )}
-
-        {!analyzing && analysis && (
-          <div className="rounded-card bg-panel-2 p-4">
-            {projection && (
-              <p className="text-[13px] leading-relaxed text-text">
-                Scénarios 6 mois (pipeline pondéré réel) : entre <b>{fmtM(projection.pessimiste)}</b>{" "}
-                (prudent) et <b>{fmtM(projection.optimiste)}</b> (optimiste), réaliste autour de{" "}
-                <b>{fmtM(projection.realiste)}</b>
-                {ecart !== 0 && (
-                  <>
-                    {" "}— le CA {y} est {ecart >= 0 ? "en avance de" : "en retrait de"}{" "}
-                    <b>{fmtM(Math.abs(ecart))}</b> par rapport à {y - 1} sur la même période
-                  </>
-                )}
-                .
-              </p>
-            )}
-            <div className={clsx("flex flex-col gap-2 text-[12.5px] leading-relaxed text-text", projection && "mt-3")}>
-              {analysis.split("\n\n").map((par, i) => (
-                <p key={i}>{par}</p>
-              ))}
-            </div>
-            <div className="mt-3 font-mono text-[10px] leading-relaxed text-muted">
-              Basé sur le pipeline pondéré réel ({fmtInt(p.total_opportunites)} opportunités).
-            </div>
-          </div>
-        )}
-      </Panel>
-
-      {/* ===== MODAL : DÉBRIEF DU JOUR (briefing chargé à la demande) ===== */}
-      <Modal open={briefingOpen} onClose={() => setBriefingOpen(false)} className="max-w-[640px] px-7 pb-7 pt-6">
-        <div className="mb-4 flex items-start justify-between">
-          <div>
-            <div className="mb-1.5 font-mono text-[11.5px] uppercase tracking-[0.14em] text-ai">
-              ● synthèse quotidienne
-            </div>
-            <h2 className="text-[19px]">Débrief du jour</h2>
-            {briefing && (
-              <div className="mt-1 text-[12px] text-muted">
-                Pour {ROLE_LABELS[briefing.role] ?? briefing.role} — figé depuis le{" "}
-                {formatBriefingDate(briefing.generated_at)}, jusqu&apos;à minuit
-              </div>
-            )}
-          </div>
-          <button
-            onClick={() => setBriefingOpen(false)}
-            className="cursor-pointer rounded-lg border border-line bg-panel-2 px-2.5 py-1.5 text-[13px] text-muted hover:border-ai hover:text-text"
-          >
-            Fermer ✕
-          </button>
-        </div>
-
-        {loadingBriefing ? (
-          <AiChip>chargement du débrief…</AiChip>
-        ) : briefingError ? (
-          <div className="text-[12.5px] text-bad">Débrief indisponible : {briefingError}</div>
-        ) : briefing?.section == null ? (
-          <div className="text-[12.5px] text-muted">
-            Le briefing de votre profil n&apos;a pas encore été généré aujourd&apos;hui.
-          </div>
-        ) : (
-          <>
-            <div className="mb-4 rounded-card border border-l-[3px] border-line border-l-ai bg-panel-2 p-4">
-              <div className="mb-2 flex items-center gap-2">
-                <AiChip>analyse</AiChip>
-                <span className="text-[13px] font-semibold">Ce qui compte aujourd&apos;hui</span>
-              </div>
-              <div className="flex flex-col gap-2 text-[12.5px] leading-relaxed text-text">
-                {briefing.section.analysis.split("\n\n").map((par, i) => (
-                  <p key={i}>{par}</p>
-                ))}
-              </div>
-            </div>
-
-            <div className="mb-2 flex items-center gap-2">
-              <AiChip>données réelles</AiChip>
-              <span className="text-[13px] font-semibold">Faits du jour</span>
-            </div>
-            <div className="flex flex-col gap-2">
-              {briefing.section.bullets.map((b, i) => (
-                <div
-                  key={i}
-                  className="rounded-lg border border-line border-l-2 border-l-ai bg-panel p-3 text-[12px] leading-relaxed"
-                >
-                  {b}
-                </div>
-              ))}
-            </div>
-          </>
-        )}
-      </Modal>
     </>
   );
 }
