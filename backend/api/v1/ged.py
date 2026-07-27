@@ -525,6 +525,34 @@ async def retry_quarantine(
     return {"status": "retrying", "file_path": body.file_path, "force_index": body.force_index}
 
 
+# ── GET /ged/files/meta ───────────────────────────────────────────────────────
+
+@router.get("/ged/files/meta")
+async def files_meta(ids: str, request: Request):
+    """Métadonnées légères (taille, date d'indexation) pour un lot de doc_id — alimente
+    les colonnes Taille/Date des tableaux de documents matchés (ex: Projets similaires
+    en avant-vente) sans reservir le fichier lui-même."""
+    doc_ids = {i.strip() for i in ids.split(",") if i.strip()}
+    result: dict[str, dict] = {}
+    if not doc_ids:
+        return {"files": result}
+
+    registry = _container(request).doc_registry
+    entries = await registry.list_active_entries()
+    for e in entries:
+        if e.doc_id not in doc_ids:
+            continue
+        try:
+            size_bytes = Path(e.file_path).stat().st_size
+        except OSError:
+            size_bytes = None
+        result[e.doc_id] = {
+            "size_bytes": size_bytes,
+            "last_indexed": e.last_indexed.isoformat() if e.last_indexed else None,
+        }
+    return {"files": result}
+
+
 # ── GET /ged/files/{doc_id}/download ──────────────────────────────────────────
 
 def _content_disposition(filename: str, inline: bool) -> str:

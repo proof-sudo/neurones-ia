@@ -200,6 +200,13 @@ class ScoringResultSchema(BaseModel):
     risks: list[RiskSchema]
     score: int = Field(ge=0, le=100)
     score_basis: str = "GRILLE"  # GRILLE | ESTIME | INDISPONIBLE
+    # Scores de préparation par volet : technique = alias du score global (grille technique),
+    # financier/administratif = jugement LLM de notre capacité sur ce volet (0 par défaut si non calculé).
+    score_technique: int = Field(default=0, ge=0, le=100)
+    score_financier: int = Field(default=0, ge=0, le=100)
+    score_administratif: int = Field(default=0, ge=0, le=100)
+    financier_rationale: str = ""
+    administratif_rationale: str = ""
     recommendation: BidRecommendationSchema
     justification: str
     criteres_selection: list[ExtractedItemSchema] = []

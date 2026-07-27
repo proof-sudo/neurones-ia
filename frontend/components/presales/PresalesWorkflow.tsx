@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Modal } from "@/components/ui/Modal";
+import { fileUrl, fetchFilesMeta, type FileMeta } from "@/lib/api/documents";
 import {
   generateBidStrategy, exportAnalysis, exportScoring, exportStrategy,
   exportMatrix, exportChecklist, buildOfferSections, renderOffer,
@@ -300,6 +301,11 @@ const MOCK_RESULT: ScoringResult = {
     { label: "Sous-estimation possible du volet formation", criticite: "MODÉRÉ", pourquoi: "Transfert de compétences obligatoire non chiffré", mitigation: "Provisionner un formateur certifié dédié", items_affected: ["methodologie"] },
   ],
   score: 78,
+  score_technique: 78,
+  score_financier: 85,
+  administratif_rationale: "Pièces standard (RCCM, attestations fiscale/CNPS), aucun agrément rare exigé.",
+  financier_rationale: "CA exigé couvert avec marge par nos bilans récents, aucune caution bloquante.",
+  score_administratif: 92,
   recommendation: "GO",
   justification: "Profil bien adapté avec références bancaires comparables. Gap cloud public manageable avec sous-traitance partielle.",
   criteria_breakdown: [
@@ -767,6 +773,25 @@ function ScoreRing({ score }: { score: number }) {
         <span className={cn("text-3xl font-bold leading-none", textColor)}>{score}</span>
         <span className="text-xs text-muted block mt-0.5">/100</span>
       </div>
+    </div>
+  );
+}
+
+// ── Sous-score par volet (technique/financier/administratif) ────────────────────
+
+function SubScoreBar({ label, score, rationale }: { label: string; score: number; rationale?: string }) {
+  const color = score >= 70 ? "bg-good" : score >= 40 ? "bg-warn" : "bg-bad";
+  const textColor = score >= 70 ? "text-good" : score >= 40 ? "text-warn" : "text-bad";
+  return (
+    <div title={rationale || undefined}>
+      <div className="flex items-baseline justify-between gap-2 mb-1">
+        <span className="text-xs font-medium text-muted">{label}</span>
+        <span className={cn("text-xs font-bold", textColor)}>{score}/100</span>
+      </div>
+      <div className="h-1.5 rounded-full bg-panel-2 overflow-hidden">
+        <div className={cn("h-full rounded-full transition-all", color)} style={{ width: `${score}%` }} />
+      </div>
+      {rationale && <p className="text-[11px] text-muted mt-1 line-clamp-2">{rationale}</p>}
     </div>
   );
 }
@@ -1326,6 +1351,111 @@ function Step1({ ao, onExport, exporting, onExportMatrix, exportingMatrix, onNex
   );
 }
 
+// ── Nom lisible d'un document GED (à partir du nom de fichier brut) ─────────────
+
+function humanizeDocName(filename: string): string {
+  return filename
+    .replace(/\.(docx?|pdf|xlsx?|pptx?)$/i, "")
+    .replace(/[-_]/g, " ")
+    .replace(/^cv\s*/i, "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function capWords(text: string, maxWords = 50): string {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  if (words.length <= maxWords) return text.trim();
+  return words.slice(0, maxWords).join(" ") + "…";
+}
+
+function formatDocDate(iso: string | null | undefined): string {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("fr-FR");
+}
+
+// ── Actions rapides sur un document GED (aperçu modal + téléchargement) ─────────
+
+function DocActions({ docId, onPreview }: { docId: string; onPreview: () => void }) {
+  return (
+    <div className="flex items-center gap-0.5 shrink-0">
+      <button
+        onClick={onPreview}
+        title="Aperçu"
+        className="p-1.5 rounded-md text-muted hover:text-ai hover:bg-panel transition"
+      >
+        <Eye size={13} />
+      </button>
+      <a
+        href={fileUrl(docId, false)}
+        target="_blank"
+        rel="noopener noreferrer"
+        title="Télécharger"
+        className="p-1.5 rounded-md text-muted hover:text-ai hover:bg-panel transition"
+      >
+        <Download size={13} />
+      </a>
+    </div>
+  );
+}
+
+// ── Aperçu d'un document GED en fenêtre modale (PDF intégré, scrollable) ────────
+
+function DocPreviewModal({
+  doc, onClose,
+}: {
+  doc: { doc_id: string; filename: string } | null;
+  onClose: () => void;
+}) {
+  const isPdf = !!doc && /\.pdf$/i.test(doc.filename);
+  const name = doc ? humanizeDocName(doc.filename) : "";
+  return (
+    <Modal open={!!doc} onClose={onClose} className="max-w-3xl">
+      {doc && (
+        <div className="flex flex-col max-h-[85vh]">
+          <div className="flex items-center justify-between gap-3 p-4 border-b border-line shrink-0">
+            <div className="min-w-0">
+              <h3 className="text-sm font-semibold text-text truncate">{name}</h3>
+              <p className="text-[11px] text-muted truncate" title={doc.filename}>{doc.filename}</p>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <a
+                href={fileUrl(doc.doc_id, false)}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 bg-ai text-white rounded-lg font-medium hover:brightness-110 transition"
+              >
+                <Download size={13} /> Télécharger
+              </a>
+              <button onClick={onClose} title="Fermer" className="p-1.5 text-muted hover:text-text transition">
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-4 bg-panel-2">
+            {isPdf ? (
+              <iframe
+                src={fileUrl(doc.doc_id, true)}
+                title={name}
+                className="w-full h-[75vh] rounded-lg border border-line bg-white"
+              />
+            ) : (
+              <div className="flex flex-col items-center justify-center gap-3 h-[50vh] text-center">
+                <FileText size={32} className="text-muted" />
+                <p className="text-sm text-muted max-w-[320px]">
+                  L'aperçu direct n'est pas disponible pour ce format — téléchargez le fichier pour l'ouvrir.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </Modal>
+  );
+}
+
 function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
   ao: AOEntry;
   onUpdate: (patch: Partial<AOEntry>) => void;
@@ -1335,6 +1465,7 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
   exporting: boolean;
 }) {
   const r = ao.scoringResult!;
+  const [previewDoc, setPreviewDoc] = useState<{ doc_id: string; filename: string } | null>(null);
 
   const docTypeLabel: Record<string, string> = {
     cv: "CV", offre_technique: "Offre", abe: "ABE", pv_recette: "PV recette",
@@ -1348,6 +1479,18 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
 
   const teamMatches = r.team_matches ?? [];
   const similarProjects = r.similar_projects ?? [];
+
+  const [docMeta, setDocMeta] = useState<Record<string, FileMeta>>({});
+  useEffect(() => {
+    const ids = similarProjects.map(d => d.doc_id);
+    if (!ids.length) return;
+    let cancelled = false;
+    fetchFilesMeta(ids)
+      .then(meta => { if (!cancelled) setDocMeta(meta); })
+      .catch(e => console.error("Chargement des métadonnées GED échoué:", e));
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- ne dépend que des doc_id des projets similaires
+  }, [similarProjects.map(d => d.doc_id).join(",")]);
 
   return (
     <div className="space-y-4">
@@ -1374,6 +1517,21 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
             )}
           </div>
         </div>
+        {r.score_basis !== "INDISPONIBLE" && typeof r.score_technique === "number" && (
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mt-4 pt-4 border-t border-line">
+            <SubScoreBar label="Technique" score={r.score_technique} />
+            <SubScoreBar
+              label="Financier"
+              score={r.score_financier ?? 0}
+              rationale={r.financier_rationale}
+            />
+            <SubScoreBar
+              label="Administratif"
+              score={r.score_administratif ?? 0}
+              rationale={r.administratif_rationale}
+            />
+          </div>
+        )}
       </SectionCard>
 
       {/* Matching équipe — CVs depuis la GED */}
@@ -1395,12 +1553,7 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
               </p>
             )}
             {teamMatches.map((doc, i) => {
-              const name = doc.filename
-                .replace(/\.(docx?|pdf)$/i, "")
-                .replace(/[-_]/g, " ")
-                .replace(/^cv\s*/i, "")
-                .trim()
-                .replace(/\b\w/g, c => c.toUpperCase());
+              const name = humanizeDocName(doc.filename);
               const initials = name.split(" ").slice(0, 2).map(w => w[0] ?? "").join("").toUpperCase();
               return (
                 <div key={i} className="flex items-start gap-3 p-2.5 bg-panel-2 rounded-lg">
@@ -1409,10 +1562,11 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-semibold text-text truncate">{name}</span>
+                      <span className="text-sm font-semibold text-text truncate" title={doc.filename}>{name}</span>
                     </div>
                     <p className="text-[11px] text-muted mt-0.5 line-clamp-2">{doc.excerpt}</p>
                   </div>
+                  <DocActions docId={doc.doc_id} onPreview={() => setPreviewDoc(doc)} />
                 </div>
               );
             })}
@@ -1428,26 +1582,52 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
         {similarProjects.length === 0 ? (
           <p className="text-xs text-muted italic py-1">Aucun projet similaire trouvé dans la GED.</p>
         ) : (
-          <div className="space-y-2">
-            {similarProjects.map((doc, i) => (
-              <div key={i} className="flex items-start gap-3 p-2.5 bg-[#ececee] rounded-lg">
-                <div className="w-7 h-7 rounded-lg bg-[#ececee] flex items-center justify-center shrink-0">
-                  <FileText size={13} className="text-ai" />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="text-sm font-medium text-text truncate">{doc.filename}</span>
-                    <span className={cn(
-                      "text-xs px-1.5 py-0.5 rounded-full shrink-0 font-medium",
-                      docTypeColor[doc.doc_type] ?? "bg-panel-2 text-muted"
-                    )}>
-                      {docTypeLabel[doc.doc_type] ?? doc.doc_type}
-                    </span>
-                  </div>
-                  <p className="text-xs text-muted mt-0.5 line-clamp-2">{doc.excerpt}</p>
-                </div>
-              </div>
-            ))}
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-left text-muted border-b border-line">
+                  <th className="font-medium py-2 pr-3">Document</th>
+                  <th className="font-medium py-2 pr-3">Type</th>
+                  <th className="font-medium py-2 pr-3">Résumé</th>
+                  <th className="font-medium py-2 pr-3 whitespace-nowrap">Date</th>
+                  <th className="font-medium py-2 text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-line">
+                {similarProjects.map((doc, i) => {
+                  const meta = docMeta[doc.doc_id];
+                  return (
+                    <tr key={i} className="align-middle hover:bg-panel-2/60 transition">
+                      <td className="py-2 pr-3 max-w-[220px]">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <FileText size={14} className="text-ai shrink-0" />
+                          <span className="font-medium text-text truncate" title={doc.filename}>
+                            {humanizeDocName(doc.filename)}
+                          </span>
+                        </div>
+                      </td>
+                      <td className="py-2 pr-3">
+                        <span className={cn(
+                          "text-[11px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap",
+                          docTypeColor[doc.doc_type] ?? "bg-panel-2 text-muted"
+                        )}>
+                          {docTypeLabel[doc.doc_type] ?? doc.doc_type}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-3 max-w-[360px]">
+                        <p className="text-muted" title={doc.excerpt}>{capWords(doc.excerpt, 50)}</p>
+                      </td>
+                      <td className="py-2 pr-3 text-muted whitespace-nowrap">{formatDocDate(meta?.last_indexed)}</td>
+                      <td className="py-2">
+                        <div className="flex justify-end">
+                          <DocActions docId={doc.doc_id} onPreview={() => setPreviewDoc(doc)} />
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
           </div>
         )}
       </SectionCard>
@@ -1536,6 +1716,8 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
           </div>
         </SectionCard>
       )}
+
+      <DocPreviewModal doc={previewDoc} onClose={() => setPreviewDoc(null)} />
     </div>
   );
 }
