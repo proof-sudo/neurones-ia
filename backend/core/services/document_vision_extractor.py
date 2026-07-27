@@ -13,6 +13,7 @@ renvoie un résultat vide sans jamais interrompre l'indexation.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -51,6 +52,12 @@ _OCR_SYSTEM = (
 # texte ; 4 pages tiennent largement sous le plafond max_tokens ci-dessous sans troncature).
 _OCR_PAGES_PER_CALL = 4
 _OCR_MAX_TOKENS = 8000
+
+# Appels vision EN PARALLÈLE (borné) plutôt que séquentiels : chaque lot est un appel
+# réseau indépendant (pas de contention CPU comme Tesseract page par page — c'est
+# précisément l'intérêt de la vision pour les scans). Plafonné pour rester raisonnable
+# vis-à-vis des limites de débit Anthropic, pas du CPU du VPS.
+_OCR_MAX_CONCURRENT_CALLS = 4
 
 
 def _normalize(text: str) -> str:
@@ -153,13 +160,35 @@ class DocumentVisionExtractor:
             )
         return result
 
+    async def _transcribe_batch(
+        self, batch: list[tuple[str, bytes]], start: int, semaphore: asyncio.Semaphore,
+    ) -> str:
+        """Transcrit UN lot de pages — appelé en parallèle (borné par `semaphore`) depuis
+        `transcribe_pdf_bytes`. Best-effort : renvoie '' sur échec, jamais d'exception."""
+        async with semaphore:
+            user = (
+                f"Pages {start + 1} à {start + len(batch)} du document. "
+                "Transcris fidèlement et intégralement."
+            )
+            try:
+                raw = await self._llm.generate_with_images(
+                    system=_OCR_SYSTEM, user=user, images=batch,
+                    max_tokens=_OCR_MAX_TOKENS, temperature=0.0,
+                )
+            except Exception as exc:
+                logger.warning("OCR vision : lot pages %d+ échoué : %s", start + 1, exc)
+                return ""
+            return raw.strip() if raw and raw.strip() else ""
+
     async def transcribe_pdf_bytes(self, file_bytes: bytes, max_pages: int | None = None) -> str:
         """OCR VISION d'un PDF entier (AO scanné) → texte brut transcrit, best-effort.
 
         Rend chaque page en PNG (jusqu'à `max_pages`) et la transcrit par lots de
-        `_OCR_PAGES_PER_CALL` (borne la sortie pour éviter la troncature). Renvoie '' si la
-        vision est indisponible, si PyMuPDF est absent, ou si le PDF est illisible — jamais
-        d'exception. Ouvre le PDF depuis les octets (pas de fichier temporaire)."""
+        `_OCR_PAGES_PER_CALL`, LOTS EN PARALLÈLE (borné à `_OCR_MAX_CONCURRENT_CALLS` —
+        appels réseau indépendants, pas de contention CPU comme un OCR local séquentiel).
+        Renvoie '' si la vision est indisponible, si PyMuPDF est absent, ou si le PDF est
+        illisible — jamais d'exception. Ouvre le PDF depuis les octets (pas de fichier
+        temporaire)."""
         if not self.available:
             return ""
         try:
@@ -192,24 +221,17 @@ class DocumentVisionExtractor:
         if not images:
             return ""
 
-        parts: list[str] = []
-        for start in range(0, len(images), _OCR_PAGES_PER_CALL):
-            batch = images[start : start + _OCR_PAGES_PER_CALL]
-            user = (
-                f"Pages {start + 1} à {start + len(batch)} du document. "
-                "Transcris fidèlement et intégralement."
-            )
-            try:
-                raw = await self._llm.generate_with_images(
-                    system=_OCR_SYSTEM, user=user, images=batch,
-                    max_tokens=_OCR_MAX_TOKENS, temperature=0.0,
-                )
-            except Exception as exc:
-                logger.warning("OCR vision : lot pages %d+ échoué : %s", start + 1, exc)
-                continue
-            if raw and raw.strip():
-                parts.append(raw.strip())
-        return "\n\n".join(parts)
+        semaphore = asyncio.Semaphore(_OCR_MAX_CONCURRENT_CALLS)
+        batches = [
+            (images[start : start + _OCR_PAGES_PER_CALL], start)
+            for start in range(0, len(images), _OCR_PAGES_PER_CALL)
+        ]
+        # gather préserve l'ORDRE des résultats (= ordre des pages), même si les lots
+        # se terminent dans un ordre différent — la reconstitution reste correcte.
+        results = await asyncio.gather(
+            *(self._transcribe_batch(batch, start, semaphore) for batch, start in batches)
+        )
+        return "\n\n".join(r for r in results if r)
 
     @staticmethod
     def _dedup(names: list[str]) -> list[str]:

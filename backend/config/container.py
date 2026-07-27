@@ -235,6 +235,11 @@ class Container:
                 area_ratio=settings.vision_area_ratio,
                 dpi=settings.vision_dpi,
             )
+            # Injection tardive dans le parser PDF : construit dans _init_adapters(),
+            # AVANT que ce vision extractor n'existe (celui-ci a besoin de l'adaptateur
+            # Claude direct) — voir PDFAdapter.set_vision_extractor. Bascule les scans
+            # sur la vision (réseau, parallèle) au lieu de l'OCR Tesseract séquentiel.
+            self._pdf_parser.set_vision_extractor(self._vision)
         self._rag_engine = RAGEngine(
             vector_store=self._vector_store,
             sparse_search=self._sparse_search,

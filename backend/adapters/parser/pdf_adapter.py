@@ -133,11 +133,29 @@ class PDFAdapter(DocumentParser):
     """
     Extraction de texte PDF avec cascade :
     0. pymupdf4llm — Markdown structuré (titres, tableaux, listes) ; repli si fidélité < seuil
-       ou si > _PYMUPDF4LLM_TIMEOUT_S (voir parse()).
+       ou si > _PYMUPDF4LLM_TIMEOUT_S (voir parse()). Sauté d'entrée sur un scan détecté
+       (voir triage, `_looks_like_scan`).
+    0bis. Sur un scan détecté : VISION LLM d'abord si disponible (`_vision`, injecté par le
+       container via `set_vision_extractor`) — appels réseau PARALLÈLES, pas de contention
+       CPU avec les autres apps du VPS partagé, contrairement à l'OCR local séquentiel.
     1. pdfplumber  — PDFs structurés standard (texte plat)
     2. PyMuPDF     — PDFs complexes / encodage non-standard
-    3. OCR (PyMuPDF + pytesseract) — PDFs scannés (images)
+    3. OCR (PyMuPDF + pytesseract) — repli si la vision est indisponible/vide, ou sur les
+       PDFs mixtes (texte + quelques pages-images maigres, non couverts par le triage scan).
     """
+
+    def __init__(self, vision_extractor=None):
+        # vision_extractor : DocumentVisionExtractor (ou compatible, exposant `available`
+        # et `transcribe_pdf_bytes`) — None si la vision est désactivée ou pas encore
+        # injectée. Optionnel : construit après le parser dans container.py (le vision
+        # extractor a lui-même besoin de l'adaptateur LLM Claude), d'où `set_vision_extractor`
+        # pour l'injection tardive plutôt qu'un paramètre de constructeur obligatoire.
+        self._vision = vision_extractor
+
+    def set_vision_extractor(self, vision_extractor) -> None:
+        """Injection tardive du vision extractor (cf. container.py — construit après le
+        parser). Pas d'effet si appelé avec None (vision restera indisponible)."""
+        self._vision = vision_extractor
 
     async def parse(self, file_path: str) -> str:
         """Point d'entrée async — délègue tout le travail CPU/IO-bound (pymupdf4llm,
@@ -171,9 +189,21 @@ class PDFAdapter(DocumentParser):
             if looks_scanned:
                 logger.info(
                     "PDF détecté comme scan (couche texte quasi absente) — "
-                    "pymupdf4llm sauté, repli direct sur le pipeline texte/OCR : %s",
-                    file_path,
+                    "pymupdf4llm sauté : %s", file_path,
                 )
+                if self._vision is not None and getattr(self._vision, "available", False):
+                    vision_text = await self._try_vision_ocr(file_path)
+                    if vision_text.strip():
+                        logger.info(
+                            "Scan transcrit via vision LLM (%d car., appels réseau "
+                            "parallèles — aucune contention CPU) : %s",
+                            len(vision_text), file_path,
+                        )
+                        return vision_text
+                    logger.info(
+                        "Vision LLM indisponible/vide — repli sur l'OCR Tesseract "
+                        "séquentiel : %s", file_path,
+                    )
                 return await asyncio.to_thread(self._parse_fallback_sync, file_path)
         if _PYMUPDF4LLM_AVAILABLE:
             markdown = await self._run_pymupdf4llm_subprocess(file_path)
@@ -355,6 +385,19 @@ class PDFAdapter(DocumentParser):
         réelle du texte natif du PDF)."""
         text = self._try_pymupdf(file_path)
         return _alnum_count(text) < _FIDELITY_MIN_BASELINE
+
+    async def _try_vision_ocr(self, file_path: str) -> str:
+        """Transcrit un scan via le vision LLM injecté (`self._vision`) — best-effort :
+        renvoie '' (jamais d'exception) sur tout échec, le caller retombe alors sur
+        Tesseract. Lit le fichier en octets (l'API vision travaille sur des octets, pas
+        un chemin) via un thread pour ne pas bloquer la boucle d'événements."""
+        try:
+            file_bytes = await asyncio.to_thread(Path(file_path).read_bytes)
+            return await self._vision.transcribe_pdf_bytes(
+                file_bytes, max_pages=settings.ocr_max_pages)
+        except Exception as exc:
+            logger.warning("Vision OCR échouée sur %s (%s) — repli Tesseract.", file_path, exc)
+            return ""
 
     def _plain_text_baseline(self, file_path: str) -> str:
         """Texte plat de référence pour juger la fidélité du Markdown (PyMuPDF puis pdfplumber)."""
