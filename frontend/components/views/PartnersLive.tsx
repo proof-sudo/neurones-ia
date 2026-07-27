@@ -146,18 +146,18 @@ export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
                   <Stat k="Dernière commande" v={s.derniere_commande ?? "—"} />
                 </div>
                 <div className="flex justify-between border-t border-line py-1.5 text-[12px] text-muted">
-                  <span>Risque de dépendance</span>
+                  <span>Dépendance (volume)</span>
                   <b style={{ color: risque.color }}>
                     {risque.label} ({risque.part.toFixed(1)}%)
                   </b>
                 </div>
-                <div className="flex justify-between py-1.5 text-[12px] text-muted">
+                <div className="flex justify-between border-b border-line py-1.5 text-[12px] text-muted">
                   <span>Activité</span>
                   <b style={{ color: jours === null ? undefined : inactif ? "var(--color-bad)" : "var(--color-good)" }}>
                     {jours === null ? "—" : inactif ? `Inactif depuis ${jours} j` : `il y a ${jours} j`}
                   </b>
                 </div>
-                <SignauxIntelligence intelligence={s.intelligence} />
+                <IntelligenceGrid intelligence={s.intelligence} />
               </button>
             );
           })}
@@ -244,43 +244,61 @@ function SupplierModal({
   );
 }
 
-/** Bandeau compact sur la carte — juste les signaux qui appellent une décision,
- * pas les 5 indicateurs en entier (ça, c'est le rôle de la modale). */
-function SignauxIntelligence({ intelligence }: { intelligence?: SupplierIntelligence | null }) {
-  if (!intelligence) return null;
-  const badges: { label: string; color: string }[] = [];
+/** Les 5 indicateurs différenciants, TOUJOURS visibles sur la carte — pas cachés
+ * derrière un clic. C'est là qu'est la valeur ajoutée réelle (au-delà de ce
+ * qu'Odoo montre déjà) : ne pas les afficher directement les rendrait invisibles
+ * en pratique, personne ne clique sur chaque carte pour les découvrir. */
+function IntelligenceGrid({ intelligence }: { intelligence?: SupplierIntelligence | null }) {
+  const i = intelligence;
+  const creditLabel = i?.credit_limit_xof
+    ? `${i.taux_consommation_credit_pct?.toFixed(0) ?? "—"}% (${fmtM(i.encours_du_xof)})`
+    : "non configurée";
+  const creditColor = i?.taux_consommation_credit_pct != null ? pctColor(i.taux_consommation_credit_pct) : undefined;
 
-  if (intelligence.taux_consommation_credit_pct !== null) {
-    badges.push({
-      label: `Crédit ${intelligence.taux_consommation_credit_pct.toFixed(0)}%`,
-      color: pctColor(intelligence.taux_consommation_credit_pct),
-    });
-  }
-  if (intelligence.retard_moyen_jours !== null && intelligence.retard_moyen_jours > 0) {
-    badges.push({
-      label: `Retard réel ${intelligence.retard_moyen_jours.toFixed(0)} j`,
-      color: intelligence.retard_moyen_jours > 15 ? "var(--color-bad)" : "var(--color-warn)",
-    });
-  }
-  if (intelligence.dossiers_a_risque_fournisseur_unique > 0) {
-    badges.push({
-      label: `${intelligence.dossiers_a_risque_fournisseur_unique} dossier(s) à risque`,
-      color: "var(--color-bad)",
-    });
-  }
-  if (badges.length === 0) return null;
+  const cash30 = i ? i.cash_30j_xof : 0;
+  const cashLabel = i && cash30 > 0 ? fmtM(cash30) : "—";
+
+  const margeLabel = i && i.nb_dossiers_lies > 0 ? fmtM(i.marge_sous_traitance_xof) : "aucun dossier lié";
+
+  const retardLabel = i?.retard_moyen_jours != null
+    ? `${i.retard_moyen_jours > 0 ? "+" : ""}${i.retard_moyen_jours.toFixed(0)} j`
+    : "—";
+  const retardColor = i?.retard_moyen_jours != null && i.retard_moyen_jours > 0
+    ? (i.retard_moyen_jours > 15 ? "var(--color-bad)" : "var(--color-warn)")
+    : "var(--color-good)";
+
+  const ruptureLabel = i && i.dossiers_a_risque_fournisseur_unique > 0
+    ? `${i.dossiers_a_risque_fournisseur_unique} dossier(s)`
+    : "aucun identifié";
+  const ruptureColor = i && i.dossiers_a_risque_fournisseur_unique > 0 ? "var(--color-bad)" : "var(--color-good)";
 
   return (
-    <div className="mt-2 flex flex-wrap gap-1.5 border-t border-line pt-2">
-      {badges.map((b) => (
-        <span
-          key={b.label}
-          className="rounded-full px-2 py-0.5 text-[10.5px] font-medium text-white"
-          style={{ backgroundColor: b.color }}
-        >
-          {b.label}
-        </span>
-      ))}
+    <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1.5 border-t border-line pt-2 text-[12px] text-muted">
+      <div className="flex justify-between">
+        <span>Ligne de crédit</span>
+        <b style={{ color: creditColor }}>{creditLabel}</b>
+      </div>
+      <div className="flex justify-between">
+        <span>Cash dû ≤ 30j</span>
+        <b>{cashLabel}</b>
+      </div>
+      <div className="flex justify-between">
+        <span>Marge sous-traitance</span>
+        <b>{margeLabel}</b>
+      </div>
+      <div className="flex justify-between">
+        <span>Retard paiement réel</span>
+        <b style={{ color: retardColor }}>{retardLabel}</b>
+      </div>
+      <div className="col-span-2 flex justify-between">
+        <span>Risque de rupture</span>
+        <b style={{ color: ruptureColor }}>{ruptureLabel}</b>
+      </div>
+      {!i && (
+        <p className="col-span-2 mt-0.5 text-[11px] italic text-muted">
+          Intelligence pas encore disponible — en attente de synchro Odoo.
+        </p>
+      )}
     </div>
   );
 }
