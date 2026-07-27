@@ -153,7 +153,28 @@ class PDFAdapter(DocumentParser):
         un VPS partagé entre plusieurs projets (4 cœurs, 6 apps), ce cœur monopolisé
         pendant de longues minutes dégraderait les AUTRES apps de la machine, pas
         seulement la nôtre. Le sous-processus, lui, est vraiment `kill()`é au
-        timeout — le CPU est libéré immédiatement, pas juste la boucle d'événements."""
+        timeout — le CPU est libéré immédiatement, pas juste la boucle d'événements.
+
+        TRIAGE en amont (routeur, pas cascade « tout essayer ») : un scan (couche
+        texte quasi absente) fait toujours échouer `pymupdf4llm` (il ne rend que des
+        tirets vides sur une page-image, confirmé en prod) — le lancer quand même
+        coûte le démarrage du sous-processus + son traitement pour un résultat qu'on
+        sait déjà inexploitable. Un pré-check PyMuPDF seul (rapide, pas de pdfplumber)
+        permet de sauter directement au pipeline texte/OCR sur ces documents. NE
+        COUVRE PAS le cas inverse (AO dense en tableaux qui fait dégénérer
+        pymupdf4llm, ex. 781s) : aucune heuristique fiable et rapide identifiée ce
+        soir pour prédire CE cas sans risquer de dégrader la qualité sur de gros AO
+        par ailleurs simples — le garde-fou de timeout ci-dessous reste la seule
+        protection pour ce cas-là."""
+        if _PYMUPDF4LLM_AVAILABLE and _FITZ_AVAILABLE:
+            looks_scanned = await asyncio.to_thread(self._looks_like_scan, file_path)
+            if looks_scanned:
+                logger.info(
+                    "PDF détecté comme scan (couche texte quasi absente) — "
+                    "pymupdf4llm sauté, repli direct sur le pipeline texte/OCR : %s",
+                    file_path,
+                )
+                return await asyncio.to_thread(self._parse_fallback_sync, file_path)
         if _PYMUPDF4LLM_AVAILABLE:
             markdown = await self._run_pymupdf4llm_subprocess(file_path)
             if markdown and _alnum_count(markdown) >= _FIDELITY_MIN_BASELINE:
@@ -325,6 +346,15 @@ class PDFAdapter(DocumentParser):
     # ── Extracteurs ────────────────────────────────────────────────────────────
     # (la conversion pymupdf4llm elle-même vit dans _pymupdf4llm_worker.py,
     # exécutée en sous-processus tuable — voir _run_pymupdf4llm_subprocess ci-dessus)
+
+    def _looks_like_scan(self, file_path: str) -> bool:
+        """Pré-check RAPIDE (PyMuPDF seul, pas de pdfplumber ni pymupdf4llm) : ce PDF
+        a-t-il une couche texte quasi absente ? Même seuil (`_FIDELITY_MIN_BASELINE`)
+        que celui déjà utilisé pour juger la sortie de pymupdf4llm insuffisante —
+        cohérent, puisque les deux mesurent le même signal (densité alphanumérique
+        réelle du texte natif du PDF)."""
+        text = self._try_pymupdf(file_path)
+        return _alnum_count(text) < _FIDELITY_MIN_BASELINE
 
     def _plain_text_baseline(self, file_path: str) -> str:
         """Texte plat de référence pour juger la fidélité du Markdown (PyMuPDF puis pdfplumber)."""

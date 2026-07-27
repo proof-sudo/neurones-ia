@@ -8,6 +8,8 @@ import textwrap
 import time
 from pathlib import Path
 
+import fitz
+
 import adapters.parser.pdf_adapter as pdf_adapter_module
 from adapters.parser.pdf_adapter import PDFAdapter
 
@@ -16,6 +18,18 @@ def _write_worker(tmp_path: Path, body: str) -> Path:
     script = tmp_path / "fake_worker.py"
     script.write_text(textwrap.dedent(body), encoding="utf-8")
     return script
+
+
+def _make_text_pdf(path: Path) -> None:
+    """PDF avec du texte réel (au-dessus du seuil de triage scan/normal) — pour les
+    tests qui exercent le chemin pymupdf4llm de `parse()` et ne veulent PAS être
+    déviés par le pré-check `_looks_like_scan` (cf. test_pdf_adapter_scan_triage.py)."""
+    doc = fitz.open()
+    page = doc.new_page()
+    for i in range(20):
+        page.insert_text((72, 72 + i * 14), f"Ligne {i} de contenu réel pour ce test.")
+    doc.save(str(path))
+    doc.close()
 
 
 def test_subprocess_tue_reellement_au_timeout(tmp_path, monkeypatch):
@@ -80,9 +94,12 @@ def test_parse_bascule_sur_repli_si_pymupdf4llm_vide(tmp_path, monkeypatch):
     monkeypatch.setattr(pdf_adapter_module, "_PYMUPDF4LLM_TIMEOUT_S", 10)
     monkeypatch.setattr(pdf_adapter_module, "_PYMUPDF4LLM_AVAILABLE", True)
 
+    pdf_path = tmp_path / "doc.pdf"
+    _make_text_pdf(pdf_path)  # texte réel : ne doit PAS être dévié par le triage scan
+
     adapter = PDFAdapter()
     monkeypatch.setattr(adapter, "_parse_fallback_sync", lambda file_path: "texte de repli")
 
-    result = asyncio.run(adapter.parse(str(tmp_path / "doc.pdf")))
+    result = asyncio.run(adapter.parse(str(pdf_path)))
 
     assert result == "texte de repli"
