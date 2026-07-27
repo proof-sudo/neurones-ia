@@ -49,14 +49,18 @@ def _pipeline(llm) -> ScoringPipeline:
 
 
 def test_step1_extract_retente_a_budget_elargi_si_tronque():
-    ok_json = '{"key_points": [], "besoins": [{"texte": "Migration Odoo", "source_section": "3.1"}]}'
-    llm = FakeLLM(["TRUNCATED", ok_json])
+    # step1.extract lance 2 appels concurrents par chunk (besoins+key_points, puis le reste
+    # — cf. _EXTRACT_SYSTEM_BESOINS/_EXTRACT_SYSTEM_AUTRES) : le 1er (besoins) est tronqué
+    # puis retenté avec succès, le 2e (autres) réussit du premier coup.
+    ok_besoins = '{"key_points": [], "besoins": [{"texte": "Migration Odoo", "source_section": "3.1"}]}'
+    ok_autres = '{"criteres_selection": [], "prerequis": [], "ressources_demandees": [], "points_vigilance": [], "date_remise": ""}'
+    llm = FakeLLM(["TRUNCATED", ok_besoins, ok_autres])
     pipeline = _pipeline(llm)
 
     elements, extra = asyncio.run(pipeline._step1_extract("texte de l'AO"))
 
-    assert llm.calls == 2  # 1er essai tronqué, retry réussi
-    assert llm.max_tokens_seen[1] > llm.max_tokens_seen[0]  # budget élargi au retry
+    assert llm.calls == 3  # besoins : tronqué puis retry réussi ; autres : réussi direct
+    assert llm.max_tokens_seen[1] > llm.max_tokens_seen[0]  # budget élargi au retry besoins
     assert len(extra["besoins"]) == 1
     assert extra["besoins"][0].texte == "Migration Odoo"
 
@@ -67,7 +71,7 @@ def test_step1_extract_vide_honnetement_si_toujours_tronque():
 
     elements, extra = asyncio.run(pipeline._step1_extract("texte de l'AO"))
 
-    assert llm.calls == 2
+    assert llm.calls == 4  # 2 essais (base+retry) x 2 appels concurrents (besoins+autres)
     assert elements == []
     assert extra["besoins"] == []  # honnête : vide, pas de contenu inventé
 
@@ -76,13 +80,14 @@ def test_step1_extract_retente_si_json_malforme_non_tronque():
     # Réponse COMPLÈTE (pas de troncature) mais syntaxiquement invalide — cas réel observé
     # en prod ("Expecting ',' delimiter") sur un AO dense, distinct d'une troncature.
     malformed = '{"key_points": [], "besoins": [{"texte": "A" "source_section": "1"}]}'
-    ok_json = '{"key_points": [], "besoins": [{"texte": "Migration Odoo", "source_section": "3.1"}]}'
-    llm = FakeLLM([malformed, ok_json])
+    ok_besoins = '{"key_points": [], "besoins": [{"texte": "Migration Odoo", "source_section": "3.1"}]}'
+    ok_autres = '{"criteres_selection": [], "prerequis": [], "ressources_demandees": [], "points_vigilance": [], "date_remise": ""}'
+    llm = FakeLLM([malformed, ok_besoins, ok_autres])
     pipeline = _pipeline(llm)
 
     elements, extra = asyncio.run(pipeline._step1_extract("texte de l'AO"))
 
-    assert llm.calls == 2
+    assert llm.calls == 3
     assert len(extra["besoins"]) == 1
     assert extra["besoins"][0].texte == "Migration Odoo"
 
@@ -94,8 +99,23 @@ def test_step1_extract_vide_honnetement_si_json_toujours_malforme():
 
     elements, extra = asyncio.run(pipeline._step1_extract("texte de l'AO"))
 
-    assert llm.calls == 2
+    assert llm.calls == 4  # 2 essais x 2 appels concurrents, tous malformés
     assert extra["besoins"] == []
+
+
+def test_step1_extract_echec_partiel_ne_perd_que_la_moitie_en_echec():
+    # Le point central du split : si l'appel "besoins" échoue mais "autres" réussit (ou
+    # inversement), on ne perd plus TOUT le chunk — seulement la moitié en échec (avant le
+    # split : un seul appel portait tout, un échec perdait besoins ET critères ET tout le reste).
+    ok_autres = '{"criteres_selection": [{"texte": "Critère X", "source_section": "2"}], "prerequis": [], "ressources_demandees": [], "points_vigilance": [], "date_remise": ""}'
+    llm = FakeLLM(["TRUNCATED", "TRUNCATED", ok_autres])
+    pipeline = _pipeline(llm)
+
+    elements, extra = asyncio.run(pipeline._step1_extract("texte de l'AO"))
+
+    assert extra["besoins"] == []  # moitié en échec : vide, honnête
+    assert len(extra["criteres_selection"]) == 1  # moitié réussie : conservée
+    assert extra["criteres_selection"][0].texte == "Critère X"
 
 
 def test_step1_extract_multi_chunk_fusionne_et_deduplique(monkeypatch):
@@ -108,14 +128,17 @@ def test_step1_extract_multi_chunk_fusionne_et_deduplique(monkeypatch):
     monkeypatch.setattr(sp, "_EXTRACT_CHUNK_SIZE_TOKENS", 5)
     monkeypatch.setattr(sp, "_EXTRACT_CHUNK_OVERLAP_TOKENS", 0)
 
-    chunk1 = '{"key_points": [], "besoins": [{"texte": "Besoin A", "source_section": "1"}], "date_remise": "2026-01-01"}'
-    chunk2 = '{"key_points": [], "besoins": [{"texte": "Besoin A", "source_section": "1"}, {"texte": "Besoin B", "source_section": "2"}]}'
-    llm = FakeLLM([chunk1, chunk2])
+    # Chaque chunk fait 2 appels concurrents (besoins, puis autres) : 2 chunks x 2 = 4 réponses.
+    chunk1_besoins = '{"key_points": [], "besoins": [{"texte": "Besoin A", "source_section": "1"}]}'
+    chunk1_autres = '{"criteres_selection": [], "prerequis": [], "ressources_demandees": [], "points_vigilance": [], "date_remise": "2026-01-01"}'
+    chunk2_besoins = '{"key_points": [], "besoins": [{"texte": "Besoin A", "source_section": "1"}, {"texte": "Besoin B", "source_section": "2"}]}'
+    chunk2_autres = '{"criteres_selection": [], "prerequis": [], "ressources_demandees": [], "points_vigilance": [], "date_remise": ""}'
+    llm = FakeLLM([chunk1_besoins, chunk1_autres, chunk2_besoins, chunk2_autres])
     pipeline = _pipeline(llm)
 
     elements, extra = asyncio.run(pipeline._step1_extract("x" * 30))
 
-    assert llm.calls == 2  # exactement 2 chunks avec ce découpage
+    assert llm.calls == 4  # 2 chunks x 2 appels concurrents chacun
     texts = {b.texte for b in extra["besoins"]}
     assert texts == {"Besoin A", "Besoin B"}  # "Besoin A" dédupliqué malgré 2 occurrences
     assert extra["date_remise"] == "2026-01-01"  # premier date_remise non vide conservé

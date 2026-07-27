@@ -113,16 +113,25 @@ _EXTRACT_OUTPUT_RETRY_TOKENS = 12_000
 # élevée que l'hypothèse initiale ("~20-40K tokens, tronque rarement"). Des chunks deux fois
 # plus petits visent un succès dès le PREMIER essai (pas de retry du tout dans le cas
 # courant) plutôt que de re-subir le même échec à une granularité à peine plus fine.
+#
+# Insuffisant en pratique : observé en prod (LONACI, 2 chunks de ~4750 tokens d'ENTRÉE
+# chacun) qu'un chunk peut ENCORE tronquer à 12000 tokens de SORTIE malgré cette réduction —
+# la consigne "quasi-verbatim" (cf. RÈGLE ABSOLUE des prompts ci-dessous) fait que la sortie
+# structurée peut dépasser l'entrée en volume, indépendamment de la densité du document.
+# Réduire encore la taille de chunk ne réglerait que le symptôme. La cause réelle : UN SEUL
+# appel JSON porte 7 clés (key_points, criteres_selection, besoins, prerequis,
+# ressources_demandees, points_vigilance, date_remise) — même logique que step1b, qui a été
+# scindé en cadre/exigences pour la même raison (cf. commentaire plus haut). `besoins` est la
+# liste la plus volumineuse observée en prod (116 items sur SIB, contre 73 pour
+# criteres_selection) : on la scinde donc dans SON PROPRE appel (avec key_points, léger et
+# fixe), le reste (criteres_selection/prerequis/ressources_demandees/points_vigilance/
+# date_remise) dans un second appel — les deux tournent EN CONCURRENCE par chunk (asyncio.
+# gather, pas de latence ajoutée), chacun avec son propre budget de sortie et son propre
+# retry. Un échec sur une moitié n'emporte plus l'autre (avant : tout ou rien par chunk).
 _EXTRACT_CHUNK_SIZE_TOKENS = 8_000
 _EXTRACT_CHUNK_OVERLAP_TOKENS = 400
 
-_EXTRACT_SYSTEM = """Tu es un extracteur d'appels d'offres IT. Ton rôle est d'EXTRAIRE, pas de RÉSUMER.
-
-OBJECTIF : restituer chaque exigence avec son niveau de détail D'ORIGINE. La valeur métier est
-dans les SPÉCIFICITÉS (domaine exact, chiffres, durées, certifications, technologies nommées),
-pas dans une formulation générale.
-
-RÈGLE ABSOLUE — fidélité au texte (quasi-verbatim) :
+_EXTRACT_FIDELITY_RULES = """RÈGLE ABSOLUE — fidélité au texte (quasi-verbatim) :
 - Garde les TERMES EXACTS de l'AO. Ne remplace jamais un terme précis par un terme générique.
   ✗ "ingénieurs expérimentés"   ✓ "1 ingénieur étude (5+ ans d'exp.)", "1 spécialiste GLPI certifié"
   ✗ "personnel qualifié"        ✓ "chef de projet BAC+5 (5+ ans)"
@@ -131,32 +140,62 @@ RÈGLE ABSOLUE — fidélité au texte (quasi-verbatim) :
   "3 références", "RTO 8h", "RPO 4h", "12 mois", noms de normes/lois (Sapin II, Convention ONU)...
 - Ne FUSIONNE jamais deux exigences distinctes en une seule phrase fourre-tout : un item = une exigence.
 - N'INVENTE rien : aucune compétence, certification, technologie, domaine ou chiffre absent du texte.
-  Si l'AO reste vague sur un point, reste vague AUSSI (ne comble pas avec ta culture générale).
+  Si l'AO reste vague sur un point, reste vague AUSSI (ne comble pas avec ta culture générale)."""
+
+# step1.extract scindé en DEUX prompts (cf. commentaire sur _EXTRACT_CHUNK_SIZE_TOKENS
+# ci-dessus) : chacun porte une partie du schéma d'origine, réduisant mécaniquement le volume
+# de sortie par appel. Les deux tournent EN CONCURRENCE sur le même chunk (cf.
+# `_extract_step1_chunk`), donc aucune latence ajoutée par rapport à l'appel unique d'avant.
+_EXTRACT_SYSTEM_BESOINS = """Tu es un extracteur d'appels d'offres IT. Ton rôle est d'EXTRAIRE, pas de RÉSUMER.
+
+OBJECTIF : restituer chaque besoin avec son niveau de détail D'ORIGINE. La valeur métier est
+dans les SPÉCIFICITÉS (domaine exact, chiffres, durées, certifications, technologies nommées),
+pas dans une formulation générale.
+
+""" + _EXTRACT_FIDELITY_RULES + """
 
 Retourne UN JSON valide :
 {
   "key_points": [
     {"label": "Nom court du point", "value": "valeur ou description concise"}
   ],
-  "criteres_selection": [{"texte": "critère d'évaluation/sélection, avec ses spécificités et chiffres", "source_section": "section/article/page d'où vient l'exigence ou ''"}],
-  "besoins": [{"texte": "besoin fonctionnel ou technique exprimé, détaillé", "source_section": "section/article/page ou ''"}],
-  "prerequis": [{"texte": "prérequis ou qualification obligatoire, avec niveau/durée/nombre exacts", "source_section": "section/article/page ou ''"}],
-  "ressources_demandees": [{"texte": "profil RH demandé avec intitulé exact, spécialité, niveau, expérience", "source_section": "section/article/page ou ''"}],
-  "points_vigilance": [{"texte": "risque, contrainte ou point d'attention concret", "source_section": "section/article/page ou ''"}],
-  "date_remise": "date limite de remise ou chaîne vide"
+  "besoins": [{"texte": "besoin fonctionnel ou technique exprimé, détaillé", "source_section": "section/article/page ou ''"}]
 }
 
 Pour key_points : identifie 5 à 10 points CRITIQUES propres à CE document.
 Choisis librement les labels selon ce que tu trouves — budget, délai, client, secteur, technologie principale,
 périmètre géographique, volume, certification requise, type de marché, clause particulière, etc.
 
+RÈGLE source_section (TRAÇABILITÉ) : pour CHAQUE besoin, renseigne `source_section` = D'OÙ vient l'exigence
+dans l'AO (n° de section/article/page tel qu'écrit : "Section III Art. 12", "§4.2", "page 8"). Localisation
+non identifiable → "" (n'invente JAMAIS une référence).
+
+Réponds UNIQUEMENT avec le JSON valide, sans balises markdown."""
+
+_EXTRACT_SYSTEM_AUTRES = """Tu es un extracteur d'appels d'offres IT. Ton rôle est d'EXTRAIRE, pas de RÉSUMER.
+
+OBJECTIF : restituer chaque exigence avec son niveau de détail D'ORIGINE. La valeur métier est
+dans les SPÉCIFICITÉS (domaine exact, chiffres, durées, certifications, technologies nommées),
+pas dans une formulation générale.
+
+""" + _EXTRACT_FIDELITY_RULES + """
+
+Retourne UN JSON valide :
+{
+  "criteres_selection": [{"texte": "critère d'évaluation/sélection, avec ses spécificités et chiffres", "source_section": "section/article/page d'où vient l'exigence ou ''"}],
+  "prerequis": [{"texte": "prérequis ou qualification obligatoire, avec niveau/durée/nombre exacts", "source_section": "section/article/page ou ''"}],
+  "ressources_demandees": [{"texte": "profil RH demandé avec intitulé exact, spécialité, niveau, expérience", "source_section": "section/article/page ou ''"}],
+  "points_vigilance": [{"texte": "risque, contrainte ou point d'attention concret", "source_section": "section/article/page ou ''"}],
+  "date_remise": "date limite de remise ou chaîne vide"
+}
+
 Pour ressources_demandees : un item PAR profil distinct, avec son intitulé exact (ex: "Ingénieur étude",
 "Spécialiste GLPI"), jamais un terme collectif comme "les ingénieurs" ou "l'équipe technique".
 
-RÈGLE source_section (TRAÇABILITÉ) : pour CHAQUE item des 5 listes ci-dessus (criteres_selection, besoins,
-prerequis, ressources_demandees, points_vigilance), renseigne `source_section` = D'OÙ vient l'exigence dans
-l'AO (n° de section/article/page tel qu'écrit : "Section III Art. 12", "§4.2", "page 8"). Localisation non
-identifiable → "" (n'invente JAMAIS une référence). Chaque item = un objet {texte, source_section}.
+RÈGLE source_section (TRAÇABILITÉ) : pour CHAQUE item des 4 listes ci-dessus (criteres_selection, prerequis,
+ressources_demandees, points_vigilance), renseigne `source_section` = D'OÙ vient l'exigence dans l'AO (n° de
+section/article/page tel qu'écrit : "Section III Art. 12", "§4.2", "page 8"). Localisation non identifiable
+→ "" (n'invente JAMAIS une référence). Chaque item = un objet {texte, source_section}.
 
 Réponds UNIQUEMENT avec le JSON valide, sans balises markdown."""
 
@@ -818,7 +857,8 @@ class ScoringPipeline:
         """Extrait besoins/critères/prérequis/ressources/vigilance — en MAP-REDUCE sur les
         AO denses (cf. `_EXTRACT_CHUNK_SIZE_TOKENS`) : un AO de taille normale tient dans un
         seul chunk (comportement identique à avant) ; un AO volumineux est découpé, chaque
-        chunk extrait EN PARALLÈLE, puis les résultats fusionnés (cf. `_merge_step1_chunks`).
+        chunk extrait EN PARALLÈLE (chaque chunk lui-même scindé en 2 appels concurrents,
+        cf. `_extract_step1_chunk`), puis les résultats fusionnés (cf. `_merge_step1_chunks`).
         """
         empty_extra: dict = {
             "criteres_selection": [], "besoins": [], "prerequis": [],
@@ -837,13 +877,27 @@ class ScoringPipeline:
         return self._merge_step1_chunks(datas)
 
     async def _extract_step1_chunk(self, snippet: str) -> dict | None:
-        """Extrait le JSON step1 sur UN chunk (voir `_step1_extract`). Retry à budget de
-        sortie élargi sur troncature (cf. `_EXTRACT_OUTPUT_RETRY_TOKENS`) — couvre aussi le
-        JSON complet mais mal formé (ex. "Expecting ',' delimiter" observé en prod sur un AO
-        dense) : ce n'est pas une troncature, mais un nouvel essai à budget plus large reste
-        la seule option avant de renoncer honnêtement sur ce chunk — on n'invente jamais le
-        contenu manquant."""
+        """Extrait le JSON step1 sur UN chunk (voir `_step1_extract`) — DEUX appels LLM en
+        CONCURRENCE (besoins+key_points d'un côté, le reste de l'autre : cf. commentaire sur
+        `_EXTRACT_CHUNK_SIZE_TOKENS`), chacun avec son propre budget/retry via
+        `_extract_step1_part`. Fusionne les deux dicts partiels ; un échec sur une moitié
+        n'empêche plus l'autre de contribuer (avant le split : tout ou rien par chunk)."""
         snippet = _truncate_by_tokens(snippet, self._llm, _EXTRACT_INPUT_BUDGET_TOKENS, step="extract")
+        besoins_data, autres_data = await asyncio.gather(
+            self._extract_step1_part(snippet, _EXTRACT_SYSTEM_BESOINS, part="besoins"),
+            self._extract_step1_part(snippet, _EXTRACT_SYSTEM_AUTRES, part="autres"),
+        )
+        if besoins_data is None and autres_data is None:
+            return None
+        return {**(besoins_data or {}), **(autres_data or {})}
+
+    async def _extract_step1_part(self, snippet: str, system_prompt: str, *, part: str) -> dict | None:
+        """Extrait UNE moitié du schéma step1 (voir `_extract_step1_chunk`) sur UN chunk.
+        Retry à budget de sortie élargi sur troncature (cf. `_EXTRACT_OUTPUT_RETRY_TOKENS`) —
+        couvre aussi le JSON complet mais mal formé (ex. "Expecting ',' delimiter" observé en
+        prod sur un AO dense) : ce n'est pas une troncature, mais un nouvel essai à budget
+        plus large reste la seule option avant de renoncer honnêtement sur cette moitié — on
+        n'invente jamais le contenu manquant."""
         for budget in (_EXTRACT_OUTPUT_BUDGET_TOKENS, _EXTRACT_OUTPUT_RETRY_TOKENS):
             is_last = budget >= _EXTRACT_OUTPUT_RETRY_TOKENS
             try:
@@ -851,23 +905,23 @@ class ScoringPipeline:
                 # system+snippet — cache Anthropic garanti sur la 2e tentative (cf.
                 # LLMGateway.generate/extract pour le compromis coût).
                 raw = await self._llm.extract(
-                    prompt=_EXTRACT_SYSTEM, text=snippet, max_tokens=budget,
+                    prompt=system_prompt, text=snippet, max_tokens=budget,
                     raise_on_truncation=True, temperature=_TEMP_DETERMINISTIC, cacheable=True,
                 )
             except OutputTruncatedError:
                 logger.warning(
-                    "step1.extract tronqué au plafond de %d tokens — %s.",
-                    budget, "abandon du chunk" if is_last else "retry à budget élargi",
+                    "step1.extract[%s] tronqué au plafond de %d tokens — %s.",
+                    part, budget, "abandon de cette partie" if is_last else "retry à budget élargi",
                 )
                 continue
             try:
                 return json.loads(_clean_json(raw))
             except (json.JSONDecodeError, ValueError) as exc:
-                dump_path = _dump_failure(raw, exc, "extract")
+                dump_path = _dump_failure(raw, exc, f"extract_{part}")
                 logger.warning(
-                    "Extraction JSON échouée (%s) au plafond de %d tokens — %s. "
+                    "Extraction JSON[%s] échouée (%s) au plafond de %d tokens — %s. "
                     "Réponse complète sauvée dans %s. Aperçu (2000 chars) :\n%s",
-                    exc, budget, "abandon du chunk" if is_last else "retry à budget élargi",
+                    part, exc, budget, "abandon de cette partie" if is_last else "retry à budget élargi",
                     dump_path, raw[:2000],
                 )
                 continue
