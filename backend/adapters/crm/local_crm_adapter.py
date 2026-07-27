@@ -9,7 +9,7 @@ from core.domain.client import Client, Contract, Invoice, Project, ContractStatu
 from db.database import AsyncSessionLocal
 from db.models import (
     ClientModel, ContractModel, InvoiceModel, ProjectModel, SaleOrderModel, DossierModel,
-    PurchaseOrderModel, SupplierModel, SupplierInvoiceModel,
+    SupplierModel,
 )
 
 logger = logging.getLogger(__name__)
