@@ -305,10 +305,15 @@ async def _sync_suppliers_by_ids(odoo: OdooAdapter, ids: list[int]):
             existing = await session.get(SupplierModel, supplier_id)
             if existing:
                 existing.name = r["name"]
-                existing.credit_limit = r.get("credit_limit")
-                existing.use_partner_credit_limit = bool(r.get("use_partner_credit_limit"))
-                existing.payment_term_name = term_name
-                existing.payment_term_days = term_days
+                # N'écrase JAMAIS une valeur déjà connue par un null Odoo : la plupart des
+                # fournisseurs n'ont pas encore de ligne de crédit/délai configuré côté
+                # Odoo — un null ici signifie "pas encore renseigné", pas "supprimé".
+                if r.get("credit_limit"):
+                    existing.credit_limit = r.get("credit_limit")
+                if term_name:
+                    existing.payment_term_name = term_name
+                    existing.payment_term_days = term_days
+                existing.use_partner_credit_limit = bool(r.get("use_partner_credit_limit")) or existing.use_partner_credit_limit
                 existing.supplier_rank = r.get("supplier_rank", 0)
                 existing.synced_at = datetime.utcnow()
             else:
@@ -639,10 +644,15 @@ async def run_odoo_sync(force_full: bool = False):
                 existing = await session.get(SupplierModel, supplier_id)
                 if existing:
                     existing.name = s["name"]
-                    existing.credit_limit = s.get("credit_limit")
-                    existing.use_partner_credit_limit = bool(s.get("use_partner_credit_limit"))
-                    existing.payment_term_name = s.get("payment_term_name")
-                    existing.payment_term_days = s.get("payment_term_days")
+                    # N'écrase jamais une valeur déjà connue par un null Odoo (cf. commentaire
+                    # sur _sync_suppliers_by_ids) : la plupart des fournisseurs n'ont pas encore
+                    # de ligne de crédit/délai configuré côté Odoo.
+                    if s.get("credit_limit"):
+                        existing.credit_limit = s.get("credit_limit")
+                    if s.get("payment_term_name"):
+                        existing.payment_term_name = s.get("payment_term_name")
+                        existing.payment_term_days = s.get("payment_term_days")
+                    existing.use_partner_credit_limit = bool(s.get("use_partner_credit_limit")) or existing.use_partner_credit_limit
                     existing.supplier_rank = s.get("supplier_rank", 0)
                     existing.synced_at = sync_start
                 else:
