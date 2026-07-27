@@ -204,7 +204,7 @@ export function TresorerieLive({
         )}
       </DetailPanel>
 
-      <Panel className="mb-4">
+      {/* <Panel className="mb-4">
         <PanelHead title="Impayés par client">
           <AiChip>cliquez sur un client pour la décision de recouvrement</AiChip>
         </PanelHead>
@@ -253,7 +253,7 @@ export function TresorerieLive({
             </tbody>
           </table>
         </div>
-      </Panel>
+      </Panel> */}
 
       <div className="mb-[22px] grid grid-cols-2 gap-3.5 xl:grid-cols-4">
         <KpiGauge
