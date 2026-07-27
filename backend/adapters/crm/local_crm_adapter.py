@@ -7,7 +7,10 @@ from sqlalchemy import select, or_
 from core.ports.crm_repository import CRMRepository
 from core.domain.client import Client, Contract, Invoice, Project, ContractStatus, InvoiceStatus
 from db.database import AsyncSessionLocal
-from db.models import ClientModel, ContractModel, InvoiceModel, ProjectModel, SaleOrderModel, DossierModel
+from db.models import (
+    ClientModel, ContractModel, InvoiceModel, ProjectModel, SaleOrderModel, DossierModel,
+    PurchaseOrderModel, SupplierModel, SupplierInvoiceModel,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1280,6 +1283,155 @@ class LocalCRMAdapter(CRMRepository):
                     ],
                 })
         return suppliers
+
+    async def get_supplier_intelligence(self, limit: int = 20) -> list[dict]:
+        """5 indicateurs différenciants pour un DAF/DG d'ESN — pas la répétition de ce
+        qu'Odoo montre déjà (montant/nb commandes, cf. get_top_suppliers), mais des
+        croisements qu'Odoo ne fait pas :
+        1. Ligne de crédit vs encours réellement dû (factures fournisseurs non soldées).
+        2. Cash prévisionnel à 30/60/90j sur les échéances réelles.
+        3. Marge de sous-traitance : marge des dossiers dont ce fournisseur a des achats liés.
+        4. Fiabilité de paiement : retard réel constaté vs délai négocié.
+        5. Risque de rupture (proxy) : dossiers ACTIFS où ce fournisseur est le SEUL sur
+           les achats liés — pas une vraie donnée de vivier/remplacement (absente
+           d'Odoo), affiché comme un signal, pas une certitude.
+        """
+        from sqlalchemy import text
+        now = datetime.utcnow()
+
+        async with AsyncSessionLocal() as session:
+            # ── Base : volume d'achats par fournisseur (pour le taux de dépendance) ──
+            base_rows = (await session.execute(text("""
+                SELECT client_name, SUM(amount), COUNT(*)
+                FROM purchase_orders
+                WHERE client_name IS NOT NULL AND client_name != ''
+                GROUP BY client_name
+                ORDER BY SUM(amount) DESC
+                LIMIT :limit
+            """), {"limit": limit})).fetchall()
+            total_achats = (await session.execute(text(
+                "SELECT SUM(amount) FROM purchase_orders"
+            ))).scalar() or 0
+
+            result = []
+            for name, montant_total, nb_commandes in base_rows:
+                # ── Fiche fournisseur (crédit, délai négocié) — jointure par NOM, best
+                # effort : purchase_orders ne stocke que client_name/client_id (le
+                # partner_id vendeur), suppliers.supplier_id est le MÊME partner_id.
+                sup_row = (await session.execute(
+                    select(SupplierModel).where(SupplierModel.name == name)
+                )).scalar_one_or_none()
+                credit_limit = sup_row.credit_limit if sup_row else None
+                use_credit_limit = bool(sup_row.use_partner_credit_limit) if sup_row else False
+                payment_term_name = sup_row.payment_term_name if sup_row else None
+                payment_term_days = sup_row.payment_term_days if sup_row else None
+                supplier_id = sup_row.supplier_id if sup_row else None
+
+                # ── 1. Ligne de crédit vs encours dû ────────────────────────────────
+                encours_du = 0.0
+                if supplier_id:
+                    encours_du = (await session.execute(text("""
+                        SELECT COALESCE(SUM(amount_residual), 0) FROM supplier_invoices
+                        WHERE supplier_id = :sid AND payment_state != 'paid'
+                    """), {"sid": supplier_id})).scalar() or 0.0
+                taux_consommation = (
+                    round(encours_du / credit_limit * 100, 1)
+                    if credit_limit and use_credit_limit and credit_limit > 0
+                    else None
+                )
+
+                # ── 2. Cash prévisionnel 30/60/90j (échéances réelles, factures ouvertes) ──
+                cash_30 = cash_60 = cash_90 = cash_plus = 0.0
+                if supplier_id:
+                    open_invoices = (await session.execute(text("""
+                        SELECT due_date, amount_residual FROM supplier_invoices
+                        WHERE supplier_id = :sid AND payment_state != 'paid' AND amount_residual > 0
+                    """), {"sid": supplier_id})).fetchall()
+                    for due_date, residual in open_invoices:
+                        if not due_date:
+                            cash_plus += residual or 0
+                            continue
+                        due_dt = due_date if isinstance(due_date, datetime) else datetime.fromisoformat(str(due_date))
+                        jours = (due_dt - now).days
+                        if jours <= 30:
+                            cash_30 += residual or 0
+                        elif jours <= 60:
+                            cash_60 += residual or 0
+                        elif jours <= 90:
+                            cash_90 += residual or 0
+                        else:
+                            cash_plus += residual or 0
+
+                # ── 3. Marge de sous-traitance (dossiers reliés via purchase_orders.dossier_id) ──
+                marge_sous_traitance = 0.0
+                nb_dossiers_lies = 0
+                if name:
+                    dossier_rows = (await session.execute(text("""
+                        SELECT DISTINCT d.dossier_ref,
+                               CASE WHEN d.marge_definitive != 0 THEN d.marge_definitive
+                                    WHEN d.marge_provisoire != 0 THEN d.marge_provisoire
+                                    ELSE d.marge_previsionnelle END AS marge
+                        FROM purchase_orders po
+                        JOIN dossiers d ON po.dossier_id = d.dossier_ref
+                        WHERE po.client_name = :name AND po.dossier_id IS NOT NULL
+                    """), {"name": name})).fetchall()
+                    nb_dossiers_lies = len(dossier_rows)
+                    marge_sous_traitance = sum(m or 0 for _, m in dossier_rows)
+
+                # ── 4. Fiabilité de paiement : retard réel vs délai négocié ─────────
+                retard_moyen_jours = None
+                if supplier_id:
+                    paid_rows = (await session.execute(text("""
+                        SELECT due_date, payment_date FROM supplier_invoices
+                        WHERE supplier_id = :sid AND payment_date IS NOT NULL AND due_date IS NOT NULL
+                    """), {"sid": supplier_id})).fetchall()
+                    if paid_rows:
+                        ecarts = []
+                        for due_date, payment_date in paid_rows:
+                            due_dt = due_date if isinstance(due_date, datetime) else datetime.fromisoformat(str(due_date))
+                            pay_dt = payment_date if isinstance(payment_date, datetime) else datetime.fromisoformat(str(payment_date))
+                            ecarts.append((pay_dt - due_dt).days)
+                        retard_moyen_jours = round(sum(ecarts) / len(ecarts), 1)
+
+                # ── 5. Risque de rupture (proxy) : dossiers actifs à fournisseur unique ──
+                dossiers_a_risque = 0
+                if name:
+                    risk_rows = (await session.execute(text("""
+                        SELECT po.dossier_id, COUNT(DISTINCT po.client_name) as nb_fournisseurs
+                        FROM purchase_orders po
+                        JOIN dossiers d ON po.dossier_id = d.dossier_ref
+                        WHERE po.dossier_id IS NOT NULL AND d.state = 'confirmed'
+                        GROUP BY po.dossier_id
+                        HAVING nb_fournisseurs = 1
+                    """))).fetchall()
+                    dossiers_uniques = {row[0] for row in risk_rows}
+                    if dossiers_uniques:
+                        mine = (await session.execute(text("""
+                            SELECT DISTINCT dossier_id FROM purchase_orders
+                            WHERE client_name = :name AND dossier_id IS NOT NULL
+                        """), {"name": name})).fetchall()
+                        dossiers_a_risque = len({r[0] for r in mine} & dossiers_uniques)
+
+                result.append({
+                    "name": name,
+                    "montant_total_xof": round(montant_total or 0),
+                    "nb_commandes": nb_commandes,
+                    "taux_dependance_pct": round((montant_total or 0) / total_achats * 100, 1) if total_achats else 0,
+                    "credit_limit_xof": round(credit_limit) if credit_limit else None,
+                    "encours_du_xof": round(encours_du),
+                    "taux_consommation_credit_pct": taux_consommation,
+                    "cash_30j_xof": round(cash_30),
+                    "cash_60j_xof": round(cash_60),
+                    "cash_90j_xof": round(cash_90),
+                    "cash_plus_90j_xof": round(cash_plus),
+                    "marge_sous_traitance_xof": round(marge_sous_traitance),
+                    "nb_dossiers_lies": nb_dossiers_lies,
+                    "payment_term_name": payment_term_name,
+                    "payment_term_days": payment_term_days,
+                    "retard_moyen_jours": retard_moyen_jours,
+                    "dossiers_a_risque_fournisseur_unique": dossiers_a_risque,
+                })
+        return result
 
     async def get_client_portfolio(self, limit: int = 50) -> list[dict]:
         """Portefeuille clients réel, agrégé sur la table dossiers (CA, backlog,
