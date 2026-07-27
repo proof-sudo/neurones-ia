@@ -35,6 +35,11 @@ class FakeLLM:
             if raise_on_truncation:
                 raise OutputTruncatedError(partial_text="", max_tokens=max_tokens)
             return ""
+        if outcome == "SDK_VALUE_ERROR":
+            # Simule le refus du SDK Anthropic d'exécuter un appel non-streaming dont
+            # max_tokens dépasse son plafond interne (~21333) — une pure ValueError levée
+            # AVANT tout appel réseau, distincte d'une troncature ou d'un JSON malformé.
+            raise ValueError("Streaming is required for operations that may take longer than 10 minutes.")
         return outcome
 
     async def generate(self, system, user, max_tokens=1024, raise_on_truncation=False, temperature=None, cacheable=False):
@@ -116,6 +121,35 @@ def test_step1_extract_echec_partiel_ne_perd_que_la_moitie_en_echec():
     assert extra["besoins"] == []  # moitié en échec : vide, honnête
     assert len(extra["criteres_selection"]) == 1  # moitié réussie : conservée
     assert extra["criteres_selection"][0].texte == "Critère X"
+
+
+def test_step1_extract_retente_si_sdk_refuse_appel_non_streaming():
+    # Bug réel en prod : le SDK Anthropic lève une ValueError (pas OutputTruncatedError)
+    # quand max_tokens dépasse son plafond non-streaming interne — AVANT tout appel réseau.
+    # Sans gestion dédiée, cette exception remontait et faisait planter TOUT le pipeline.
+    ok_besoins = '{"key_points": [], "besoins": [{"texte": "Migration Odoo", "source_section": "3.1"}]}'
+    ok_autres = '{"criteres_selection": [], "prerequis": [], "ressources_demandees": [], "points_vigilance": [], "date_remise": ""}'
+    llm = FakeLLM(["SDK_VALUE_ERROR", ok_besoins, ok_autres])
+    pipeline = _pipeline(llm)
+
+    elements, extra = asyncio.run(pipeline._step1_extract("texte de l'AO"))
+
+    assert llm.calls == 3  # besoins : refusé par le SDK puis retry réussi ; autres : réussi direct
+    assert len(extra["besoins"]) == 1
+    assert extra["besoins"][0].texte == "Migration Odoo"
+
+
+def test_step1_extract_vide_honnetement_si_sdk_refuse_toujours(monkeypatch):
+    # Le refus SDK persiste sur les DEUX tentatives (ex. budget de retry mal réglé à nouveau
+    # au-dessus du plafond) : on abandonne PROPREMENT cette partie plutôt que de laisser
+    # l'exception remonter et casser le pipeline entier — pas d'exception levée par ce test.
+    llm = FakeLLM(["SDK_VALUE_ERROR", "SDK_VALUE_ERROR"])
+    pipeline = _pipeline(llm)
+
+    elements, extra = asyncio.run(pipeline._step1_extract("texte de l'AO"))
+
+    assert llm.calls == 4  # 2 essais x 2 appels concurrents, tous refusés par le SDK
+    assert extra["besoins"] == []  # honnête : vide, pas de crash
 
 
 def test_step1_extract_multi_chunk_fusionne_et_deduplique(monkeypatch):
