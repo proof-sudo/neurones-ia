@@ -152,6 +152,11 @@ export interface ScoringResult {
   risks: Risk[];
   score: number;
   score_basis?: "GRILLE" | "ESTIME" | "INDISPONIBLE";
+  score_technique?: number;
+  score_financier?: number;
+  score_administratif?: number;
+  financier_rationale?: string;
+  administratif_rationale?: string;
   recommendation: "GO" | "NO_BID" | "CONDITIONAL";
   justification: string;
   criteres_selection?: ExtractedItem[];

@@ -272,6 +272,14 @@ class ScoringResult:
     # Base du score : "GRILLE" (somme normalisée d'un barème chiffré), "ESTIME" (jugement
     # global, AO sans barème), "INDISPONIBLE" (analyse cassée/tronquée → 50 neutre, pas un vrai score).
     score_basis: str = "GRILLE"
+    # Scores de préparation par volet (Phase 3 Bid Management) : technique = alias du score
+    # global (la grille notée EST la grille technique) ; financier/administratif = jugement LLM
+    # de notre capacité à satisfaire les seuils/pièces du volet, distinct du score global.
+    score_technique: int = 0
+    score_financier: int = 0
+    score_administratif: int = 0
+    financier_rationale: str = ""
+    administratif_rationale: str = ""
     # Champs d'analyse détaillée (Phase 1 Bid Management). Enrichis : chaque item
     # porte sa référence source (ExtractedItem) → traçabilité jusqu'à la matrice.
     criteres_selection: list[ExtractedItem] = field(default_factory=list)

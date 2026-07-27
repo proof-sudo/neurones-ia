@@ -122,6 +122,21 @@ export function fileUrl(docId: string, inline = false): string {
   return `${API_BASE}/files/${docId}/download${inline ? "?inline=true" : ""}`;
 }
 
+export interface FileMeta {
+  size_bytes: number | null;
+  last_indexed: string | null;
+}
+
+/** Métadonnées légères (taille, date) pour un lot de doc_id — alimente les colonnes
+ * Taille/Date d'un tableau de documents matchés sans reservir le fichier lui-même. */
+export async function fetchFilesMeta(docIds: string[]): Promise<Record<string, FileMeta>> {
+  const ids = [...new Set(docIds.filter(Boolean))];
+  if (!ids.length) return {};
+  const r = await apiFetch(`${API_BASE}/files/meta?ids=${ids.map(encodeURIComponent).join(",")}`);
+  const data = await ok<{ files: Record<string, FileMeta> }>(r, "Erreur chargement des métadonnées fichiers");
+  return data.files;
+}
+
 // ── Écriture ───────────────────────────────────────────────────────────────
 
 export async function uploadFile(

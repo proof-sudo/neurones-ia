@@ -50,6 +50,12 @@ class _AnalysisOutput:
     # Base du score : GRILLE (somme normalisée), ESTIME (jugement global, AO sans barème),
     # INDISPONIBLE (analyse cassée/tronquée → score neutre 50 à ne pas prendre pour argent comptant).
     score_basis: str = "GRILLE"
+    # Scores de préparation par volet (financier/administratif jugés par le LLM ; technique
+    # est un alias de `score`, posé côté appelant — cf. run()).
+    score_financier: int = 0
+    score_administratif: int = 0
+    financier_rationale: str = ""
+    administratif_rationale: str = ""
 
 # Budgets d'ENTRÉE par étape (en tokens). Haiku 4.5 / Sonnet 4.6 = 200K de contexte,
 # PARTAGÉ entre entrée + sortie. Un AO réel (même dense type BAD) fait ~20-40K tokens :
@@ -387,22 +393,39 @@ RÈGLE — format (OBLIGATOIRE, réponds en Markdown) :
   dernière puce utile."""
 
 _ANALYSIS_SYSTEM = """Tu es un directeur commercial senior en IT.
-On te fournit une GRILLE D'ÉVALUATION (critères avec points max) et nos références (RAG).
-Évalue NOTRE adéquation à l'AO, critère par critère.
+On te fournit une GRILLE D'ÉVALUATION (critères avec points max), nos références (RAG), et les
+EXIGENCES FINANCIÈRES/ADMINISTRATIVES chiffrées de l'AO (seuils d'éligibilité, annexes à fournir,
+données financières). Évalue NOTRE adéquation à l'AO, critère par critère.
 
 Travail demandé :
 1. Pour CHAQUE critère de la grille fournie (identifié par son `id`) : attribue un score estimé
-   (entre 0 et son max_points), un niveau de risque, une justification courte, et la liste des
-   fichiers GED qui appuient le score (sources_ged, depuis nos références ; [] si aucune).
+   (entre 0 et son max_points), un niveau de risque, une justification (`rationale`), et la liste
+   des fichiers GED qui appuient le score (sources_ged, depuis nos références ; [] si aucune).
+   `rationale` : 50 MOTS MAXIMUM — UNE phrase structurée "constat → preuve/manque" (ex: "Deux
+   références bancaires récentes couvrent ce critère, mais aucune n'atteint le volume exigé."),
+   jamais une liste ni un pavé de plusieurs phrases.
 2. Nos forces (ce qu'on maîtrise) et l'analyse des écarts (ce qui manque).
 3. Les risques : CHAQUE risque DOIT avoir une mitigation concrète (jamais de risque sans contre-mesure).
-   `items_affected` = ids des critères concernés.
+   `items_affected` = ids des critères concernés. `pourquoi` et `mitigation` : 50 MOTS MAXIMUM
+   chacun — une ou deux phrases denses et concrètes, jamais un paragraphe.
 4. Recommandation : GO, NO_BID ou CONDITIONAL.
 5. Si recommendation = CONDITIONAL : liste 2 à 5 préalables qui conditionnent le passage en GO
    (sinon preconditions = []).
 6. global_adequacy_score : note d'adéquation globale 0-100 (jugement honnête de notre capacité
    à gagner cet AO). Utilisée SEULEMENT si la grille n'a aucun point chiffré (max_points tous à 0) ;
    sinon le score est recalculé depuis la grille. Renseigne-la TOUJOURS.
+7. score_financier (0-100) : notre capacité à satisfaire les seuils/exigences FINANCIÈRES du
+   volet "Exigences financières/administratives" fourni (CA minimum, garanties, caution de
+   soumission, conditions de paiement) au vu de nos références. 100 = large marge sur tous les
+   seuils ; note basse = seuil probablement hors de portée ou données financières trop exigeantes.
+   Aucune exigence financière listée → 100 (rien à satisfaire). Justifie en une phrase
+   (financier_rationale).
+8. score_administratif (0-100) : notre capacité à réunir les pièces administratives demandées
+   (annexes de type ADMIN, seuils de type ADMIN). Les pièces usuelles d'une société établie
+   (RCCM, attestations fiscale/CNPS, statuts) sont quasi toujours disponibles → note haute par
+   défaut ; baisse SEULEMENT si l'AO exige un agrément/qualification/certification spécifique et
+   rare qu'on ne détient probablement pas. Aucune annexe/seuil administratif listé → 100.
+   Justifie en une phrase (administratif_rationale).
 
 Niveaux : risk_level ∈ {FAIBLE, MODÉRÉ, ÉLEVÉ, CRITIQUE} ; criticite ∈ {MODÉRÉ, ÉLEVÉ, CRITIQUE, BLOQUANT}.
 N'invente pas de fichier GED absent des références fournies. Reste sobre et factuel.
@@ -423,6 +446,10 @@ Réponds UNIQUEMENT en JSON valide :
   "recommendation": "CONDITIONAL",
   "justification": "Explication en 2-3 phrases",
   "global_adequacy_score": 45,
+  "score_financier": 70,
+  "financier_rationale": "CA exigé (500M FCFA) couvert avec marge par nos bilans récents",
+  "score_administratif": 90,
+  "administratif_rationale": "Pièces standard (RCCM, attestations), aucun agrément rare exigé",
   "preconditions": [
     {"label": "Confirmer CA ≥ 500 M FCFA", "type": "FINANCIER",
      "deadline": "avant J-5", "responsable": "Responsable Financier", "blocking": true}
@@ -710,6 +737,9 @@ class ScoringPipeline:
             summary=summary,
             rag_context=rag_context,
             criteria=criteria,
+            seuils_eligibilite=seuils_eligibilite,
+            appendices=appendices,
+            donnees_financieres=donnees_financieres,
         ))
         logger.info("Pipeline terminé : score=%d, recommandation=%s", analysis.score, analysis.recommendation)
 
@@ -723,6 +753,13 @@ class ScoringPipeline:
             risks=analysis.risks,
             score=analysis.score,
             score_basis=analysis.score_basis,
+            # Technique = alias du score global (la grille notée EST la grille technique,
+            # cf. _FRAME_SYSTEM) ; financier/administratif = jugement LLM dédié (étape 4).
+            score_technique=analysis.score,
+            score_financier=analysis.score_financier,
+            score_administratif=analysis.score_administratif,
+            financier_rationale=analysis.financier_rationale,
+            administratif_rationale=analysis.administratif_rationale,
             recommendation=analysis.recommendation,
             justification=analysis.justification,
             criteres_selection=extra.get("criteres_selection", []),
@@ -1468,6 +1505,9 @@ class ScoringPipeline:
         summary: str,
         rag_context: str,
         criteria: list[ScoringCriterion],
+        seuils_eligibilite: list[EligibilityThreshold] | None = None,
+        appendices: list[Appendix] | None = None,
+        donnees_financieres: FinancialData | None = None,
     ) -> _AnalysisOutput:
         ao_snippet = _truncate_by_tokens(ao_text, self._llm_analysis, _ANALYZE_INPUT_BUDGET_TOKENS, step="analyze")
         grille_json = json.dumps(
@@ -1475,9 +1515,35 @@ class ScoringPipeline:
              for c in criteria],
             ensure_ascii=False,
         )
+        # Contexte financier/administratif pour score_financier/score_administratif : ne garde
+        # que les seuils/annexes des volets concernés (pas les techniques, déjà dans la grille).
+        finance_admin_json = json.dumps(
+            {
+                "seuils_financiers": [
+                    {"libelle": s.libelle, "valeur": s.valeur, "unite": s.unite, "blocking": s.blocking}
+                    for s in (seuils_eligibilite or []) if s.type == "FINANCIER"
+                ],
+                "seuils_administratifs": [
+                    {"libelle": s.libelle, "valeur": s.valeur, "unite": s.unite, "blocking": s.blocking}
+                    for s in (seuils_eligibilite or []) if s.type == "ADMIN"
+                ],
+                "annexes_administratives": [
+                    {"code": a.code, "label": a.label, "obligatoire": a.obligatoire}
+                    for a in (appendices or []) if a.type == "ADMIN"
+                ],
+                "donnees_financieres": {
+                    "budget_estime": donnees_financieres.budget_estime if donnees_financieres else "",
+                    "modalites_paiement": donnees_financieres.modalites_paiement if donnees_financieres else "",
+                    "garantie_soumission": donnees_financieres.garantie_soumission if donnees_financieres else "",
+                    "penalites": donnees_financieres.penalites if donnees_financieres else "",
+                },
+            },
+            ensure_ascii=False,
+        )
         user_prompt = (
             f"## Résumé de l'AO\n{summary}\n\n"
             f"## Grille d'évaluation (score chaque critère par son id)\n{grille_json}\n\n"
+            f"## Exigences financières/administratives (pour score_financier/score_administratif)\n{finance_admin_json}\n\n"
             f"## Nos références (RAG)\n{rag_context}\n\n"
             f"## Extrait AO\n{ao_snippet}"
         )
@@ -1610,10 +1676,22 @@ class ScoringPipeline:
         if preconditions_incomplete:
             logger.warning("Recommandation CONDITIONAL sans préalables — flag preconditions_incomplete=True")
 
+        # Scores de préparation financier/administratif : jugement LLM, repli à 100 (rien à
+        # satisfaire) si absent/mal formé plutôt qu'un 0 trompeur qui laisserait croire à un échec.
+        def _pct(key: str) -> int:
+            try:
+                return max(0, min(100, int(data.get(key, 100))))
+            except (TypeError, ValueError):
+                return 100
+
+        score_financier = _pct("score_financier")
+        score_administratif = _pct("score_administratif")
+
         logger.info(
-            "Step4 done | score=%d (%d/%d pts, basis=%s), rec=%s, %d critères scorés, %d risques, %d préalables",
-            score, total_est, total_max, score_basis, recommendation.value,
-            len(scored_criteria), len(risks), len(preconditions),
+            "Step4 done | score=%d (%d/%d pts, basis=%s), fin=%d, admin=%d, rec=%s, "
+            "%d critères scorés, %d risques, %d préalables",
+            score, total_est, total_max, score_basis, score_financier, score_administratif,
+            recommendation.value, len(scored_criteria), len(risks), len(preconditions),
         )
         return _AnalysisOutput(
             gaps_analysis=str(data.get("gaps_analysis", "") or "").strip(),
@@ -1626,6 +1704,10 @@ class ScoringPipeline:
             preconditions=preconditions,
             preconditions_incomplete=preconditions_incomplete,
             score_basis=score_basis,
+            score_financier=score_financier,
+            score_administratif=score_administratif,
+            financier_rationale=str(data.get("financier_rationale", "") or "").strip(),
+            administratif_rationale=str(data.get("administratif_rationale", "") or "").strip(),
         )
 
     @staticmethod
@@ -1682,11 +1764,23 @@ class ScoringPipeline:
             level = str(scored.get("risk_level", "")).strip().upper()
             if level in self._VALID_RISK_LEVELS:
                 c.risk_level = level
-            c.rationale = str(scored.get("rationale", "") or "").strip()
+            c.rationale = self._cap_words(str(scored.get("rationale", "") or "").strip())
             srcs = scored.get("sources_ged", [])
             if isinstance(srcs, list):
                 c.sources_ged = [str(s).strip() for s in srcs if str(s).strip()]
         return criteria
+
+    _RATIONALE_MAX_WORDS = 50
+
+    @classmethod
+    def _cap_words(cls, text: str, max_words: int = _RATIONALE_MAX_WORDS) -> str:
+        """Garde-fou déterministe : tronque à `max_words` mots même si le LLM ignore la
+        consigne du prompt (50 mots max pour `rationale`/`pourquoi`/`mitigation` — texte
+        dense, pas un paragraphe)."""
+        words = text.split()
+        if len(words) <= max_words:
+            return text
+        return " ".join(words[:max_words]) + "…"
 
     def _parse_risks(self, raw: object) -> list[Risk]:
         if not isinstance(raw, list):
@@ -1701,14 +1795,14 @@ class ScoringPipeline:
             crit = str(item.get("criticite", "MODÉRÉ")).strip().upper()
             if crit not in self._VALID_CRITICITE:
                 crit = "MODÉRÉ"
-            mitigation = str(item.get("mitigation", "") or "").strip()
+            mitigation = self._cap_words(str(item.get("mitigation", "") or "").strip())
             if not mitigation:
                 logger.warning("Risque sans mitigation : '%s' (garde-fou : conservé tel quel)", label[:60])
             affected = item.get("items_affected", [])
             affected = [str(a).strip() for a in affected if str(a).strip()] if isinstance(affected, list) else []
             risks.append(Risk(
                 label=label, criticite=crit,
-                pourquoi=str(item.get("pourquoi", "") or "").strip(),
+                pourquoi=self._cap_words(str(item.get("pourquoi", "") or "").strip()),
                 mitigation=mitigation, items_affected=affected,
             ))
         return risks
