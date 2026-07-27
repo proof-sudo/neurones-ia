@@ -112,6 +112,14 @@ class CRMRepository(ABC):
         (factures fournisseurs non synchronisées depuis Odoo)."""
 
     @abstractmethod
+    async def get_supplier_intelligence(self, limit: int = 20) -> list[dict]:
+        """5 indicateurs différenciants par fournisseur (crédit/consommation, cash
+        prévisionnel 30/60/90j, marge de sous-traitance par mission liée, fiabilité
+        de paiement réelle, risque de rupture proxy) — cf. LocalCRMAdapter pour le
+        détail du calcul. Nécessite les factures fournisseurs (supplier_invoices) et
+        le lien achat→dossier (purchase_orders.dossier_id), synchronisés depuis ce soir."""
+
+    @abstractmethod
     async def get_client_portfolio(self, limit: int = 50) -> list[dict]:
         """Portefeuille clients réel (table dossiers) : CA, backlog, reste à
         encaisser, nb dossiers, enrichi du secteur/contact quand disponibles."""

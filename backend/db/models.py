@@ -112,6 +112,58 @@ class PurchaseOrderModel(Base):
     currency: Mapped[str] = mapped_column(String(10), default="XOF")
     date_order: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     state: Mapped[str] = mapped_column(String(50), default="purchase")
+    # Lien vers le dossier commercial (neurones.dossier.manager, cf. DossierModel) — même
+    # champ que SaleOrderModel.dossier_id, disponible côté Odoo sur purchase.order aussi.
+    # Permet de relier une commande fournisseur à la marge RÉELLE de la mission qu'elle a
+    # servie (cf. get_supplier_intelligence dans local_crm_adapter.py).
+    dossier_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    synced_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class SupplierModel(Base):
+    """Miroir de res.partner (côté fournisseur, supplier_rank > 0) — distinct de
+    ClientModel qui ne couvre QUE les clients (customer_rank > 0, cf. get_all_clients).
+    Porte les infos indisponibles ailleurs : plafond de crédit et délai de paiement
+    négocié, nécessaires pour juger objectivement de notre exposition à ce fournisseur."""
+    __tablename__ = "suppliers"
+
+    supplier_id: Mapped[str] = mapped_column(String, primary_key=True)  # str(partner_id)
+    odoo_id: Mapped[int] = mapped_column(Integer, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), index=True)
+    credit_limit: Mapped[float | None] = mapped_column(Float, nullable=True)
+    use_partner_credit_limit: Mapped[bool] = mapped_column(Boolean, default=False)
+    payment_term_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    # Nombre de jours de la tranche la PLUS ÉLOIGNÉE du terme négocié (ex: "30% à 30j,
+    # 70% à 60j" → 60) : le pire cas de règlement complet, comparable à un retard réel.
+    payment_term_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    supplier_rank: Mapped[int] = mapped_column(Integer, default=0)
+    synced_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class SupplierInvoiceModel(Base):
+    """Factures FOURNISSEURS (account.move, move_type=in_invoice) — jamais synchronisées
+    avant ce soir (seules les factures clients out_invoice l'étaient, cf. InvoiceModel).
+    Table SÉPARÉE délibérément : de nombreuses requêtes existantes lisent `invoices` sans
+    filtrer par move_type (cf. get_unpaid_invoices, dashboards trésorerie) — y mélanger des
+    factures fournisseurs casserait ces calculs en silence. Payables et receivables sont
+    deux domaines distincts, gardés dans deux tables distinctes."""
+    __tablename__ = "supplier_invoices"
+
+    invoice_id: Mapped[str] = mapped_column(String, primary_key=True)
+    odoo_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    supplier_id: Mapped[str] = mapped_column(String, index=True)  # vendor partner_id
+    supplier_name: Mapped[str] = mapped_column(String(255), index=True)
+    amount: Mapped[float] = mapped_column(Float, default=0.0)
+    amount_residual: Mapped[float] = mapped_column(Float, default=0.0)  # reste dû
+    currency: Mapped[str] = mapped_column(String(10), default="XOF")
+    invoice_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    due_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
+    payment_state: Mapped[str] = mapped_column(String(50), default="not_paid")
+    # Date RÉELLE de règlement (account.payment via invoice_payments_widget, même
+    # mécanisme que InvoiceModel.payment_date côté clients) — permet de comparer le délai
+    # de paiement RÉEL au délai négocié (SupplierModel.payment_term_days), pas une
+    # heuristique sur les factures encore ouvertes.
+    payment_date: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     synced_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

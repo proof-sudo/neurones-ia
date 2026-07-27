@@ -4,7 +4,10 @@ from datetime import datetime
 
 from adapters.crm.odoo_adapter import OdooAdapter
 from db.database import AsyncSessionLocal
-from db.models import ClientModel, InvoiceModel, ProjectModel, SaleOrderModel, PurchaseOrderModel, OpportunityModel, DossierModel
+from db.models import (
+    ClientModel, InvoiceModel, ProjectModel, SaleOrderModel, PurchaseOrderModel,
+    OpportunityModel, DossierModel, SupplierModel, SupplierInvoiceModel,
+)
 from sqlalchemy import select, text
 from config.settings import settings
 
@@ -64,8 +67,10 @@ async def sync_records_by_id(model: str, odoo_ids: list[int]):
             await _sync_sale_orders_by_ids(odoo, odoo_ids)
         elif model == "account.move":
             await _sync_invoices_by_ids(odoo, odoo_ids)
+            await _sync_supplier_invoices_by_ids(odoo, odoo_ids)
         elif model == "res.partner":
             await _sync_clients_by_ids(odoo, odoo_ids)
+            await _sync_suppliers_by_ids(odoo, odoo_ids)
         elif model == "purchase.order":
             await _sync_purchase_orders_by_ids(odoo, odoo_ids)
         else:
@@ -238,7 +243,8 @@ async def _sync_purchase_orders_by_ids(odoo: OdooAdapter, ids: list[int]):
         records = await odoo._call(
             "purchase.order", "search_read",
             [[["id", "in", ids]]],
-            {"fields": ["id", "name", "partner_id", "amount_total", "currency_id", "date_order", "state"]},
+            {"fields": ["id", "name", "partner_id", "amount_total", "currency_id",
+                        "date_order", "state", "dossier_id"]},
         )
     except Exception as e:
         logger.warning("purchase.order webhook indisponible : %s", e)
@@ -250,10 +256,12 @@ async def _sync_purchase_orders_by_ids(odoo: OdooAdapter, ids: list[int]):
             date_order = _parse_date(po.get("date_order"))
             currency = _get_odoo_name(po.get("currency_id"), "XOF")
             amount_xof = _to_xof(float(po.get("amount_total", 0)), currency, rates)
+            dossier = _get_odoo_name(po.get("dossier_id")) or None
             existing = await session.get(PurchaseOrderModel, order_id)
             if existing:
                 existing.state = po.get("state", "purchase")
                 existing.amount = amount_xof
+                existing.dossier_id = dossier
                 existing.synced_at = datetime.utcnow()
             else:
                 session.add(PurchaseOrderModel(
@@ -265,9 +273,97 @@ async def _sync_purchase_orders_by_ids(odoo: OdooAdapter, ids: list[int]):
                     currency=currency,
                     date_order=date_order,
                     state=po.get("state", "purchase"),
+                    dossier_id=dossier,
                 ))
         await session.commit()
     logger.info("Webhook : %d achats mis à jour (montants en XOF)", len(records))
+
+
+async def _sync_suppliers_by_ids(odoo: OdooAdapter, ids: list[int]):
+    """Fournisseurs (res.partner, supplier_rank > 0 parmi les ids donnés). Un id peut être
+    un client pur (supplier_rank=0) — filtré ici, silencieusement absent du résultat."""
+    try:
+        records = await odoo._call(
+            "res.partner", "search_read",
+            [[["id", "in", ids], ["supplier_rank", ">", 0]]],
+            {"fields": ["id", "name", "credit_limit", "use_partner_credit_limit",
+                        "property_supplier_payment_term_id", "supplier_rank"]},
+        )
+    except Exception as e:
+        logger.warning("res.partner (fournisseurs) webhook indisponible : %s", e)
+        return
+    if not records:
+        return
+    terms = await odoo._get_payment_terms_days()
+    async with AsyncSessionLocal() as session:
+        for r in records:
+            supplier_id = str(r["id"])
+            term = r.get("property_supplier_payment_term_id") or None
+            term_id = term[0] if term else None
+            term_name = term[1] if term else None
+            term_days = terms.get(term_id) if term_id else None
+            existing = await session.get(SupplierModel, supplier_id)
+            if existing:
+                existing.name = r["name"]
+                existing.credit_limit = r.get("credit_limit")
+                existing.use_partner_credit_limit = bool(r.get("use_partner_credit_limit"))
+                existing.payment_term_name = term_name
+                existing.payment_term_days = term_days
+                existing.supplier_rank = r.get("supplier_rank", 0)
+                existing.synced_at = datetime.utcnow()
+            else:
+                session.add(SupplierModel(
+                    supplier_id=supplier_id, odoo_id=r["id"], name=r["name"],
+                    credit_limit=r.get("credit_limit"),
+                    use_partner_credit_limit=bool(r.get("use_partner_credit_limit")),
+                    payment_term_name=term_name, payment_term_days=term_days,
+                    supplier_rank=r.get("supplier_rank", 0),
+                ))
+        await session.commit()
+    logger.info("Webhook : %d fournisseurs mis à jour", len(records))
+
+
+async def _sync_supplier_invoices_by_ids(odoo: OdooAdapter, ids: list[int]):
+    """Factures fournisseurs (account.move, move_type=in_invoice parmi les ids donnés)."""
+    rates = await _get_xof_rates(odoo)
+    try:
+        records = await odoo._call(
+            "account.move", "search_read",
+            [[["id", "in", ids], ["move_type", "=", "in_invoice"]]],
+            {"fields": ["id", "name", "partner_id", "amount_total", "amount_residual",
+                        "currency_id", "invoice_date", "invoice_date_due", "payment_state"]},
+        )
+    except Exception as e:
+        logger.warning("account.move (factures fournisseurs) webhook indisponible : %s", e)
+        return
+    if not records:
+        return
+    async with AsyncSessionLocal() as session:
+        for r in records:
+            invoice_id = f"si_{r['id']}"
+            partner = r.get("partner_id") or [None, ""]
+            currency = _get_odoo_name(r.get("currency_id"), "XOF")
+            amount_xof = _to_xof(float(r.get("amount_total") or 0), currency, rates)
+            residual_xof = _to_xof(float(r.get("amount_residual") or 0), currency, rates)
+            invoice_date = _parse_date(r.get("invoice_date"))
+            due_date = _parse_date(r.get("invoice_date_due"))
+            existing = await session.get(SupplierInvoiceModel, invoice_id)
+            if existing:
+                existing.payment_state = r.get("payment_state", "not_paid")
+                existing.amount = amount_xof
+                existing.amount_residual = residual_xof
+                existing.synced_at = datetime.utcnow()
+            else:
+                session.add(SupplierInvoiceModel(
+                    invoice_id=invoice_id, odoo_id=r["id"],
+                    supplier_id=str(partner[0]) if partner[0] else "",
+                    supplier_name=_get_odoo_name(partner),
+                    amount=amount_xof, amount_residual=residual_xof, currency=currency,
+                    invoice_date=invoice_date, due_date=due_date,
+                    payment_state=r.get("payment_state", "not_paid"),
+                ))
+        await session.commit()
+    logger.info("Webhook : %d factures fournisseurs mises à jour", len(records))
 
 
 _DOSSIER_FIELDS = [
@@ -512,10 +608,12 @@ async def run_odoo_sync(force_full: bool = False):
                 date_order = _parse_date(po.get("date_order"))
                 currency = _get_odoo_name(po.get("currency_id"), "XOF")
                 amount_xof = _to_xof(float(po.get("amount_total", 0)), currency, rates)
+                dossier = _get_odoo_name(po.get("dossier_id")) or None
                 existing = await session.get(PurchaseOrderModel, order_id)
                 if existing:
                     existing.state = po.get("state", "purchase")
                     existing.amount = amount_xof
+                    existing.dossier_id = dossier
                     existing.synced_at = sync_start
                 else:
                     session.add(PurchaseOrderModel(
@@ -527,9 +625,86 @@ async def run_odoo_sync(force_full: bool = False):
                         currency=currency,
                         date_order=date_order,
                         state=po.get("state", "purchase"),
+                        dossier_id=dossier,
                     ))
                     new_po += 1
             await session.commit()
+
+        # ─── 4b. Fournisseurs (crédit, délai de paiement négocié) ────────────
+        suppliers = await odoo.get_all_suppliers(limit=5000, since=since)
+        async with AsyncSessionLocal() as session:
+            new_sup = 0
+            for s in suppliers:
+                supplier_id = str(s["id"])
+                existing = await session.get(SupplierModel, supplier_id)
+                if existing:
+                    existing.name = s["name"]
+                    existing.credit_limit = s.get("credit_limit")
+                    existing.use_partner_credit_limit = bool(s.get("use_partner_credit_limit"))
+                    existing.payment_term_name = s.get("payment_term_name")
+                    existing.payment_term_days = s.get("payment_term_days")
+                    existing.supplier_rank = s.get("supplier_rank", 0)
+                    existing.synced_at = sync_start
+                else:
+                    session.add(SupplierModel(
+                        supplier_id=supplier_id, odoo_id=s["id"], name=s["name"],
+                        credit_limit=s.get("credit_limit"),
+                        use_partner_credit_limit=bool(s.get("use_partner_credit_limit")),
+                        payment_term_name=s.get("payment_term_name"),
+                        payment_term_days=s.get("payment_term_days"),
+                        supplier_rank=s.get("supplier_rank", 0),
+                    ))
+                    new_sup += 1
+            await session.commit()
+
+        # ─── 4c. Factures fournisseurs (échéances réelles pour le cash prévisionnel) ──
+        supplier_invoices = await odoo.get_all_supplier_invoices(limit=5000, since=since)
+        async with AsyncSessionLocal() as session:
+            new_si = 0
+            for r in supplier_invoices:
+                invoice_id = f"si_{r['id']}"
+                partner = r.get("partner_id") or [None, ""]
+                currency = _get_odoo_name(r.get("currency_id"), "XOF")
+                amount_xof = _to_xof(float(r.get("amount_total") or 0), currency, rates)
+                residual_xof = _to_xof(float(r.get("amount_residual") or 0), currency, rates)
+                invoice_date = _parse_date(r.get("invoice_date"))
+                due_date = _parse_date(r.get("invoice_date_due"))
+                existing = await session.get(SupplierInvoiceModel, invoice_id)
+                if existing:
+                    existing.payment_state = r.get("payment_state", "not_paid")
+                    existing.amount = amount_xof
+                    existing.amount_residual = residual_xof
+                    existing.synced_at = sync_start
+                else:
+                    session.add(SupplierInvoiceModel(
+                        invoice_id=invoice_id, odoo_id=r["id"],
+                        supplier_id=str(partner[0]) if partner[0] else "",
+                        supplier_name=_get_odoo_name(partner),
+                        amount=amount_xof, amount_residual=residual_xof, currency=currency,
+                        invoice_date=invoice_date, due_date=due_date,
+                        payment_state=r.get("payment_state", "not_paid"),
+                    ))
+                    new_si += 1
+            await session.commit()
+
+        # ─── 4d. Dates de paiement réelles fournisseurs (account.payment) ────
+        try:
+            supplier_payment_dates = await odoo.get_supplier_payment_dates(since=since)
+            if supplier_payment_dates:
+                async with AsyncSessionLocal() as session:
+                    updated_spay = 0
+                    for odoo_id_str, pay_date in supplier_payment_dates.items():
+                        result = await session.execute(
+                            select(SupplierInvoiceModel).where(SupplierInvoiceModel.odoo_id == int(odoo_id_str))
+                        )
+                        si_row = result.scalar_one_or_none()
+                        if si_row and si_row.payment_date != pay_date:
+                            si_row.payment_date = pay_date
+                            updated_spay += 1
+                    await session.commit()
+                    logger.info("Dates de paiement fournisseurs mises à jour : %d factures", updated_spay)
+        except Exception as e:
+            logger.warning("Sync dates de paiement fournisseurs échouée (non bloquant) : %s", e)
 
         # ─── 5. Projets (sync complète uniquement) ────────────────────────────
         if since is None:
@@ -615,12 +790,16 @@ async def run_odoo_sync(force_full: bool = False):
             "invoices": len(invoices),
             "sale_orders": len(sale_orders),
             "purchase_orders": len(purchase_orders),
+            "suppliers": len(suppliers),
+            "supplier_invoices": len(supplier_invoices),
             "elapsed_seconds": round(elapsed, 2),
         }
-        if clients or invoices or sale_orders or purchase_orders:
+        if clients or invoices or sale_orders or purchase_orders or suppliers or supplier_invoices:
             logger.info(
-                "Sync terminée en %.1fs : %d clients, %d factures, %d BDC, %d achats",
+                "Sync terminée en %.1fs : %d clients, %d factures, %d BDC, %d achats, "
+                "%d fournisseurs, %d factures fournisseurs",
                 elapsed, len(clients), len(invoices), len(sale_orders), len(purchase_orders),
+                len(suppliers), len(supplier_invoices),
             )
         else:
             logger.debug("Sync terminée en %.1fs : aucune modification détectée", elapsed)

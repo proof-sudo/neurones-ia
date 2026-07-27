@@ -4,9 +4,9 @@ import { useMemo, useState, useTransition } from "react";
 import { AiChip } from "@/components/ui/AiChip";
 import { Panel, PanelHead } from "@/components/ui/Panel";
 import { Modal } from "@/components/ui/Modal";
-import { fmtM, fmtInt } from "@/lib/format";
+import { fmtM, fmtInt, fmtPct } from "@/lib/format";
 import { generatePartnersAnalysisAction } from "@/app/actions";
-import type { Supplier } from "@/lib/api/partners";
+import type { Supplier, SupplierIntelligence } from "@/lib/api/partners";
 
 function niveauPartenariat(montantTotalXof: number): { label: string; color: string } {
   const m = montantTotalXof / 1_000_000;
@@ -25,6 +25,12 @@ function risqueDependance(montantTotalXof: number, total: number): { label: stri
 function joursDepuisCommande(dateStr: string | null): number | null {
   if (!dateStr) return null;
   return Math.round((Date.now() - new Date(dateStr).getTime()) / 86_400_000);
+}
+
+function pctColor(pct: number, seuils: { warn: number; bad: number } = { warn: 60, bad: 85 }): string {
+  if (pct >= seuils.bad) return "var(--color-bad)";
+  if (pct >= seuils.warn) return "var(--color-warn)";
+  return "var(--color-good)";
 }
 
 function ancienneteLabel(dateStr: string | null): string {
@@ -60,11 +66,11 @@ export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
 
   return (
     <>
-      {/* <div className="mb-4 flex items-center justify-between gap-3">
+      <div className="mb-4 flex items-center justify-between gap-3">
         <p className="text-[11.5px] leading-relaxed text-muted">
-          Fournisseurs réels (purchase_orders, synchronisés depuis Odoo). Le type, la spécialité et
-          les certifications ne sont pas suivis dans les données actuelles — non affichés plutôt
-          qu&apos;inventés.
+          Fournisseurs réels (purchase_orders, synchronisés depuis Odoo), enrichis des indicateurs
+          crédit/cash/marge/paiement/rupture. Le type, la spécialité et les certifications ne sont
+          pas suivis dans les données actuelles — non affichés plutôt qu&apos;inventés.
         </p>
         <button
           onClick={genererAnalyse}
@@ -73,9 +79,9 @@ export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
         >
           🔮 Analyse IA fournisseurs
         </button>
-      </div> */}
+      </div>
 
-      {/* <Panel className="mb-4 border-l-[3px] border-l-ai">
+      <Panel className="mb-4 border-l-[3px] border-l-ai">
         <PanelHead title="Ce que l'IA voit dans les fournisseurs">
           <AiChip>analyse</AiChip>
         </PanelHead>
@@ -95,7 +101,7 @@ export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
             ))}
           </div>
         )}
-      </Panel> */}
+      </Panel>
 
       <div className="mb-3 flex justify-end">
         <input
@@ -151,6 +157,7 @@ export function PartnersLive({ suppliers }: { suppliers: Supplier[] }) {
                     {jours === null ? "—" : inactif ? `Inactif depuis ${jours} j` : `il y a ${jours} j`}
                   </b>
                 </div>
+                <SignauxIntelligence intelligence={s.intelligence} />
               </button>
             );
           })}
@@ -207,6 +214,8 @@ function SupplierModal({
                 />
               </div>
 
+              <IntelligenceDetail intelligence={supplier.intelligence} />
+
               <h4 className="mb-2 text-[12.5px] font-semibold text-text">Historique réel des commandes</h4>
               <table className="w-full border-collapse text-[12.5px]">
                 <thead>
@@ -232,6 +241,124 @@ function SupplierModal({
           );
         })()}
     </Modal>
+  );
+}
+
+/** Bandeau compact sur la carte — juste les signaux qui appellent une décision,
+ * pas les 5 indicateurs en entier (ça, c'est le rôle de la modale). */
+function SignauxIntelligence({ intelligence }: { intelligence?: SupplierIntelligence | null }) {
+  if (!intelligence) return null;
+  const badges: { label: string; color: string }[] = [];
+
+  if (intelligence.taux_consommation_credit_pct !== null) {
+    badges.push({
+      label: `Crédit ${intelligence.taux_consommation_credit_pct.toFixed(0)}%`,
+      color: pctColor(intelligence.taux_consommation_credit_pct),
+    });
+  }
+  if (intelligence.retard_moyen_jours !== null && intelligence.retard_moyen_jours > 0) {
+    badges.push({
+      label: `Retard réel ${intelligence.retard_moyen_jours.toFixed(0)} j`,
+      color: intelligence.retard_moyen_jours > 15 ? "var(--color-bad)" : "var(--color-warn)",
+    });
+  }
+  if (intelligence.dossiers_a_risque_fournisseur_unique > 0) {
+    badges.push({
+      label: `${intelligence.dossiers_a_risque_fournisseur_unique} dossier(s) à risque`,
+      color: "var(--color-bad)",
+    });
+  }
+  if (badges.length === 0) return null;
+
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5 border-t border-line pt-2">
+      {badges.map((b) => (
+        <span
+          key={b.label}
+          className="rounded-full px-2 py-0.5 text-[10.5px] font-medium text-white"
+          style={{ backgroundColor: b.color }}
+        >
+          {b.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/** Détail complet des 5 indicateurs différenciants, dans la modale fournisseur. */
+function IntelligenceDetail({ intelligence }: { intelligence?: SupplierIntelligence | null }) {
+  if (!intelligence) {
+    return (
+      <div className="mb-4 rounded-card border border-line bg-panel p-3 text-[12px] text-muted">
+        Intelligence fournisseur indisponible pour l&apos;instant — la synchro Odoo (factures
+        fournisseurs, fiche crédit) n&apos;a pas encore de données pour ce fournisseur.
+      </div>
+    );
+  }
+  const i = intelligence;
+  const cashTotal = i.cash_30j_xof + i.cash_60j_xof + i.cash_90j_xof + i.cash_plus_90j_xof;
+
+  return (
+    <>
+      <h4 className="mb-2 text-[12.5px] font-semibold text-text">
+        Intelligence fournisseur <span className="font-normal text-muted">— au-delà d&apos;Odoo</span>
+      </h4>
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Stat
+          k="Ligne de crédit"
+          v={i.credit_limit_xof ? fmtM(i.credit_limit_xof) : "non configurée"}
+        />
+        <Stat
+          k="Encours dû"
+          v={fmtM(i.encours_du_xof)}
+          color={i.taux_consommation_credit_pct !== null ? pctColor(i.taux_consommation_credit_pct) : undefined}
+        />
+        <Stat
+          k="Taux de consommation"
+          v={i.taux_consommation_credit_pct !== null ? fmtPct(i.taux_consommation_credit_pct) : "—"}
+          color={i.taux_consommation_credit_pct !== null ? pctColor(i.taux_consommation_credit_pct) : undefined}
+        />
+        <Stat
+          k="Délai négocié"
+          v={i.payment_term_name ?? "—"}
+        />
+      </div>
+
+      <h4 className="mb-2 text-[12.5px] font-semibold text-text">Cash prévisionnel (échéances réelles)</h4>
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Stat k="≤ 30 j" v={fmtM(i.cash_30j_xof)} />
+        <Stat k="31-60 j" v={fmtM(i.cash_60j_xof)} />
+        <Stat k="61-90 j" v={fmtM(i.cash_90j_xof)} />
+        <Stat k="> 90 j" v={fmtM(i.cash_plus_90j_xof)} />
+      </div>
+      {cashTotal === 0 && (
+        <p className="mb-4 -mt-2 text-[11.5px] text-muted">Aucune facture fournisseur ouverte actuellement.</p>
+      )}
+
+      <h4 className="mb-2 text-[12.5px] font-semibold text-text">Marge, fiabilité &amp; risque</h4>
+      <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <Stat
+          k="Marge sous-traitance"
+          v={i.nb_dossiers_lies > 0 ? `${fmtM(i.marge_sous_traitance_xof)} (${i.nb_dossiers_lies} dossier${i.nb_dossiers_lies > 1 ? "s" : ""})` : "aucun dossier lié"}
+        />
+        <Stat
+          k="Retard réel constaté"
+          v={i.retard_moyen_jours !== null ? `${i.retard_moyen_jours > 0 ? "+" : ""}${i.retard_moyen_jours.toFixed(0)} j` : "—"}
+          color={i.retard_moyen_jours !== null && i.retard_moyen_jours > 0 ? "var(--color-warn)" : undefined}
+        />
+        <Stat
+          k="Taux de dépendance (volume)"
+          v={fmtPct(i.taux_dependance_pct)}
+        />
+        <Stat
+          k="Risque de rupture"
+          v={i.dossiers_a_risque_fournisseur_unique > 0
+            ? `${i.dossiers_a_risque_fournisseur_unique} dossier(s) actif(s) à fournisseur unique`
+            : "aucun dossier actif à risque identifié"}
+          color={i.dossiers_a_risque_fournisseur_unique > 0 ? "var(--color-bad)" : "var(--color-good)"}
+        />
+      </div>
+    </>
   );
 }
 

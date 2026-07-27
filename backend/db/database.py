@@ -46,6 +46,7 @@ async def init_db():
         await conn.run_sync(_migrate_veille_entries)
         await conn.run_sync(_migrate_sale_orders)
         await conn.run_sync(_migrate_opportunities)
+        await conn.run_sync(_migrate_purchase_orders)
 
 
 # Colonnes IA S2I ajoutées après coup au Watch-Tracker. `create_all` ne modifie
@@ -117,6 +118,27 @@ def _migrate_opportunities(sync_conn):
                 f"ALTER TABLE opportunities ADD COLUMN {name} {ddl}"
             )
             logger.info("Migration opportunities : colonne '%s' ajoutée", name)
+
+
+# Lien commande fournisseur → dossier (purchase.order.dossier_id) — ajouté après coup
+# pour rattacher un achat à la marge réelle de la mission qu'il a servie (indicateur
+# "marge de sous-traitance", cf. get_supplier_intelligence dans local_crm_adapter.py).
+_PURCHASE_ORDER_NEW_COLUMNS = {
+    "dossier_id": "VARCHAR(255)",
+}
+
+
+def _migrate_purchase_orders(sync_conn):
+    inspector = inspect(sync_conn)
+    if "purchase_orders" not in inspector.get_table_names():
+        return
+    existing = {c["name"] for c in inspector.get_columns("purchase_orders")}
+    for name, ddl in _PURCHASE_ORDER_NEW_COLUMNS.items():
+        if name not in existing:
+            sync_conn.exec_driver_sql(
+                f"ALTER TABLE purchase_orders ADD COLUMN {name} {ddl}"
+            )
+            logger.info("Migration purchase_orders : colonne '%s' ajoutée", name)
 
 
 async def get_session() -> AsyncSession:

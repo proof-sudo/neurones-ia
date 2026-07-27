@@ -23,6 +23,14 @@ async def top_suppliers(request: Request, limit: int = Query(default=20, le=100)
     return await _crm(request).get_top_suppliers(limit=limit)
 
 
+@router.get("/intelligence")
+async def supplier_intelligence(request: Request, limit: int = Query(default=20, le=100)):
+    """5 indicateurs différenciants (crédit/conso, cash 30-60-90j, marge de
+    sous-traitance, fiabilité de paiement, risque de rupture) — cf.
+    LocalCRMAdapter.get_supplier_intelligence pour le détail du calcul."""
+    return await _crm(request).get_supplier_intelligence(limit=limit)
+
+
 @router.post("/analysis")
 async def partners_analysis(request: Request):
     """Analyse de concentration fournisseurs, rédigée par Claude à partir des
