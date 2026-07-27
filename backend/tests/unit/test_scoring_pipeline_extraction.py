@@ -27,7 +27,7 @@ class FakeLLM:
         self.calls = 0
         self.max_tokens_seen = []
 
-    async def extract(self, prompt, text, max_tokens=512, raise_on_truncation=False, temperature=None):
+    async def extract(self, prompt, text, max_tokens=512, raise_on_truncation=False, temperature=None, cacheable=False):
         self.max_tokens_seen.append(max_tokens)
         outcome = self._responses[min(self.calls, len(self._responses) - 1)]
         self.calls += 1
@@ -37,8 +37,8 @@ class FakeLLM:
             return ""
         return outcome
 
-    async def generate(self, system, user, max_tokens=1024, raise_on_truncation=False, temperature=None):
-        return await self.extract(system, user, max_tokens, raise_on_truncation, temperature)
+    async def generate(self, system, user, max_tokens=1024, raise_on_truncation=False, temperature=None, cacheable=False):
+        return await self.extract(system, user, max_tokens, raise_on_truncation, temperature, cacheable)
 
     def count_tokens(self, text: str) -> int:
         return len(text) // 4  # estimation grossière, suffisante pour ces tests
@@ -96,6 +96,29 @@ def test_step1_extract_vide_honnetement_si_json_toujours_malforme():
 
     assert llm.calls == 2
     assert extra["besoins"] == []
+
+
+def test_step1_extract_multi_chunk_fusionne_et_deduplique(monkeypatch):
+    # AO dense (SIB 97p, BHCI...) : un seul appel JSON n'y suffit pas (trop de besoins/
+    # critères pour tenir dans le plafond de sortie, même élargi). Map-reduce : découpe en
+    # chunks, extraction en parallèle, fusion en dédupliquant les items qui ressortent dans
+    # le recouvrement entre deux chunks. Seuils de chunking abaissés ici pour forcer le
+    # découpage sans dépendre d'un vrai texte de dizaines de milliers de caractères.
+    import modules.uc10_presales.scoring_pipeline as sp
+    monkeypatch.setattr(sp, "_EXTRACT_CHUNK_SIZE_TOKENS", 5)
+    monkeypatch.setattr(sp, "_EXTRACT_CHUNK_OVERLAP_TOKENS", 0)
+
+    chunk1 = '{"key_points": [], "besoins": [{"texte": "Besoin A", "source_section": "1"}], "date_remise": "2026-01-01"}'
+    chunk2 = '{"key_points": [], "besoins": [{"texte": "Besoin A", "source_section": "1"}, {"texte": "Besoin B", "source_section": "2"}]}'
+    llm = FakeLLM([chunk1, chunk2])
+    pipeline = _pipeline(llm)
+
+    elements, extra = asyncio.run(pipeline._step1_extract("x" * 30))
+
+    assert llm.calls == 2  # exactement 2 chunks avec ce découpage
+    texts = {b.texte for b in extra["besoins"]}
+    assert texts == {"Besoin A", "Besoin B"}  # "Besoin A" dédupliqué malgré 2 occurrences
+    assert extra["date_remise"] == "2026-01-01"  # premier date_remise non vide conservé
 
 
 def test_frame_grille_degeneree_retombe_sur_grille_standard(monkeypatch):

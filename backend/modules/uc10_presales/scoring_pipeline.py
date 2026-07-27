@@ -96,6 +96,18 @@ _REQUIREMENTS_OUTPUT_BUDGET_TOKENS = 16_000
 _EXTRACT_OUTPUT_BUDGET_TOKENS = 8_000
 _EXTRACT_OUTPUT_RETRY_TOKENS = 12_000
 
+# step1.extract en MAP-REDUCE : sur un AO vraiment dense (SIB 97p, BHCI...), même le retry
+# à budget de SORTIE élargi (12000) ne suffisait pas — l'AO contient tout simplement TROP
+# de besoins/critères/annexes pour tenir dans une seule réponse JSON, qui ressortait
+# tronquée ou malformée à chaque tentative (observé en prod : besoins=0/criteres=0 malgré
+# le retry). Découper l'AO en chunks et extraire chaque chunk EN PARALLÈLE réduit le volume
+# de sortie PAR APPEL (un chunk a mécaniquement moins d'exigences que l'AO entier → moins
+# de risque de dépasser le plafond) sans alourdir la latence (les chunks tournent
+# concurremment, pas séquentiellement). Sous ce seuil, l'AO tient dans un seul chunk :
+# comportement strictement identique à avant (aucun coût/latence ajouté au cas courant).
+_EXTRACT_CHUNK_SIZE_TOKENS = 20_000
+_EXTRACT_CHUNK_OVERLAP_TOKENS = 500
+
 _EXTRACT_SYSTEM = """Tu es un extracteur d'appels d'offres IT. Ton rôle est d'EXTRAIRE, pas de RÉSUMER.
 
 OBJECTIF : restituer chaque exigence avec son niveau de détail D'ORIGINE. La valeur métier est
@@ -398,6 +410,32 @@ def _truncate_by_tokens(text: str, llm: LLMGateway, max_tokens: int, *, step: st
     return text[:cut]
 
 
+def _split_into_chunks(text: str, llm: LLMGateway, chunk_tokens: int, overlap_tokens: int) -> list[str]:
+    """Découpe `text` en chunks d'environ `chunk_tokens` tokens, avec un recouvrement de
+    `overlap_tokens` entre deux chunks consécutifs (limite le risque de couper une exigence
+    pile à la frontière). Renvoie `[text]` (un seul chunk) si le texte tient déjà dans
+    `chunk_tokens` — pas de découpage inutile pour un AO de taille normale.
+
+    Ratio caractères/token dérivé du texte entier (même approximation que
+    `_truncate_by_tokens` — suffisant pour dimensionner des chunks, pas un décompte exact).
+    """
+    total_tokens = llm.count_tokens(text)
+    if total_tokens <= chunk_tokens:
+        return [text]
+    ratio = len(text) / total_tokens
+    chunk_chars = max(1, int(chunk_tokens * ratio))
+    overlap_chars = max(0, int(overlap_tokens * ratio))
+    chunks: list[str] = []
+    start = 0
+    while start < len(text):
+        end = min(len(text), start + chunk_chars)
+        chunks.append(text[start:end])
+        if end >= len(text):
+            break
+        start = end - overlap_chars
+    return chunks
+
+
 _TRAILING_COMMA_RE = re.compile(r",(\s*[}\]])")
 
 
@@ -470,8 +508,13 @@ class ScoringPipeline:
         with timer(label):
             return await coro
 
-    async def run(self, ao_filename: str, ao_text: str) -> ScoringResult:
+    async def run(self, ao_filename: str, ao_text: str, on_progress=None) -> ScoringResult:
+        """`on_progress` (optionnel) : callback async `async def(step: str) -> None`, appelé
+        à chaque grande étape du pipeline (cf. `PresalesUseCase.score_ao`)."""
         logger.info("Pipeline scoring démarré pour : %s", ao_filename)
+
+        if on_progress is not None:
+            await on_progress("Analyse du contenu (besoins, critères, calendrier)")
 
         # Étapes 1 + 1b-cadre + 1b-exigences + 2 en parallèle (indépendantes, même input).
         # 1b scindée : le cadre (identité/calendrier/grille) et les exigences chiffrées
@@ -506,6 +549,9 @@ class ScoringPipeline:
             len(seuils_eligibilite),
             len(appendices),
         )
+
+        if on_progress is not None:
+            await on_progress("Recherche des CV et références similaires")
 
         # Étape 3a + 3b en parallèle (CVs et projets similaires indépendants)
         # 3a : une recherche CV PAR profil (données riches de l'étape 1b : compétences +
@@ -593,6 +639,8 @@ class ScoringPipeline:
         if project_context:
             rag_parts.append("### Projets & offres similaires (GED)\n" + project_context)
         rag_context = "\n\n".join(rag_parts)
+        if on_progress is not None:
+            await on_progress("Notation et recommandation finale")
         analysis = await self._timed("step4.analyze", self._step4_analyze(
             ao_text=ao_text,
             summary=summary,
@@ -759,11 +807,69 @@ class ScoringPipeline:
         return kept
 
     async def _step1_extract(self, ao_text: str) -> tuple[list[KeyElement], dict]:
-        snippet = _truncate_by_tokens(ao_text, self._llm, _EXTRACT_INPUT_BUDGET_TOKENS, step="extract")
+        """Extrait besoins/critères/prérequis/ressources/vigilance — en MAP-REDUCE sur les
+        AO denses (cf. `_EXTRACT_CHUNK_SIZE_TOKENS`) : un AO de taille normale tient dans un
+        seul chunk (comportement identique à avant) ; un AO volumineux est découpé, chaque
+        chunk extrait EN PARALLÈLE, puis les résultats fusionnés (cf. `_merge_step1_chunks`).
+        """
         empty_extra: dict = {
             "criteres_selection": [], "besoins": [], "prerequis": [],
             "ressources_demandees": [], "points_vigilance": [], "date_remise": "",
         }
+        chunks = _split_into_chunks(ao_text, self._llm, _EXTRACT_CHUNK_SIZE_TOKENS, _EXTRACT_CHUNK_OVERLAP_TOKENS)
+        if len(chunks) > 1:
+            logger.info(
+                "step1.extract : AO découpé en %d chunks (map-reduce, %d tokens au total).",
+                len(chunks), self._llm.count_tokens(ao_text),
+            )
+        results = await asyncio.gather(*(self._extract_step1_chunk(c) for c in chunks))
+        datas = [d for d in results if d is not None]
+        if not datas:
+            return [], empty_extra
+        return self._merge_step1_chunks(datas)
+
+    async def _extract_step1_chunk(self, snippet: str) -> dict | None:
+        """Extrait le JSON step1 sur UN chunk (voir `_step1_extract`). Retry à budget de
+        sortie élargi sur troncature (cf. `_EXTRACT_OUTPUT_RETRY_TOKENS`) — couvre aussi le
+        JSON complet mais mal formé (ex. "Expecting ',' delimiter" observé en prod sur un AO
+        dense) : ce n'est pas une troncature, mais un nouvel essai à budget plus large reste
+        la seule option avant de renoncer honnêtement sur ce chunk — on n'invente jamais le
+        contenu manquant."""
+        snippet = _truncate_by_tokens(snippet, self._llm, _EXTRACT_INPUT_BUDGET_TOKENS, step="extract")
+        for budget in (_EXTRACT_OUTPUT_BUDGET_TOKENS, _EXTRACT_OUTPUT_RETRY_TOKENS):
+            is_last = budget >= _EXTRACT_OUTPUT_RETRY_TOKENS
+            try:
+                # cacheable=True : le retry (budget élargi) renvoie EXACTEMENT le même
+                # system+snippet — cache Anthropic garanti sur la 2e tentative (cf.
+                # LLMGateway.generate/extract pour le compromis coût).
+                raw = await self._llm.extract(
+                    prompt=_EXTRACT_SYSTEM, text=snippet, max_tokens=budget,
+                    raise_on_truncation=True, temperature=_TEMP_DETERMINISTIC, cacheable=True,
+                )
+            except OutputTruncatedError:
+                logger.warning(
+                    "step1.extract tronqué au plafond de %d tokens — %s.",
+                    budget, "abandon du chunk" if is_last else "retry à budget élargi",
+                )
+                continue
+            try:
+                return json.loads(_clean_json(raw))
+            except (json.JSONDecodeError, ValueError) as exc:
+                dump_path = _dump_failure(raw, exc, "extract")
+                logger.warning(
+                    "Extraction JSON échouée (%s) au plafond de %d tokens — %s. "
+                    "Réponse complète sauvée dans %s. Aperçu (2000 chars) :\n%s",
+                    exc, budget, "abandon du chunk" if is_last else "retry à budget élargi",
+                    dump_path, raw[:2000],
+                )
+                continue
+        return None
+
+    @staticmethod
+    def _merge_step1_chunks(datas: list[dict]) -> tuple[list[KeyElement], dict]:
+        """Fusionne les résultats step1 de plusieurs chunks (map-reduce) : concatène les
+        listes en dédupliquant par texte normalisé (le recouvrement entre chunks peut faire
+        ressortir la même exigence deux fois), garde le premier `date_remise` non vide."""
 
         def _items(d: dict, key: str) -> list[ExtractedItem]:
             """Parse une liste d'exigences en ExtractedItem. Tolère le nouveau format
@@ -779,63 +885,40 @@ class ScoringPipeline:
                     out.append(item)
             return out
 
-        # Sur un AO dense (ex. 97 pages, tableaux nombreux), le plafond de base peut tronquer
-        # le JSON en plein milieu — perdant TOUS les besoins/critères/prérequis de l'AO en
-        # silence si on ne fait rien. Retry à budget élargi (même patron que le résumé
-        # exécutif) avant d'accepter une extraction vide. Le retry couvre aussi le JSON
-        # COMPLET mais mal formé (ex. "Expecting ',' delimiter" observé en prod sur un AO
-        # dense) : ce n'est pas une troncature, mais un nouvel essai (budget plus large)
-        # reste la seule option avant de renoncer honnêtement — on n'invente jamais le
-        # contenu manquant.
-        data: dict | None = None
-        for budget in (_EXTRACT_OUTPUT_BUDGET_TOKENS, _EXTRACT_OUTPUT_RETRY_TOKENS):
-            is_last = budget >= _EXTRACT_OUTPUT_RETRY_TOKENS
-            try:
-                raw = await self._llm.extract(
-                    prompt=_EXTRACT_SYSTEM, text=snippet, max_tokens=budget,
-                    raise_on_truncation=True, temperature=_TEMP_DETERMINISTIC,
-                )
-            except OutputTruncatedError:
-                logger.warning(
-                    "step1.extract tronqué au plafond de %d tokens — %s.",
-                    budget, "abandon, extraction vide (AO hors norme)" if is_last else "retry à budget élargi",
-                )
-                continue
-            try:
-                data = json.loads(_clean_json(raw))
-                break
-            except (json.JSONDecodeError, ValueError) as exc:
-                dump_path = _dump_failure(raw, exc, "extract")
-                logger.warning(
-                    "Extraction JSON échouée (%s) au plafond de %d tokens — %s. "
-                    "Réponse complète sauvée dans %s. Aperçu (2000 chars) :\n%s",
-                    exc, budget, "abandon, extraction vide (AO hors norme)" if is_last else "retry à budget élargi",
-                    dump_path, raw[:2000],
-                )
-                continue
+        def _dedupe(items: list[ExtractedItem]) -> list[ExtractedItem]:
+            seen: set[str] = set()
+            out: list[ExtractedItem] = []
+            for it in items:
+                key = re.sub(r"\s+", " ", it.texte.strip().lower())
+                if key not in seen:
+                    seen.add(key)
+                    out.append(it)
+            return out
 
-        if data is None:
-            return [], empty_extra
-
-        # key_points : liste libre [{label, value}] fournie par l'IA
+        list_keys = ("criteres_selection", "besoins", "prerequis", "ressources_demandees", "points_vigilance")
         elements: list[KeyElement] = []
-        raw_kp = data.get("key_points", [])
-        if isinstance(raw_kp, list):
-            for kp in raw_kp:
-                if isinstance(kp, dict):
-                    label = str(kp.get("label", "")).strip()
-                    value = str(kp.get("value", "")).strip()
-                    if label and value:
-                        elements.append(KeyElement(category=label, value=value))
+        seen_labels: set[str] = set()
+        extra: dict = {key: [] for key in list_keys}
+        extra["date_remise"] = ""
 
-        extra = {
-            "criteres_selection": _items(data, "criteres_selection"),
-            "besoins": _items(data, "besoins"),
-            "prerequis": _items(data, "prerequis"),
-            "ressources_demandees": _items(data, "ressources_demandees"),
-            "points_vigilance": _items(data, "points_vigilance"),
-            "date_remise": str(data.get("date_remise", "")).strip(),
-        }
+        for data in datas:
+            raw_kp = data.get("key_points", [])
+            if isinstance(raw_kp, list):
+                for kp in raw_kp:
+                    if isinstance(kp, dict):
+                        label = str(kp.get("label", "")).strip()
+                        value = str(kp.get("value", "")).strip()
+                        if label and value and label.lower() not in seen_labels:
+                            seen_labels.add(label.lower())
+                            elements.append(KeyElement(category=label, value=value))
+            for key in list_keys:
+                extra[key].extend(_items(data, key))
+            if not extra["date_remise"]:
+                extra["date_remise"] = str(data.get("date_remise", "")).strip()
+
+        for key in list_keys:
+            extra[key] = _dedupe(extra[key])
+
         return elements, extra
 
     async def _step1b_extract_frame(
@@ -850,10 +933,12 @@ class ScoringPipeline:
         """
         snippet = _truncate_by_tokens(ao_text, self._llm, _EXTRACT_INPUT_BUDGET_TOKENS, step="frame")
         try:
+            # cacheable=True : gagne sur une ré-analyse forcée du même AO dans les 5 min
+            # (cf. LLMGateway.generate/extract) — aucune retry interne à cette étape.
             raw = await self._llm.extract(
                 prompt=_FRAME_SYSTEM, text=snippet,
                 max_tokens=_FRAME_OUTPUT_BUDGET_TOKENS, raise_on_truncation=True,
-                temperature=_TEMP_DETERMINISTIC,
+                temperature=_TEMP_DETERMINISTIC, cacheable=True,
             )
             data = json.loads(_clean_json(raw))
         except OutputTruncatedError as exc:
@@ -919,10 +1004,11 @@ class ScoringPipeline:
         """
         snippet = _truncate_by_tokens(ao_text, self._llm, _EXTRACT_INPUT_BUDGET_TOKENS, step="requirements")
         try:
+            # cacheable=True : cf. _step1b_extract_frame ci-dessus (même snippet, même raison).
             raw = await self._llm.extract(
                 prompt=_REQUIREMENTS_SYSTEM, text=snippet,
                 max_tokens=_REQUIREMENTS_OUTPUT_BUDGET_TOKENS, raise_on_truncation=True,
-                temperature=_TEMP_DETERMINISTIC,
+                temperature=_TEMP_DETERMINISTIC, cacheable=True,
             )
             data = json.loads(_clean_json(raw))
         except OutputTruncatedError as exc:
@@ -1260,12 +1346,14 @@ class ScoringPipeline:
         partial = ""
         for budget in (_SUMMARY_OUTPUT_BUDGET_TOKENS, _SUMMARY_OUTPUT_RETRY_TOKENS):
             try:
+                # cacheable=True : cf. step1.extract — même snippet renvoyé tel quel au retry.
                 return await self._llm.generate(
                     system=_SUMMARY_SYSTEM,
                     user=snippet,
                     max_tokens=budget,
                     raise_on_truncation=True,
                     temperature=_TEMP_DETERMINISTIC,
+                    cacheable=True,
                 )
             except OutputTruncatedError as exc:
                 partial = exc.partial_text
@@ -1309,12 +1397,17 @@ class ScoringPipeline:
         # JSON tronqué qui retombe en silence sur un faux score=50.
         truncated = False
         try:
+            # cacheable=True : gagne sur une ré-analyse forcée du même AO (résumé/grille/RAG
+            # déterministes à temp=0, donc souvent identiques d'une ré-analyse à l'autre) —
+            # plus faible garantie que sur un retry interne (pas de retry ici), mais aucun
+            # coût si le contenu diffère (simple écriture cache, pas de lecture).
             raw = await self._llm_analysis.generate(
                 system=_ANALYSIS_SYSTEM,
                 user=user_prompt,
                 max_tokens=_ANALYZE_OUTPUT_BUDGET_TOKENS,
                 raise_on_truncation=True,
                 temperature=_TEMP_DETERMINISTIC,
+                cacheable=True,
             )
         except OutputTruncatedError as exc:
             truncated = True

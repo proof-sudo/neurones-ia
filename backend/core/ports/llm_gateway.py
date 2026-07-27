@@ -34,6 +34,7 @@ class LLMGateway(ABC):
     async def generate(
         self, system: str, user: str, max_tokens: int = 1024,
         raise_on_truncation: bool = False, temperature: float | None = None,
+        cacheable: bool = False,
     ) -> str:
         """Génère une réponse complète.
 
@@ -43,7 +44,13 @@ class LLMGateway(ABC):
 
         `temperature` : None = défaut du fournisseur. 0 = quasi-déterministe (extraction,
         notation reproductibles) ; ~0.7 pour la rédaction créative (stratégie, offre).
-        """
+
+        `cacheable` : marque `user` comme point de coupure de prompt caching (Anthropic
+        uniquement — no-op ailleurs). À réserver aux appels où le MÊME `user` (identique
+        au caractère près) sera renvoyé à nouveau dans les ~5 minutes qui suivent — un
+        retry sur troncature (même contenu, budget de sortie élargi) ou une ré-analyse
+        forcée du même document. Sans réutilisation réelle, ça ajoute un surcoût d'écriture
+        (+25%) pour rien : ne pas l'activer par défaut sur tous les appels."""
 
     @abstractmethod
     async def stream(self, system: str, user: str, max_tokens: int = 1024) -> AsyncIterator[str]:
@@ -53,11 +60,13 @@ class LLMGateway(ABC):
     async def extract(
         self, prompt: str, text: str, max_tokens: int = 512,
         raise_on_truncation: bool = False, temperature: float | None = None,
+        cacheable: bool = False,
     ) -> str:
         """Extrait des informations structurées d'un texte.
 
         `raise_on_truncation` : cf. `generate` (lève `OutputTruncatedError` si coupé).
         `temperature` : cf. `generate` (None = défaut fournisseur).
+        `cacheable` : cf. `generate` — marque `text` comme point de coupure de cache.
         """
 
     @abstractmethod

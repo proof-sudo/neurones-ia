@@ -29,12 +29,23 @@ class ClaudeHaikuAdapter(LLMGateway):
     async def generate(
         self, system: str, user: str, max_tokens: int = 1024,
         raise_on_truncation: bool = False, temperature: float | None = None,
+        cacheable: bool = False,
     ) -> str:
+        # `cacheable=True` : `user` (souvent le plus gros bloc — l'AO entier ou un chunk)
+        # devient lui aussi un point de coupure de prompt caching, en plus du system prompt
+        # déjà caché. Utile sur un retry (même contenu renvoyé avec un budget de sortie
+        # élargi) ou une ré-analyse forcée du même document dans les 5 minutes — le second
+        # appel relit alors TOUT l'input (system + user) au tarif cache (~10% du prix), au
+        # lieu de repayer le plein tarif à chaque tentative. cf. LLMGateway.generate.
+        user_content = (
+            [{"type": "text", "text": user, "cache_control": _SYSTEM_CACHE_CONTROL}]
+            if cacheable else user
+        )
         kwargs = dict(
             model=self._model,
             max_tokens=max_tokens,
             system=[{"type": "text", "text": system, "cache_control": _SYSTEM_CACHE_CONTROL}],
-            messages=[{"role": "user", "content": user}],
+            messages=[{"role": "user", "content": user_content}],
         )
         if temperature is not None:
             kwargs["temperature"] = temperature
@@ -65,10 +76,12 @@ class ClaudeHaikuAdapter(LLMGateway):
     async def extract(
         self, prompt: str, text: str, max_tokens: int = 512,
         raise_on_truncation: bool = False, temperature: float | None = None,
+        cacheable: bool = False,
     ) -> str:
         return await self.generate(
             system=prompt, user=text, max_tokens=max_tokens,
             raise_on_truncation=raise_on_truncation, temperature=temperature,
+            cacheable=cacheable,
         )
 
     async def generate_with_images(

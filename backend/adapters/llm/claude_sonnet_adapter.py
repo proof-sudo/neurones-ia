@@ -27,12 +27,18 @@ class ClaudeSonnetAdapter(LLMGateway):
     async def generate(
         self, system: str, user: str, max_tokens: int = 4096,
         raise_on_truncation: bool = False, temperature: float | None = None,
+        cacheable: bool = False,
     ) -> str:
+        # cf. ClaudeHaikuAdapter.generate — même logique de coupure de cache sur `user`.
+        user_content = (
+            [{"type": "text", "text": user, "cache_control": _SYSTEM_CACHE_CONTROL}]
+            if cacheable else user
+        )
         kwargs = dict(
             model=self._model,
             max_tokens=max_tokens,
             system=[{"type": "text", "text": system, "cache_control": _SYSTEM_CACHE_CONTROL}],
-            messages=[{"role": "user", "content": user}],
+            messages=[{"role": "user", "content": user_content}],
         )
         if temperature is not None:
             kwargs["temperature"] = temperature
@@ -61,10 +67,12 @@ class ClaudeSonnetAdapter(LLMGateway):
     async def extract(
         self, prompt: str, text: str, max_tokens: int = 1024,
         raise_on_truncation: bool = False, temperature: float | None = None,
+        cacheable: bool = False,
     ) -> str:
         return await self.generate(
             system=prompt, user=text, max_tokens=max_tokens,
             raise_on_truncation=raise_on_truncation, temperature=temperature,
+            cacheable=cacheable,
         )
 
     async def classify(self, text: str, categories: list[str], default: str | None = None) -> str:

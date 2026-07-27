@@ -334,7 +334,9 @@ export async function getDossier(dossierId: string): Promise<Record<string, unkn
  * Remplace l'ancien appel qui attendait ~2 min la réponse streamée : Next.js la bufferisait
  * et le frontal Traefik coupait vers ~100s → 504. Plus aucune requête longue = plus de 504.
  */
-export async function analyzeDossier(dossierId: string, force = false): Promise<ScoringResult> {
+export async function analyzeDossier(
+  dossierId: string, force = false, onProgress?: (step: string | undefined) => void,
+): Promise<ScoringResult> {
   // 1) Déclenchement (202 attendu).
   const url = `${API_BASE}/presales/dossiers/${dossierId}/analyze${force ? "?force=true" : ""}`;
   let kick: Response;
@@ -366,6 +368,7 @@ export async function analyzeDossier(dossierId: string, force = false): Promise<
       continue; // aléa réseau transitoire : on retente au prochain tick
     }
     const status = dossier.status as string | undefined;
+    onProgress?.(dossier.currentStep as string | undefined);
     if (status === "scored" && dossier.scoringResult) {
       return dossier.scoringResult as ScoringResult;
     }
