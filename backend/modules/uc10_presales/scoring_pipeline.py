@@ -89,12 +89,21 @@ _CONDITIONAL_MIN_SCORE = 35
 _FRAME_OUTPUT_BUDGET_TOKENS = 6_000
 _REQUIREMENTS_OUTPUT_BUDGET_TOKENS = 16_000
 
-# step1.extract (besoins/critères/prérequis/ressources/vigilance) : 8000 de base, mais un
-# AO dense (97 pages, ex. SIB CCTP) a tronqué à ce plafond (JSON invalide, tout perdu en
-# silence). Retry unique à budget élargi — même patron que le résumé exécutif ci-dessus :
-# mieux vaut un aller-retour de plus que perdre les besoins/critères d'un AO réel.
-_EXTRACT_OUTPUT_BUDGET_TOKENS = 8_000
-_EXTRACT_OUTPUT_RETRY_TOKENS = 12_000
+# step1.extract (besoins/critères/prérequis/ressources/vigilance) : le retry (8000→12000)
+# a un coût de LATENCE réel — observé en prod (SIB) : chaque partie tronquée refait un
+# aller-retour LLM COMPLET et SÉQUENTIEL avant de retenter, ce qui a dominé la durée de
+# step1.extract (~180s) même après le split par schéma (cf. _EXTRACT_CHUNK_SIZE_TOKENS
+# ci-dessous). Or `max_tokens` est un PLAFOND, pas un forfait : une réponse qui se termine
+# naturellement à 4000 tokens ne coûte NI plus de temps NI plus cher si le plafond demandé
+# est 16000 plutôt que 8000 (le modèle s'arrête à la fin du JSON, pas au plafond) — donc
+# partir directement d'un plafond large élimine l'aller-retour de retry dans le cas courant,
+# SANS pénaliser les chunks légers. 20000 est déjà validé en prod sans erreur API sur step4
+# (cf. _ANALYZE_OUTPUT_BUDGET_TOKENS et test_step4_output_budget.py) : on vise donc large dès
+# le premier essai (16000) avec un filet de sécurité au-dessus (24000) pour le chunk le plus
+# dense, plutôt que le patron "petit d'abord, élargir ensuite" hérité du résumé exécutif
+# (où ce compromis a du sens : un SEUL appel, pas des dizaines par AO en map-reduce).
+_EXTRACT_OUTPUT_BUDGET_TOKENS = 16_000
+_EXTRACT_OUTPUT_RETRY_TOKENS = 24_000
 
 # step1.extract en MAP-REDUCE : sur un AO vraiment dense (SIB 97p, BHCI, LONACI...), même
 # le retry à budget de SORTIE élargi (12000) ne suffisait pas — l'AO contient tout
