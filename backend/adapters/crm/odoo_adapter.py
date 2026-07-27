@@ -372,6 +372,44 @@ class OdooAdapter(CRMRepository):
         logger.info("Dates de paiement récupérées : %d factures payées", len(result))
         return result
 
+    async def get_supplier_payment_dates(self, since: datetime | None = None) -> dict[str, datetime]:
+        """Symétrique de get_payment_dates côté FOURNISSEURS (in_invoice) — même mécanisme
+        invoice_payments_widget. Nécessaire pour comparer le délai de paiement RÉEL au
+        délai négocié (SupplierModel.payment_term_days), pas juste constater qu'une
+        facture est actuellement en retard."""
+        domain: list = [["move_type", "=", "in_invoice"], ["payment_state", "in", ["paid", "in_payment", "partial"]]]
+        if since:
+            domain.append(["write_date", ">=", since.strftime("%Y-%m-%d")])
+        try:
+            invoices = await self._call(
+                "account.move", "search_read", [domain],
+                {"fields": ["id", "invoice_payments_widget"], "limit": 10000},
+            )
+        except Exception as e:
+            logger.warning("Impossible de récupérer invoice_payments_widget (fournisseurs) : %s", e)
+            return {}
+
+        result: dict[str, datetime] = {}
+        for inv in invoices:
+            widget = inv.get("invoice_payments_widget")
+            if not widget or isinstance(widget, bool):
+                continue
+            content = widget.get("content") if isinstance(widget, dict) else []
+            for entry in (content or []):
+                date_raw = entry.get("date")
+                if not date_raw:
+                    continue
+                try:
+                    pay_date = datetime.strptime(str(date_raw)[:10], "%Y-%m-%d")
+                except ValueError:
+                    continue
+                inv_key = str(inv["id"])
+                if inv_key not in result or pay_date > result[inv_key]:
+                    result[inv_key] = pay_date
+
+        logger.info("Dates de paiement fournisseurs récupérées : %d factures payées", len(result))
+        return result
+
     async def get_order_lines_by_ids(self, order_ids: list[int]) -> dict[int, list]:
         """Retourne {odoo_order_id: [{product, product_code, product_category, qty, subtotal, unit_price}]}."""
         if not order_ids:
@@ -472,15 +510,109 @@ class OdooAdapter(CRMRepository):
         domain = [["state", "in", ["purchase", "done"]]]
         if since:
             domain.append(["write_date", ">=", since.strftime("%Y-%m-%d %H:%M:%S")])
+        # dossier_id relie l'achat à la marge RÉELLE de la mission qu'il a servie (cf.
+        # SupplierModel/get_supplier_intelligence) — même patron défensif que sale.order
+        # ci-dessus : le champ existe en prod (vérifié via fields_get), mais on retombe
+        # sans lui plutôt que de casser toute la synchro achats si jamais absent ailleurs.
+        fields_with_dossier = ["id", "name", "partner_id", "amount_total", "currency_id",
+                               "date_order", "state", "dossier_id"]
+        fields_without_dossier = ["id", "name", "partner_id", "amount_total", "currency_id",
+                                  "date_order", "state"]
         try:
-            records = await self._call(
+            return await self._call(
                 "purchase.order", "search_read", [domain],
-                {"fields": ["id", "name", "partner_id", "amount_total", "currency_id", "date_order", "state"],
-                 "limit": limit, "order": "date_order desc"},
+                {"fields": fields_with_dossier, "limit": limit, "order": "date_order desc"},
             )
-            return records
+        except RuntimeError as e:
+            if "dossier_id" in str(e):
+                logger.warning("Champ dossier_id absent sur purchase.order — sync sans ce champ : %s", e)
+                return await self._call(
+                    "purchase.order", "search_read", [domain],
+                    {"fields": fields_without_dossier, "limit": limit, "order": "date_order desc"},
+                )
+            logger.warning("purchase.order non disponible : %s", e)
+            return []
         except Exception as e:
             logger.warning("purchase.order non disponible : %s", e)
+            return []
+
+    # ─── Fournisseurs (res.partner, supplier_rank > 0) ────────────────────────
+
+    async def get_all_suppliers(self, limit: int = 2000, since: datetime | None = None) -> list[dict]:
+        """Fournisseurs réels — plafond de crédit et délai de paiement négocié, jamais
+        synchronisés avant ce soir (cf. SupplierModel). Distinct de get_all_clients qui
+        filtre sur customer_rank : un partner peut être fournisseur sans être client."""
+        domain = [["supplier_rank", ">", 0]]
+        if since:
+            domain.append(["write_date", ">=", since.strftime("%Y-%m-%d %H:%M:%S")])
+        records = await self._call(
+            "res.partner", "search_read", [domain],
+            {"fields": ["id", "name", "credit_limit", "use_partner_credit_limit",
+                        "property_supplier_payment_term_id", "supplier_rank"],
+             "limit": limit, "order": "name asc"},
+        )
+        terms = await self._get_payment_terms_days()
+        result = []
+        for r in records:
+            term = r.get("property_supplier_payment_term_id") or None
+            term_id = term[0] if term else None
+            term_name = term[1] if term else None
+            result.append({
+                "id": r["id"],
+                "name": r["name"],
+                "credit_limit": r.get("credit_limit"),
+                "use_partner_credit_limit": bool(r.get("use_partner_credit_limit")),
+                "payment_term_name": term_name,
+                "payment_term_days": terms.get(term_id) if term_id else None,
+                "supplier_rank": r.get("supplier_rank", 0),
+            })
+        return result
+
+    _payment_terms_cache: dict[int, int] | None = None
+
+    async def _get_payment_terms_days(self) -> dict[int, int]:
+        """{payment_term_id: nb_days de la tranche la PLUS ÉLOIGNÉE} — le pire cas de
+        règlement complet du terme négocié (ex: "30% à 30j, 70% à 60j" → 60), comparable
+        à un retard réel constaté sur une facture. Mis en cache : référentiel stable,
+        pas besoin de le relire à chaque synchro (contrairement aux montants/dates)."""
+        if self._payment_terms_cache is not None:
+            return self._payment_terms_cache
+        try:
+            lines = await self._call(
+                "account.payment.term.line", "search_read", [[]],
+                {"fields": ["payment_id", "nb_days"]},
+            )
+        except Exception as e:
+            logger.warning("account.payment.term.line indisponible : %s", e)
+            return {}
+        days_by_term: dict[int, int] = {}
+        for line in lines:
+            payment = line.get("payment_id") or [None]
+            term_id = payment[0]
+            if term_id is None:
+                continue
+            days = int(line.get("nb_days") or 0)
+            days_by_term[term_id] = max(days_by_term.get(term_id, 0), days)
+        self._payment_terms_cache = days_by_term
+        return days_by_term
+
+    async def get_all_supplier_invoices(self, limit: int = 5000, since: datetime | None = None) -> list[dict]:
+        """Factures FOURNISSEURS (in_invoice) — jamais synchronisées avant ce soir (seules
+        les factures clients out_invoice l'étaient, cf. get_all_invoices). Nécessaires pour
+        la ligne de crédit consommée et le cash prévisionnel fournisseurs (échéances réelles,
+        pas des commandes d'achat qui n'ont pas de date de règlement)."""
+        domain = [["move_type", "=", "in_invoice"], ["state", "=", "posted"]]
+        if since:
+            domain.append(["write_date", ">=", since.strftime("%Y-%m-%d %H:%M:%S")])
+        try:
+            return await self._call(
+                "account.move", "search_read", [domain],
+                {"fields": ["id", "name", "partner_id", "amount_total", "amount_residual",
+                            "currency_id", "invoice_date", "invoice_date_due", "payment_state"],
+                 "limit": limit, "order": "invoice_date_due asc"},
+            )
+        except Exception as e:
+            logger.warning("Factures fournisseurs (in_invoice) non disponibles : %s", e)
             return []
 
     # ─── Stats globales ──────────────────────────────────────────────────────
@@ -559,6 +691,9 @@ class OdooAdapter(CRMRepository):
         return []
 
     async def get_top_suppliers(self, limit: int = 20) -> list[dict]:
+        return []
+
+    async def get_supplier_intelligence(self, limit: int = 20) -> list[dict]:
         return []
 
     async def get_client_portfolio(self, limit: int = 50) -> list[dict]:
