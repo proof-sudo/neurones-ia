@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import io
 import logging
 import os
@@ -114,6 +115,19 @@ _PYMUPDF4LLM_TIMEOUT_S = 25
 # timeout sans dépendre d'un vrai document pathologique de plusieurs minutes.
 _WORKER_SCRIPT = Path(__file__).resolve().parent / "_pymupdf4llm_worker.py"
 
+# Extraction PAGE PAR PAGE (pdfplumber + PyMuPDF + détection d'image) en PARALLÈLE :
+# mesuré en prod, cette étape à elle seule prenait ~130s sur un AO de 97 pages —
+# AVANT même le premier appel LLM. Les pages sont indépendantes et ce travail est
+# CPU-bound en pur Python (parsing pdfminer) : le GIL empêcherait tout gain par
+# threads, d'où des PROCESSUS. Plafonné à cpu_count()-1 : sur le VPS de prod partagé
+# (4 cœurs, 6 apps clientes), on laisse toujours au moins un cœur aux autres — un
+# court pic de charge sur les cœurs restants pour gagner ~100s de latence utilisateur
+# est un compromis délibéré, documenté ici comme lors du choix du sous-processus
+# tuable pour pymupdf4llm plus haut. En-deçà de _PARALLEL_EXTRACT_MIN_PAGES, le coût
+# de démarrage d'un pool de processus ne serait pas rentabilisé : on reste séquentiel.
+_PARALLEL_EXTRACT_MIN_PAGES = 12
+_PARALLEL_EXTRACT_MAX_WORKERS = max(1, (os.cpu_count() or 4) - 1)
+
 
 class PDFAdapter(DocumentParser):
     """
@@ -210,31 +224,26 @@ class PDFAdapter(DocumentParser):
         # avoir des pages texte ET une page de certifications/diplômes en image. Une
         # moyenne globale « ok » sauterait l'OCR et perdrait cette page-image noyée dans
         # un document par ailleurs textuel. On OCR-ise donc uniquement les pages maigres.
-        plumber_pages = self._pdfplumber_pages(file_path)
-        mupdf_pages = self._pymupdf_pages(file_path) if _FITZ_AVAILABLE else []
-        n_pages = max(len(plumber_pages), len(mupdf_pages))
-
+        n_pages = self._page_count(file_path)
         if n_pages == 0:
             logger.warning("Aucune page lisible dans %s", file_path)
             return ""
 
-        # Pages contenant une image significative (scan de certif/diplôme) — un second signal
-        # au-delà du simple compte de caractères, pour les pages « titre + image ».
-        image_pages = self._image_heavy_pages(file_path) if _FITZ_AVAILABLE else set()
+        per_page = self._extract_pages(file_path, n_pages)
 
         # Par page : on garde la couche texte la plus riche (pdfplumber vs PyMuPDF).
         pages: list[str] = []
         thin_pages: list[int] = []
         for i in range(n_pages):
-            p = plumber_pages[i] if i < len(plumber_pages) else ""
-            m = mupdf_pages[i] if i < len(mupdf_pages) else ""
+            info = per_page.get(i) or {"plumber": "", "mupdf": "", "image_heavy": False}
+            p, m = info["plumber"], info["mupdf"]
             best = m if len(m) > len(p) else p
             pages.append(best)
             n_chars = len(best.strip())
             # Maigre si : (a) presque pas de texte, ou (b) image significative + texte modéré
             # (cas « Certifications » : un titre/légende noie le seuil mais le contenu est en image).
             if n_chars < settings.ocr_min_chars_per_page or (
-                i in image_pages and n_chars < settings.ocr_image_page_text_max
+                info["image_heavy"] and n_chars < settings.ocr_image_page_text_max
             ):
                 thin_pages.append(i)
 
@@ -262,6 +271,27 @@ class PDFAdapter(DocumentParser):
         result = "\n\n".join(p for p in pages if p.strip())
         if not result:
             logger.warning("Aucun texte extrait de %s", file_path)
+        return result
+
+    @staticmethod
+    def _extract_pages(file_path: str, n_pages: int) -> dict[int, dict]:
+        """Extrait pdfplumber + PyMuPDF + détection d'image significative pour
+        TOUTES les pages — en parallèle (processus bornés, cf. `_PARALLEL_EXTRACT_
+        MAX_WORKERS`) au-delà de `_PARALLEL_EXTRACT_MIN_PAGES`, sinon séquentiel dans
+        le processus courant (le démarrage d'un pool ne se rentabilise pas sur un
+        petit document). Renvoie {index_page: {"plumber", "mupdf", "image_heavy"}}."""
+        if n_pages < _PARALLEL_EXTRACT_MIN_PAGES:
+            return _extract_page_range(file_path, list(range(n_pages)))
+
+        n_workers = min(_PARALLEL_EXTRACT_MAX_WORKERS, n_pages)
+        # Répartition round-robin (pas par bloc contigu) : équilibre mieux la charge si
+        # la densité (tableaux, images) n'est pas uniforme sur le document.
+        chunks = [list(range(start, n_pages, n_workers)) for start in range(n_workers)]
+        result: dict[int, dict] = {}
+        with concurrent.futures.ProcessPoolExecutor(max_workers=n_workers) as executor:
+            futures = [executor.submit(_extract_page_range, file_path, c) for c in chunks if c]
+            for future in concurrent.futures.as_completed(futures):
+                result.update(future.result())
         return result
 
     @staticmethod
@@ -452,3 +482,73 @@ class PDFAdapter(DocumentParser):
 
     def supports(self, file_path: str) -> bool:
         return file_path.lower().endswith(".pdf")
+
+
+def _extract_page_range(file_path: str, page_indices: list[int]) -> dict[int, dict]:
+    """Extrait pdfplumber + PyMuPDF + détection d'image significative pour un
+    sous-ensemble de pages — chaque bibliothèque ouverte UNE SEULE fois par appel
+    (pas par page). Fonction MODULE-LEVEL (pas une méthode) : c'est une exigence de
+    `ProcessPoolExecutor`, qui doit pouvoir « pickler » la référence pour l'envoyer
+    au processus enfant — une méthode liée à une instance ne s'y prête pas.
+    Exécutée soit dans le processus courant (petit document), soit dans un
+    sous-processus dédié (cf. `PDFAdapter._extract_pages`)."""
+    mupdf_text: dict[int, str] = {}
+    image_heavy: set[int] = set()
+    if _FITZ_AVAILABLE:
+        import fitz
+        try:
+            with fitz.open(file_path) as doc:
+                for i in page_indices:
+                    if i >= len(doc):
+                        continue
+                    page = doc[i]
+                    text = page.get_text("text")
+                    mupdf_text[i] = text.strip() if text else ""
+                    page_area = abs(page.rect.width * page.rect.height)
+                    if page_area <= 0:
+                        continue
+                    try:
+                        infos = page.get_image_info()
+                    except Exception:
+                        infos = []
+                    for info in infos:
+                        bbox = info.get("bbox")
+                        if not bbox:
+                            continue
+                        w, h = (bbox[2] - bbox[0]), (bbox[3] - bbox[1])
+                        if (abs(w * h) / page_area) >= settings.ocr_image_area_ratio:
+                            image_heavy.add(i)
+                            break
+        except Exception as e:
+            logger.debug("PyMuPDF (worker page) échoué sur %s : %s", file_path, e)
+
+    plumber_text: dict[int, str] = {}
+    try:
+        with pdfplumber.open(file_path) as pdf:
+            for i in page_indices:
+                if i >= len(pdf.pages):
+                    continue
+                page = pdf.pages[i]
+                text = page.extract_text(x_tolerance=3, y_tolerance=3)
+                if not text:
+                    words = page.extract_words()
+                    if words:
+                        text = " ".join(w["text"] for w in words)
+                parts = []
+                if text and text.strip():
+                    parts.append(text.strip())
+                tables_md = PDFAdapter._render_tables(page)
+                if tables_md:
+                    parts.append(tables_md)
+                plumber_text[i] = "\n\n".join(parts)
+    except Exception as e:
+        logger.debug("pdfplumber (worker page) échoué sur %s : %s", file_path, e)
+
+    return {
+        i: {
+            "plumber": plumber_text.get(i, ""),
+            "mupdf": mupdf_text.get(i, ""),
+            "image_heavy": i in image_heavy,
+        }
+        for i in page_indices
+    }

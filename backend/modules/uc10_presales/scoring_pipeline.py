@@ -96,17 +96,25 @@ _REQUIREMENTS_OUTPUT_BUDGET_TOKENS = 16_000
 _EXTRACT_OUTPUT_BUDGET_TOKENS = 8_000
 _EXTRACT_OUTPUT_RETRY_TOKENS = 12_000
 
-# step1.extract en MAP-REDUCE : sur un AO vraiment dense (SIB 97p, BHCI...), même le retry
-# à budget de SORTIE élargi (12000) ne suffisait pas — l'AO contient tout simplement TROP
-# de besoins/critères/annexes pour tenir dans une seule réponse JSON, qui ressortait
-# tronquée ou malformée à chaque tentative (observé en prod : besoins=0/criteres=0 malgré
-# le retry). Découper l'AO en chunks et extraire chaque chunk EN PARALLÈLE réduit le volume
-# de sortie PAR APPEL (un chunk a mécaniquement moins d'exigences que l'AO entier → moins
-# de risque de dépasser le plafond) sans alourdir la latence (les chunks tournent
-# concurremment, pas séquentiellement). Sous ce seuil, l'AO tient dans un seul chunk :
-# comportement strictement identique à avant (aucun coût/latence ajouté au cas courant).
-_EXTRACT_CHUNK_SIZE_TOKENS = 20_000
-_EXTRACT_CHUNK_OVERLAP_TOKENS = 500
+# step1.extract en MAP-REDUCE : sur un AO vraiment dense (SIB 97p, BHCI, LONACI...), même
+# le retry à budget de SORTIE élargi (12000) ne suffisait pas — l'AO contient tout
+# simplement TROP de besoins/critères/annexes pour tenir dans une seule réponse JSON, qui
+# ressortait tronquée ou malformée à chaque tentative (observé en prod à répétition :
+# besoins=0/criteres=0 malgré le retry). Découper l'AO en chunks et extraire chaque chunk
+# EN PARALLÈLE réduit le volume de sortie PAR APPEL (un chunk a mécaniquement moins
+# d'exigences que l'AO entier → moins de risque de dépasser le plafond) sans alourdir la
+# latence (les chunks tournent concurremment, pas séquentiellement). Sous ce seuil, l'AO
+# tient dans un seul chunk : comportement strictement identique à avant (aucun coût/latence
+# ajouté au cas courant).
+#
+# Taille abaissée de 20 000 → 8 000 tokens : mesuré en prod sur SIB et LONACI, un chunk de
+# ~17 600 tokens (moitié d'un AO de 35 200 tokens découpé en 2) débordait ENCORE le plafond
+# de sortie élargi (12000) après retry — la densité d'exigences de ces AO ivoiriens est plus
+# élevée que l'hypothèse initiale ("~20-40K tokens, tronque rarement"). Des chunks deux fois
+# plus petits visent un succès dès le PREMIER essai (pas de retry du tout dans le cas
+# courant) plutôt que de re-subir le même échec à une granularité à peine plus fine.
+_EXTRACT_CHUNK_SIZE_TOKENS = 8_000
+_EXTRACT_CHUNK_OVERLAP_TOKENS = 400
 
 _EXTRACT_SYSTEM = """Tu es un extracteur d'appels d'offres IT. Ton rôle est d'EXTRAIRE, pas de RÉSUMER.
 
