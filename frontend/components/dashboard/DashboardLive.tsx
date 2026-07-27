@@ -85,9 +85,9 @@ export function DashboardLive({
   const [briefingExpanded, setBriefingExpanded] = useState(false);
 
   function refreshBriefing() {
-    setBriefingError(null);
-    setBriefingExpanded(false);
     startBriefing(async () => {
+      setBriefingError(null);
+      setBriefingExpanded(false);
       const res = await fetchBriefingAction();
       if (res.ok) setBriefing(res.data);
       else setBriefingError(res.error);
@@ -96,7 +96,6 @@ export function DashboardLive({
 
   useEffect(() => {
     refreshBriefing();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ---- Points de vigilance (données réelles du pipeline/impayés, quand accessibles au rôle) ----
