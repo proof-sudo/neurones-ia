@@ -99,11 +99,19 @@ _REQUIREMENTS_OUTPUT_BUDGET_TOKENS = 16_000
 # partir directement d'un plafond large élimine l'aller-retour de retry dans le cas courant,
 # SANS pénaliser les chunks légers. 20000 est déjà validé en prod sans erreur API sur step4
 # (cf. _ANALYZE_OUTPUT_BUDGET_TOKENS et test_step4_output_budget.py) : on vise donc large dès
-# le premier essai (16000) avec un filet de sécurité au-dessus (24000) pour le chunk le plus
-# dense, plutôt que le patron "petit d'abord, élargir ensuite" hérité du résumé exécutif
-# (où ce compromis a du sens : un SEUL appel, pas des dizaines par AO en map-reduce).
+# le premier essai (16000) avec un filet de sécurité au-dessus, plutôt que le patron "petit
+# d'abord, élargir ensuite" hérité du résumé exécutif (où ce compromis a du sens : un SEUL
+# appel, pas des dizaines par AO en map-reduce).
+#
+# PLAFOND DUR côté SDK, pas seulement côté modèle : le SDK Anthropic refuse d'exécuter un
+# appel NON-streaming au-delà d'un volume de sortie jugé trop long (`_calculate_nonstreaming_
+# timeout`, anthropic/_base_client.py) — formule observée en prod : lève ValueError si
+# max_tokens > 600 * 128_000 / 3600 ≈ 21333. Cassé en prod ce soir avec 24000 (retry) : le
+# ValueError n'était PAS intercepté (seul OutputTruncatedError l'était), ce qui a fait
+# planter tout le pipeline au lieu d'abandonner proprement ce chunk. 20000 reste sous ce
+# plafond avec marge ; le filet de sécurité doit lui aussi rester strictement en-dessous.
 _EXTRACT_OUTPUT_BUDGET_TOKENS = 16_000
-_EXTRACT_OUTPUT_RETRY_TOKENS = 24_000
+_EXTRACT_OUTPUT_RETRY_TOKENS = 20_000
 
 # step1.extract en MAP-REDUCE : sur un AO vraiment dense (SIB 97p, BHCI, LONACI...), même
 # le retry à budget de SORTIE élargi (12000) ne suffisait pas — l'AO contient tout
@@ -921,6 +929,18 @@ class ScoringPipeline:
                 logger.warning(
                     "step1.extract[%s] tronqué au plafond de %d tokens — %s.",
                     part, budget, "abandon de cette partie" if is_last else "retry à budget élargi",
+                )
+                continue
+            except ValueError as exc:
+                # Le SDK Anthropic refuse tout appel NON-streaming dont le max_tokens dépasse
+                # un plafond calculé côté client (~21333, cf. commentaire sur
+                # _EXTRACT_OUTPUT_RETRY_TOKENS) — AVANT même d'envoyer la requête. Sans ce
+                # bloc, cette exception remonterait et ferait planter TOUT le pipeline (bug
+                # réel en prod ce soir) au lieu d'abandonner proprement cette seule partie.
+                logger.warning(
+                    "step1.extract[%s] appel refusé par le SDK (%s) au plafond de %d tokens — "
+                    "%s.", part, exc, budget,
+                    "abandon de cette partie" if is_last else "retry à budget élargi",
                 )
                 continue
             try:
