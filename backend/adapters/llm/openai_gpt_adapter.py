@@ -26,7 +26,10 @@ class OpenAIGPTAdapter(LLMGateway):
     async def generate(
         self, system: str, user: str, max_tokens: int = 1024,
         raise_on_truncation: bool = False, temperature: float | None = None,
+        cacheable: bool = False,
     ) -> str:
+        # `cacheable` ignoré ici : OpenAI met en cache automatiquement les préfixes de
+        # prompt côté serveur (>1024 tokens), sans marquage explicite requis côté appelant.
         kwargs = dict(
             model=self._model,
             max_tokens=max_tokens,
@@ -56,6 +59,7 @@ class OpenAIGPTAdapter(LLMGateway):
     async def extract(
         self, prompt: str, text: str, max_tokens: int = 512,
         raise_on_truncation: bool = False, temperature: float | None = None,
+        cacheable: bool = False,
     ) -> str:
         return await self.generate(
             system=prompt, user=text, max_tokens=max_tokens,

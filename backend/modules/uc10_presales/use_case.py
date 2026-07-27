@@ -20,6 +20,14 @@ from modules.uc10_presales.latency import timer, with_timeout
 
 logger = logging.getLogger(__name__)
 
+
+async def _report_progress(on_progress, step: str) -> None:
+    """Appelle `on_progress(step)` s'il est fourni — no-op sinon. Petit helper partagé par
+    `score_ao` et `ScoringPipeline.run` pour la remontée de progression (cf. `score_ao`)."""
+    if on_progress is not None:
+        await on_progress(step)
+
+
 # En-deçà de ce nombre de jours avant la deadline, on bascule sur le squelette express
 # (3 phases) au lieu du standard (5 phases) — forcer 5 phases serait absurde.
 _EXPRESS_THRESHOLD_DAYS = 7
@@ -248,7 +256,13 @@ class PresalesUseCase:
         self._vision_ocr = vision_ocr
         self._odoo_enrichment = OdooEnrichmentService(db_path=settings.local_db_path, llm=llm_haiku)
 
-    async def score_ao(self, filename: str, file_bytes: bytes) -> ScoringResult:
+    async def score_ao(
+        self, filename: str, file_bytes: bytes, on_progress=None,
+    ) -> ScoringResult:
+        """`on_progress` (optionnel) : callback async `async def(step: str) -> None`,
+        appelé à chaque grande étape — permet au caller (ex. `_run_analysis_task` en mode
+        202+polling) de remonter une progression lisible plutôt qu'un statut figé "scoring"."""
+        await _report_progress(on_progress, "Extraction du texte du document")
         with timer("score_ao.extract_text"):
             text = await self._extract_text(filename, file_bytes)
         # AO scanné (aucune couche texte extraite) → repli sur la transcription vision Claude
@@ -265,7 +279,9 @@ class PresalesUseCase:
             )
         with timer("score_ao.pipeline"):
             result = await with_timeout(
-                self._pipeline.run(ao_filename=filename, ao_text=text), "pipeline.run")
+                self._pipeline.run(ao_filename=filename, ao_text=text, on_progress=on_progress),
+                "pipeline.run",
+            )
         # Étape 6 — enrichissement Odoo (non-bloquant : ne casse jamais le scoring)
         with timer("score_ao.odoo_enrich"):
             await self._odoo_enrichment.enrich(result)

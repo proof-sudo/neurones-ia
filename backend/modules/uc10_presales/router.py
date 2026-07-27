@@ -298,17 +298,26 @@ async def _run_analysis_task(
 
     Pourquoi : le pipeline dure ~2 min. En streaming, Next.js bufferisait la réponse (le
     heartbeat n'atteignait jamais le proxy) et le frontal Traefik coupait à ~100s → 504.
-    Sans connexion longue, plus de 504 possible."""
+    Sans connexion longue, plus de 504 possible.
+
+    `on_progress` remonte l'étape en cours (extraction, analyse, matching, notation) dans
+    `currentStep` — le frontend l'affiche pendant le polling au lieu d'un statut figé
+    "scoring" (cf. `analyzeDossier` côté frontend)."""
+
+    async def _on_progress(step: str) -> None:
+        await dossier_store.patch(dossier_id, {"currentStep": step})
+
     try:
-        result = await use_case.score_ao(filename=filename, file_bytes=file_bytes)
+        result = await use_case.score_ao(filename=filename, file_bytes=file_bytes, on_progress=_on_progress)
     except ValueError as e:
-        await dossier_store.patch(dossier_id, {"status": "error", "errorMessage": str(e)})
+        await dossier_store.patch(dossier_id, {"status": "error", "errorMessage": str(e), "currentStep": None})
         return
     except Exception as e:
         logger.exception("Erreur pipeline scoring AO (dossier %s)", dossier_id)
         await dossier_store.patch(dossier_id, {
             "status": "error",
             "errorMessage": f"Erreur analyse AO : {type(e).__name__}: {e}",
+            "currentStep": None,
         })
         return
 
@@ -317,6 +326,7 @@ async def _run_analysis_task(
         "status": "scored",
         "scoringResult": schema.model_dump(mode="json"),
         "errorMessage": None,
+        "currentStep": None,
     })
 
 

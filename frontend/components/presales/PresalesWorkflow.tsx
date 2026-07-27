@@ -67,6 +67,7 @@ interface AOEntry {
   deadline: string;   // date d'échéance saisie manuellement à l'ajout
   status: "pending_analysis" | "scoring" | "scored" | "error";
   errorMessage?: string;
+  currentStep?: string;  // étape en cours pendant "scoring" (remontée par le polling backend)
   scoringResult?: ScoringResult;
   decision: "go" | "no_bid" | "conditional" | null;
   decisionReason: string;
@@ -2514,13 +2515,15 @@ export function PresalesWorkflow({ currentUserName = "" }: { currentUserName?: s
   // utilisé par le bouton « Refaire l'analyse ». Le fichier est lu depuis le disque
   // serveur (dossier persisté), donc rejouable à tout moment, même après reload.
   async function startAnalysis(id: string, force = false) {
-    setAos(prev => prev.map(a => a.id === id ? { ...a, status: "scoring", errorMessage: undefined } : a));
+    setAos(prev => prev.map(a => a.id === id ? { ...a, status: "scoring", errorMessage: undefined, currentStep: undefined } : a));
     try {
       // Attend la fin de createDossier() si elle est encore en vol pour ce dossier —
       // évite le 404 "dossier introuvable" d'un clic sur "Analyser" trop rapide après upload.
       const pendingCreation = creatingRef.current.get(id);
       if (pendingCreation) await pendingCreation.catch(() => {});
-      const result = await analyzeDossier(id, force);
+      const result = await analyzeDossier(id, force, (step) => {
+        setAos(prev => prev.map(a => a.id === id ? { ...a, currentStep: step } : a));
+      });
       setAos(prev => prev.map(a => a.id === id ? { ...a, status: "scored", scoringResult: result } : a));
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -3343,7 +3346,7 @@ export function PresalesWorkflow({ currentUserName = "" }: { currentUserName?: s
                 </div>
                 <div className="text-center">
                   <p className="font-semibold text-text">Analyse de l'appel d'offres en cours...</p>
-                  <p className="text-sm text-muted mt-1">Extraction · Résumé · Matching GED · Scoring</p>
+                  <p className="text-sm text-muted mt-1">{selectedAO.currentStep || "Extraction · Résumé · Matching GED · Scoring"}</p>
                   <div className="mt-3 flex justify-center">
                     <AnalysisTimer />
                   </div>

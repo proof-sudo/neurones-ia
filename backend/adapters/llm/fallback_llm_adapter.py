@@ -75,15 +75,16 @@ class FallbackLLMAdapter(LLMGateway):
     async def generate(
         self, system: str, user: str, max_tokens: int = 1024,
         raise_on_truncation: bool = False, temperature: float | None = None,
+        cacheable: bool = False,
     ) -> str:
         try:
-            return await self._primary.generate(system, user, max_tokens, raise_on_truncation, temperature)
+            return await self._primary.generate(system, user, max_tokens, raise_on_truncation, temperature, cacheable)
         except Exception as primary_exc:
             if self._should_fallback(primary_exc):
                 logger.warning("LLM primaire (%s) indisponible → fallback (%s) : %s",
                                self._primary_name, self._fallback_name, primary_exc)
                 try:
-                    return await self._fallback.generate(system, user, max_tokens, raise_on_truncation, temperature)
+                    return await self._fallback.generate(system, user, max_tokens, raise_on_truncation, temperature, cacheable)
                 except Exception as fallback_exc:
                     if self._is_quota_error(fallback_exc):
                         logger.error("LLM fallback (%s) quota épuisé : %s", self._fallback_name, fallback_exc)
@@ -107,14 +108,15 @@ class FallbackLLMAdapter(LLMGateway):
     async def extract(
         self, prompt: str, text: str, max_tokens: int = 512,
         raise_on_truncation: bool = False, temperature: float | None = None,
+        cacheable: bool = False,
     ) -> str:
         try:
-            return await self._primary.extract(prompt, text, max_tokens, raise_on_truncation, temperature)
+            return await self._primary.extract(prompt, text, max_tokens, raise_on_truncation, temperature, cacheable)
         except Exception as primary_exc:
             if self._should_fallback(primary_exc):
                 logger.warning("LLM extract primaire → fallback : %s", primary_exc)
                 try:
-                    return await self._fallback.extract(prompt, text, max_tokens, raise_on_truncation, temperature)
+                    return await self._fallback.extract(prompt, text, max_tokens, raise_on_truncation, temperature, cacheable)
                 except Exception as fallback_exc:
                     if self._is_quota_error(fallback_exc):
                         raise primary_exc
