@@ -95,3 +95,116 @@ def test_parse_tente_pymupdf4llm_sur_texte_normal(tmp_path, monkeypatch):
     asyncio.run(adapter.parse(str(pdf_path)))
 
     assert calls[0] == "pymupdf4llm"  # comportement inchangé : toujours tenté sur un doc normal
+
+
+def test_parse_utilise_vision_en_premier_sur_scan_si_disponible(tmp_path, monkeypatch):
+    """Sur un scan, si un vision extractor DISPONIBLE est injecté, il doit être tenté
+    AVANT Tesseract — et si son résultat est non vide, Tesseract ne doit jamais tourner
+    (c'est le point central de la stratégie B : éviter l'OCR local séquentiel)."""
+    import adapters.parser.pdf_adapter as m
+
+    pdf_path = tmp_path / "scan.pdf"
+    _make_blank_pdf(pdf_path)
+    adapter = PDFAdapter()
+
+    class _FakeVision:
+        available = True
+
+        async def transcribe_pdf_bytes(self, file_bytes, max_pages=None):
+            return "texte transcrit par la vision"
+
+    adapter.set_vision_extractor(_FakeVision())
+
+    calls: list[str] = []
+
+    def _fake_fallback(self, file_path):
+        calls.append("fallback")
+        return "texte de repli tesseract"
+
+    monkeypatch.setattr(m.PDFAdapter, "_parse_fallback_sync", _fake_fallback)
+
+    result = asyncio.run(adapter.parse(str(pdf_path)))
+
+    assert result == "texte transcrit par la vision"
+    assert calls == []  # Tesseract jamais appelé
+
+
+def test_parse_retombe_sur_tesseract_si_vision_vide(tmp_path, monkeypatch):
+    import adapters.parser.pdf_adapter as m
+
+    pdf_path = tmp_path / "scan.pdf"
+    _make_blank_pdf(pdf_path)
+    adapter = PDFAdapter()
+
+    class _EmptyVision:
+        available = True
+
+        async def transcribe_pdf_bytes(self, file_bytes, max_pages=None):
+            return ""
+
+    adapter.set_vision_extractor(_EmptyVision())
+
+    def _fake_fallback(self, file_path):
+        return "texte de repli tesseract"
+
+    monkeypatch.setattr(m.PDFAdapter, "_parse_fallback_sync", _fake_fallback)
+
+    result = asyncio.run(adapter.parse(str(pdf_path)))
+
+    assert result == "texte de repli tesseract"
+
+
+def test_parse_retombe_sur_tesseract_si_vision_leve_exception(tmp_path, monkeypatch):
+    import adapters.parser.pdf_adapter as m
+
+    pdf_path = tmp_path / "scan.pdf"
+    _make_blank_pdf(pdf_path)
+    adapter = PDFAdapter()
+
+    class _BrokenVision:
+        available = True
+
+        async def transcribe_pdf_bytes(self, file_bytes, max_pages=None):
+            raise RuntimeError("API indisponible")
+
+    adapter.set_vision_extractor(_BrokenVision())
+
+    def _fake_fallback(self, file_path):
+        return "texte de repli tesseract"
+
+    monkeypatch.setattr(m.PDFAdapter, "_parse_fallback_sync", _fake_fallback)
+
+    result = asyncio.run(adapter.parse(str(pdf_path)))
+
+    assert result == "texte de repli tesseract"
+
+
+def test_parse_retombe_sur_tesseract_si_vision_non_disponible(tmp_path, monkeypatch):
+    """`available=False` (ex. clé API absente côté adapter concret) doit retomber sur
+    Tesseract sans jamais appeler `transcribe_pdf_bytes`."""
+    import adapters.parser.pdf_adapter as m
+
+    pdf_path = tmp_path / "scan.pdf"
+    _make_blank_pdf(pdf_path)
+    adapter = PDFAdapter()
+
+    calls: list[str] = []
+
+    class _UnavailableVision:
+        available = False
+
+        async def transcribe_pdf_bytes(self, file_bytes, max_pages=None):
+            calls.append("vision")
+            return "ne devrait jamais être appelé"
+
+    adapter.set_vision_extractor(_UnavailableVision())
+
+    def _fake_fallback(self, file_path):
+        return "texte de repli tesseract"
+
+    monkeypatch.setattr(m.PDFAdapter, "_parse_fallback_sync", _fake_fallback)
+
+    result = asyncio.run(adapter.parse(str(pdf_path)))
+
+    assert calls == []
+    assert result == "texte de repli tesseract"
