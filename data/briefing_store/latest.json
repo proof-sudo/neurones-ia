@@ -1,40 +1,40 @@
 {
-  "generated_at": "2026-07-22T16:19:23.045859+00:00",
-  "triggered_by": "manual",
+  "generated_at": "2026-07-28T00:00:08.431785+00:00",
+  "triggered_by": "schedule",
   "sections": {
     "dg": {
       "facts": {
-        "ca_annee_xof": 5696106859.50181,
+        "ca_annee_xof": 6111781617.50181,
         "ca_annee_precedente_xof": 12809576223.184849,
-        "taux_victoire_valeur_pct": 63.4,
-        "pipeline_pondere_xof": 39777754222,
-        "marge_definitive_moyenne_pct": 35.29,
+        "taux_victoire_valeur_pct": 63.5,
+        "pipeline_pondere_xof": 46445334228,
+        "marge_definitive_moyenne_pct": 34.17,
         "forecast_trimestre": "Q3 2026",
-        "forecast_realiste_xof": 5643113965,
-        "exposition_impayes_xof": 18098153774.846905,
+        "forecast_realiste_xof": 5897114077,
+        "exposition_impayes_xof": 18084884277.62523,
         "nb_deals_perdus": 1413,
         "montant_perdu_xof": 84717751583
       },
       "bullets": [
-        "CA 2026 commandé : 5696 M FCFA (▼ 7113 M FCFA vs 2025).",
-        "Pipeline ouvert pondéré : 39778 M FCFA. Taux de victoire en valeur : 63.4%.",
-        "Marge définitive moyenne : 35.29%.",
-        "Exposition totale aux impayés : 18098 M FCFA.",
+        "CA 2026 commandé : 6112 M FCFA (▼ 6698 M FCFA vs 2025).",
+        "Pipeline ouvert pondéré : 46445 M FCFA. Taux de victoire en valeur : 63.5%.",
+        "Marge définitive moyenne : 34.17%.",
+        "Exposition totale aux impayés : 18085 M FCFA.",
         "1413 opportunités perdues au total, pour 84718 M FCFA.",
-        "Prévision Q3 2026 : 5643 M FCFA (scénario réaliste)."
+        "Prévision Q3 2026 : 5897 M FCFA (scénario réaliste)."
       ],
-      "analysis": "Le carnet de commandes 2026 s'établit à 5 696 M FCFA, soit un recul de 7 113 M FCFA par rapport à 2025, ce qui place la Direction face à un déficit de couverture significatif que le pipeline pondéré de 39 778 M FCFA, avec un taux de victoire de 63,4 %, doit impérativement combler. La prévision réaliste de Q3 2026 à 5 643 M FCFA confirme que la dynamique commerciale reste insuffisante pour redresser la trajectoire annuelle sans accélération immédiate des conversions. Le point de vigilance majeur du jour est l'exposition aux impayés, qui atteint 18 098 M FCFA, un niveau qui fragilise la trésorerie et pourrait contraindre la capacité d'engagement sur de nouveaux projets malgré une marge définitive solide à 35,29 %. Il est recommandé de prioriser aujourd'hui une revue ciblée des dossiers d'impayés les plus anciens et les plus significatifs en valeur, en activant les relances formelles ou les négociations d'échéancier, afin de sécuriser des rentrées de trésorerie avant la clôture du trimestre."
+      "analysis": "Le carnet de commandes 2026 s'établit à 6 112 M FCFA, soit un recul de 586 M FCFA par rapport à 2025, ce qui place la Direction face à un déficit de couverture du chiffre d'affaires cible que le pipeline pondéré à 46 445 M FCFA — avec un taux de victoire de 63,5 % — doit impérativement combler sur les prochains mois. Le point de vigilance majeur du jour est l'exposition aux impayés, qui atteint 18 085 M FCFA, un niveau qui pèse directement sur la trésorerie et fragilise la marge définitive de 34,17 %, par ailleurs saine. La prévision réaliste de Q3 2026 à 5 897 M FCFA confirme une dynamique commerciale insuffisante au regard des 84 718 M FCFA d'opportunités perdues, ce qui invite à requalifier sans délai les critères de ciblage et de réponse aux appels d'offres. Il est recommandé d'engager aujourd'hui une revue prioritaire du portefeuille clients en impayés significatifs afin d'activer les relances formelles avant la clôture du trimestre."
     },
     "dir_commercial": {
       "facts": {
-        "pipeline_total_xof": 386086421808,
-        "pipeline_pondere_xof": 211271462702,
+        "pipeline_total_xof": 410693384416,
+        "pipeline_pondere_xof": 218654453739,
         "nb_opportunites_ouvertes": 500,
-        "forecast_realiste_xof": 172733911402,
-        "forecast_pessimiste_xof": 164727672234,
-        "forecast_optimiste_xof": 194207014536,
-        "taux_victoire_nb_pct": 64.3,
-        "taux_victoire_valeur_pct": 63.4,
+        "forecast_realiste_xof": 175371700129,
+        "forecast_pessimiste_xof": 166957976305,
+        "forecast_optimiste_xof": 197082226541,
+        "taux_victoire_nb_pct": 65.5,
+        "taux_victoire_valeur_pct": 63.5,
         "nb_deals_perdus": 1413,
         "top_client_perdant": {
           "client": "MTN CI",
@@ -53,48 +53,48 @@
         }
       },
       "bullets": [
-        "Pipeline ouvert : 386086 M FCFA brut, 211271 M FCFA pondéré (500 opportunités).",
-        "Forecast 6 mois : 164728 à 194207 M FCFA (réaliste 172734 M FCFA).",
-        "Taux de victoire : 64.3% en nombre, 63.4% en valeur.",
+        "Pipeline ouvert : 410693 M FCFA brut, 218654 M FCFA pondéré (500 opportunités).",
+        "Forecast 6 mois : 166958 à 197082 M FCFA (réaliste 175372 M FCFA).",
+        "Taux de victoire : 65.5% en nombre, 63.5% en valeur.",
         "Client concentrant le plus de pertes : MTN CI (19585 M FCFA sur 105 opportunités).",
         "Lead le plus chaud : FACON (test, test), 100000 M FCFA pondérés."
       ],
-      "analysis": "Le pipeline commercial affiche une santé robuste avec 500 opportunités actives représentant 211 271 M FCFA pondérés, et un forecast réaliste à 6 mois de 172 734 M FCFA, ce qui confirme une dynamique commerciale soutenue pour le semestre. Le lead prioritaire du jour est FACON, avec 100 000 M FCFA pondérés, qui doit concentrer l'attention immédiate des équipes pour sécuriser la conversion. Le point de vigilance majeur concerne MTN CI, qui cristallise à lui seul 19 585 M FCFA de pertes sur 105 opportunités, un niveau de concentration qui exige une analyse approfondie des causes d'échec sur ce compte. Il est recommandé d'organiser dès aujourd'hui un debriefing ciblé sur MTN CI avec les commerciaux concernés, afin d'identifier les leviers correctifs avant de soumettre de nouvelles offres sur ce compte stratégique."
+      "analysis": "Le pipeline commercial affiche une santé solide avec 500 opportunités actives représentant 218 654 M FCFA pondérés, et un forecast réaliste à 175 372 M FCFA sur les six prochains mois, ce qui confirme une dynamique de conquête soutenue. Le lead FACON concentre à lui seul 100 000 M FCFA pondérés et doit faire l'objet d'une attention maximale de l'équipe commerciale dès aujourd'hui pour sécuriser la progression vers la signature. Point de vigilance majeur : MTN CI représente 19 585 M FCFA de pertes cumulées sur 105 opportunités, un volume qui signale un problème structurel de positionnement ou de relation client qu'il serait dangereux de continuer à ignorer. Il est recommandé de déclencher sans délai une revue ciblée du compte MTN CI avec les commerciaux concernés afin d'identifier les causes racines des échecs et d'ajuster l'approche avant de soumettre de nouvelles offres."
     },
     "dir_financier": {
       "facts": {
-        "exposition_totale_xof": 18098153774.846905,
-        "nb_factures_impayees": 920,
-        "retard_90j_montant_xof": 15472612197.541523,
+        "exposition_totale_xof": 18084884277.62523,
+        "nb_factures_impayees": 921,
+        "retard_90j_montant_xof": 15581998413.319849,
         "top_debiteur": {
           "client": "Banque Africaine de Développement (BAD)",
           "nb_factures": 26,
-          "montant_total_xof": 3792144954.137352,
-          "retard_max_jours": 1377
+          "montant_total_xof": 3778873793.9156785,
+          "retard_max_jours": 1383
         },
-        "marge_definitive_moyenne_pct": 35.29,
-        "reste_a_encaisser_xof": 9251415390.0,
-        "fournisseurs_restant_xof": 18448901078.0,
+        "marge_definitive_moyenne_pct": 34.17,
+        "reste_a_encaisser_xof": 8573584234.0,
+        "fournisseurs_restant_xof": 18286881705.0,
         "forecast_trimestre": "Q3 2026",
-        "forecast_realiste_xof": 5643113965
+        "forecast_realiste_xof": 5897114077
       },
       "bullets": [
-        "Exposition totale aux impayés : 18098 M FCFA sur 920 factures.",
-        "Retard de plus de 90 jours : 15473 M FCFA.",
-        "Marge définitive moyenne : 35.29%.",
-        "Reste à encaisser : 9251 M FCFA. Fournisseurs restant à payer : 18449 M FCFA.",
-        "Plus gros débiteur : Banque Africaine de Développement (BAD) (3792 M FCFA, 1377 jours de retard).",
-        "Prévision Q3 2026 : 5643 M FCFA (scénario réaliste)."
+        "Exposition totale aux impayés : 18085 M FCFA sur 921 factures.",
+        "Retard de plus de 90 jours : 15582 M FCFA.",
+        "Marge définitive moyenne : 34.17%.",
+        "Reste à encaisser : 8574 M FCFA. Fournisseurs restant à payer : 18287 M FCFA.",
+        "Plus gros débiteur : Banque Africaine de Développement (BAD) (3779 M FCFA, 1383 jours de retard).",
+        "Prévision Q3 2026 : 5897 M FCFA (scénario réaliste)."
       ],
-      "analysis": "L'exposition totale aux impayés atteint 18 098 M FCFA sur 920 factures, dont 15 473 M FCFA accusent un retard supérieur à 90 jours, ce qui représente plus de 85 % du portefeuille en souffrance et traduit une dégradation structurelle des délais de recouvrement. Le point de vigilance majeur du jour est la position de la Banque Africaine de Développement, premier débiteur avec 3 792 M FCFA en retard depuis 1 377 jours, une créance dont l'ancienneté exige une escalade immédiate au niveau direction et une revue de son statut comptable en lien avec l'audit. Le déséquilibre entre le reste à encaisser (9 251 M FCFA) et les fournisseurs restant à payer (18 449 M FCFA) crée une tension de trésorerie nette de près de 9 200 M FCFA qu'il convient de couvrir avant la fin du trimestre, d'autant que la prévision Q3 2026 à 5 643 M FCFA en scénario réaliste ne suffira pas à combler seule cet écart. Il est recommandé d'engager dès aujourd'hui une action de recouvrement ciblée sur les dix plus grands comptes en retard de plus de"
+      "analysis": "L'exposition aux impayés atteint 18 085 M FCFA sur 921 factures, dont 15 582 M FCFA accusent un retard supérieur à 90 jours, ce qui représente plus de 86 % du portefeuille en souffrance et traduit une dégradation structurelle du cycle de recouvrement. Le point de vigilance majeur du jour est la position de la BAD, premier débiteur avec 3 779 M FCFA en retard depuis près de 1 383 jours, un dossier qui dépasse largement le cadre d'une relance ordinaire et appelle une intervention au niveau diplomatique ou contractuel. Le déséquilibre entre le reste à encaisser (8 574 M FCFA) et les fournisseurs restant à payer (18 287 M FCFA) crée une tension de trésorerie nette de près de 9 713 M FCFA, incompatible avec les engagements à court terme. Il est recommandé d'activer dès aujourd'hui un plan de priorisation des encaissements sur les créances les plus récentes et les plus liquides, afin de sécuriser les règlements fournisseurs critiques avant toute dégradation supplémentaire de la notation de S2I auprès de ses partenaires."
     },
     "dir_operations": {
       "facts": {
-        "nb_dossiers": 2407,
-        "marge_provisoire_moyenne_pct": -755.3,
-        "marge_definitive_moyenne_pct": 35.29,
-        "backlog_total_xof": 9630080129.742947,
-        "fournisseurs_restant_xof": 18448901078.0,
+        "nb_dossiers": 2408,
+        "marge_provisoire_moyenne_pct": -730.15,
+        "marge_definitive_moyenne_pct": 34.17,
+        "backlog_total_xof": 10855331470.742947,
+        "fournisseurs_restant_xof": 18286881705.0,
         "top_dossier": {
           "ref": "DC/2021/0066",
           "client": "ORANGE COTE D'IVOIRE",
@@ -111,11 +111,11 @@
         }
       },
       "bullets": [
-        "2407 dossiers en base — marge provisoire moyenne -755.3%, marge définitive moyenne 35.29%.",
-        "Backlog non facturé : 9630 M FCFA. Fournisseurs restant à payer : 18449 M FCFA.",
+        "2408 dossiers en base — marge provisoire moyenne -730.15%, marge définitive moyenne 34.17%.",
+        "Backlog non facturé : 10855 M FCFA. Fournisseurs restant à payer : 18287 M FCFA.",
         "Dossier le plus margé : DC/2021/0066 (ORANGE COTE D'IVOIRE), 502 M FCFA de marge provisoire (56.7%)."
       ],
-      "analysis": "Sur les 2 407 dossiers en base, l'écart entre la marge provisoire moyenne de -755,3 % et la marge définitive moyenne de 35,29 % signale que de nombreux dossiers sont encore ouverts avec des coûts non soldés qui pèsent massivement sur la vision provisoire, rendant toute lecture de rentabilité globale peu fiable à ce stade. Le backlog non facturé de 9 630 M FCFA face à 18 449 M FCFA restant à payer aux fournisseurs expose la trésorerie à une tension structurelle significative qu'il convient de surveiller de près. Le dossier DC/2021/0066 porté par Orange Côte d'Ivoire, avec 502 M FCFA de marge provisoire à 56,7 %, constitue aujourd'hui le signal positif le plus tangible et mérite une attention particulière pour sécuriser sa clôture définitive. La recommandation du jour est d'engager une revue ciblée des dossiers à marge provisoire fortement négative afin d'identifier ceux qui peuvent basculer en marge définitive rapidement, tout en priorisant les actions de facturation sur le backlog pour réduire le déséquilibre de trésorerie."
+      "analysis": "Sur les 2408 dossiers actifs, l'écart entre la marge provisoire moyenne de -730,15% et la marge définitive moyenne de 34,17% confirme que de nombreux dossiers restent en cours de valorisation et que les provisions initiales ne reflètent pas encore la réalité économique des affaires. Le backlog non facturé de 10 855 M FCFA face à 18 287 M FCFA de fournisseurs restant à payer constitue le point de vigilance prioritaire du jour : la trésorerie est sous pression structurelle et tout retard de facturation aggrave l'exposition. Le dossier DC/2021/0066 porté par Orange Côte d'Ivoire, avec 502 M FCFA de marge provisoire à 56,7%, représente un levier immédiat à sécuriser en s'assurant que la facturation associée est émise ou en cours. La recommandation du jour est de lancer un arbitrage sur les dossiers à backlog élevé et marge définitive positive afin de prioriser leur mise en facturation et de réduire l'écart de trésorerie avant la fin de semaine."
     },
     "commercial": {
       "facts": {
@@ -130,16 +130,16 @@
           "commercial": "Odoo Agent",
           "deadline": null
         },
-        "forecast_realiste_xof": 172733911402,
+        "forecast_realiste_xof": 175371700129,
         "nb_opportunites_ouvertes": 500,
-        "taux_victoire_nb_pct": 64.3
+        "taux_victoire_nb_pct": 65.5
       },
       "bullets": [
-        "Pipeline ouvert : 500 opportunités, 172734 M FCFA pondérés (scénario réaliste).",
-        "Taux de victoire en nombre : 64.3%.",
+        "Pipeline ouvert : 500 opportunités, 175372 M FCFA pondérés (scénario réaliste).",
+        "Taux de victoire en nombre : 65.5%.",
         "Lead le plus chaud du pipeline : FACON (test, test), 100000 M FCFA pondérés, étape Won."
       ],
-      "analysis": "Le pipeline actuel compte 500 opportunités actives pour une valeur pondérée de 172 734 M FCFA en scénario réaliste, ce qui représente une base solide pour atteindre les objectifs du trimestre. Le taux de victoire en nombre s'établit à 64,3 %, un niveau encourageant qui témoigne d'une bonne sélection des affaires engagées. Le lead le plus chaud du pipeline est l'opportunité FACON, déjà classée en statut Won pour une valeur pondérée de 100 000 M FCFA, ce qui mérite une vérification immédiate pour s'assurer que la contractualisation et le passage en commande sont bien en cours. Pour la journée, concentre-toi sur la sécurisation administrative de FACON et identifie parmi les 500 opportunités ouvertes celles qui sont en phase avancée pour accélérer leur conclusion avant la fin de période."
+      "analysis": "Le pipeline actuel compte 500 opportunités actives pour un potentiel pondéré de 175 372 M FCFA en scénario réaliste, ce qui représente une base solide sur laquelle capitaliser aujourd'hui. Avec un taux de victoire de 65,5 %, plus de deux opportunités sur trois aboutissent favorablement, un signal fort de la compétitivité de S2I qu'il faut rappeler en rendez-vous pour rassurer les prospects hésitants. Point de vigilance : le lead identifié comme le plus chaud du pipeline, FACON à 100 000 M FCFA pondérés, est déjà en statut Won — vérifiez que le dossier de contractualisation est bien engagé et qu'aucune formalité administrative ne bloque la concrétisation. Pour la journée, concentrez vos relances sur les opportunités en phase avancée juste en dessous de Won afin de reproduire ce momentum et d'alimenter les prochaines victoires."
     }
   },
   "sections_en_echec": []
