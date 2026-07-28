@@ -1,0 +1,1109 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neurones Intelligence — maquette</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400;12..96,500;12..96,600&family=Instrument+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --ink:#14161F;
+  --ink-2:#1D2030;
+  --ink-3:#2A2E42;
+  --paper:#F6F5F1;
+  --card:#FFFFFF;
+  --line:#E2E0D8;
+  --line-2:#CFCCC1;
+  --t1:#14161F;
+  --t2:#5B5F6B;
+  --t3:#8A8D97;
+  --accent:#3D4EA8;
+  --accent-soft:#E8EAF7;
+  --signal:#2F6F62;
+  --signal-soft:#E2EFEA;
+  --alert:#B23A2E;
+  --alert-soft:#F8E7E4;
+  --watch:#9A6A10;
+  --watch-soft:#F9EFD9;
+  --mono:"IBM Plex Mono",ui-monospace,monospace;
+  --sans:"Instrument Sans",system-ui,sans-serif;
+  --disp:"Bricolage Grotesque","Instrument Sans",sans-serif;
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--paper);color:var(--t1);
+  font-family:var(--sans);font-size:15px;line-height:1.55;
+  -webkit-font-smoothing:antialiased;
+}
+.app{display:flex;min-height:100vh;align-items:stretch}
+
+/* ---------- rail ---------- */
+.rail{
+  width:236px;flex:0 0 236px;background:var(--ink);color:#fff;
+  padding:22px 0 28px;position:sticky;top:0;height:100vh;overflow-y:auto;
+}
+.wordmark{padding:0 20px 22px;border-bottom:1px solid rgba(255,255,255,.09)}
+.wordmark b{
+  display:block;font-family:var(--disp);font-weight:600;font-size:19px;
+  letter-spacing:-.025em;line-height:1.15
+}
+.wordmark span{
+  display:block;font-family:var(--mono);font-size:10px;letter-spacing:.14em;
+  text-transform:uppercase;color:rgba(255,255,255,.42);margin-top:5px
+}
+.rail-lbl{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.16em;text-transform:uppercase;
+  color:rgba(255,255,255,.34);padding:22px 20px 8px
+}
+.navbtn{
+  display:flex;align-items:baseline;gap:10px;width:100%;text-align:left;
+  background:none;border:0;border-left:2px solid transparent;
+  color:rgba(255,255,255,.62);font-family:var(--sans);font-size:14px;
+  padding:9px 20px;cursor:pointer;transition:background .12s,color .12s
+}
+.navbtn:hover{background:rgba(255,255,255,.05);color:#fff}
+.navbtn[aria-selected="true"]{
+  background:rgba(255,255,255,.08);color:#fff;border-left-color:#fff;font-weight:500
+}
+.navbtn i{font-family:var(--mono);font-style:normal;font-size:10.5px;color:rgba(255,255,255,.38);width:20px;flex:0 0 20px}
+.navbtn[aria-selected="true"] i{color:rgba(255,255,255,.7)}
+.navbtn:focus-visible{outline:2px solid #fff;outline-offset:-3px}
+.rail-foot{
+  margin-top:26px;padding:16px 20px 0;border-top:1px solid rgba(255,255,255,.09);
+  font-family:var(--mono);font-size:10px;line-height:1.7;color:rgba(255,255,255,.34)
+}
+
+/* ---------- stage ---------- */
+.stage{flex:1 1 auto;min-width:0}
+.topbar{
+  display:flex;align-items:center;justify-content:space-between;gap:16px;
+  padding:14px 32px;border-bottom:1px solid var(--line);background:var(--paper);
+  position:sticky;top:0;z-index:5
+}
+.crumb{font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3)}
+.topbar-r{display:flex;align-items:center;gap:10px}
+.chip{
+  font-family:var(--mono);font-size:10.5px;padding:4px 9px;border-radius:3px;
+  border:1px solid var(--line-2);color:var(--t2);background:var(--card)
+}
+.chip--live{border-color:#C3D6CE;background:var(--signal-soft);color:var(--signal)}
+.view{display:none;padding:30px 32px 72px;max-width:1180px}
+.view.is-on{display:block}
+.eyebrow{font-family:var(--mono);font-size:10px;letter-spacing:.18em;text-transform:uppercase;color:var(--t3);margin:0 0 8px}
+h1.vt{
+  font-family:var(--disp);font-weight:600;font-size:32px;letter-spacing:-.03em;
+  line-height:1.1;margin:0 0 8px
+}
+.vsub{margin:0 0 26px;color:var(--t2);font-size:15px;max-width:62ch}
+
+/* ---------- kpi strip ---------- */
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden;margin-bottom:30px}
+.kpi{background:var(--card);padding:14px 16px 15px}
+.kpi-l{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--t3);margin-bottom:9px}
+.kpi-v{font-family:var(--mono);font-weight:500;font-size:23px;letter-spacing:-.02em;line-height:1}
+.kpi-d{font-family:var(--mono);font-size:11px;margin-top:7px;color:var(--t2)}
+.up{color:var(--signal)}.dn{color:var(--alert)}.wa{color:var(--watch)}
+
+/* ---------- module cards ---------- */
+.mods{display:grid;gap:14px}
+.mod{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:0;overflow:hidden}
+.mod-h{display:flex;align-items:flex-start;gap:13px;padding:15px 18px 13px;border-bottom:1px solid var(--line)}
+.mod-n{
+  font-family:var(--mono);font-size:11px;font-weight:500;color:var(--t3);
+  flex:0 0 auto;padding-top:2px;letter-spacing:.02em
+}
+.mod-t{flex:1 1 auto;min-width:0}
+.mod-t h3{font-family:var(--disp);font-weight:500;font-size:16.5px;letter-spacing:-.015em;margin:0 0 3px}
+.mod-t p{margin:0;font-size:13.5px;color:var(--t2);line-height:1.5}
+.eng{
+  flex:0 0 auto;font-family:var(--mono);font-size:9.5px;letter-spacing:.06em;
+  padding:3px 7px;border-radius:3px;background:var(--accent-soft);color:var(--accent);white-space:nowrap
+}
+.eng--llm{background:#F0ECF6;color:#5A3F8C}
+.mod-b{padding:16px 18px 18px}
+
+/* ---------- primitives ---------- */
+.comb{display:flex;align-items:flex-end;gap:3px;height:44px}
+.tooth{width:7px;background:var(--line-2);border-radius:1px}
+.tooth.a{background:var(--accent)}
+.tooth.s{background:var(--signal)}
+.tooth.r{background:var(--alert)}
+.tooth.w{background:var(--watch)}
+.tooth.void{background:repeating-linear-gradient(0deg,var(--alert-soft) 0 2px,transparent 2px 4px);border:1px dashed var(--alert)}
+.comb-ax{display:flex;gap:3px;margin-top:5px;font-family:var(--mono);font-size:8.5px;color:var(--t3)}
+.comb-ax span{width:7px;text-align:center}
+
+.rows{display:grid;gap:1px;background:var(--line);border:1px solid var(--line);border-radius:5px;overflow:hidden}
+.row{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center;background:var(--card);padding:9px 12px}
+.row-m{display:grid;grid-template-columns:1.6fr 1fr auto;gap:12px;align-items:center;background:var(--card);padding:9px 12px}
+.row-n{font-size:13.5px;font-weight:500;min-width:0}
+.row-s{font-size:12px;color:var(--t2);margin-top:1px;line-height:1.45}
+.num{font-family:var(--mono);font-size:13px;white-space:nowrap}
+.nums{font-family:var(--mono);font-size:11.5px;color:var(--t2);white-space:nowrap}
+
+.tag{font-family:var(--mono);font-size:9.5px;letter-spacing:.05em;padding:3px 7px;border-radius:3px;white-space:nowrap}
+.tag--r{background:var(--alert-soft);color:var(--alert)}
+.tag--w{background:var(--watch-soft);color:var(--watch)}
+.tag--s{background:var(--signal-soft);color:var(--signal)}
+.tag--n{background:#EFEEE9;color:var(--t2)}
+.tag--a{background:var(--accent-soft);color:var(--accent)}
+
+.meter{height:6px;background:#EEEDE8;border-radius:3px;overflow:hidden;min-width:70px}
+.meter>i{display:block;height:100%;background:var(--accent);border-radius:3px}
+.meter>i.s{background:var(--signal)}.meter>i.r{background:var(--alert)}.meter>i.w{background:var(--watch)}
+
+.note{
+  font-family:var(--mono);font-size:11px;line-height:1.65;color:var(--t2);
+  border-left:2px solid var(--line-2);padding-left:11px;margin:14px 0 0
+}
+.narr{
+  font-size:14.5px;line-height:1.68;background:#FBFAF7;border:1px solid var(--line);
+  border-radius:6px;padding:15px 17px
+}
+.narr p{margin:0 0 10px}.narr p:last-child{margin:0}
+.narr b{font-weight:600}
+.mk{font-family:var(--mono);font-size:12.5px;background:var(--accent-soft);color:var(--accent);padding:1px 4px;border-radius:2px}
+.mk-r{background:var(--alert-soft);color:var(--alert)}
+.mk-s{background:var(--signal-soft);color:var(--signal)}
+
+.split{display:grid;grid-template-columns:repeat(auto-fit,minmax(250px,1fr));gap:14px}
+.mini-l{font-family:var(--mono);font-size:9.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--t3);margin:0 0 9px}
+.acts{display:flex;flex-wrap:wrap;gap:7px;margin-top:14px}
+.btn{
+  font-family:var(--sans);font-size:12.5px;padding:6px 12px;border-radius:4px;
+  border:1px solid var(--line-2);background:var(--card);color:var(--t1);cursor:pointer
+}
+.btn:hover{border-color:var(--t3);background:#FBFAF7}
+.btn--p{background:var(--ink);border-color:var(--ink);color:#fff}
+.btn--p:hover{background:var(--ink-3);border-color:var(--ink-3)}
+.btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+
+table.tb{width:100%;border-collapse:collapse;font-size:13px}
+table.tb th{
+  font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;
+  color:var(--t3);text-align:left;font-weight:400;padding:0 8px 8px;border-bottom:1px solid var(--line)
+}
+table.tb th.r,table.tb td.r{text-align:right}
+table.tb td{padding:8px;border-bottom:1px solid #F0EFEA;vertical-align:top}
+table.tb tr:last-child td{border-bottom:0}
+.mono{font-family:var(--mono);font-size:12.5px}
+
+.scen{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.sc{border:1px solid var(--line);border-radius:6px;padding:13px 14px;background:#FBFAF7}
+.sc.mid{border-color:var(--accent);background:var(--accent-soft)}
+.sc-l{font-family:var(--mono);font-size:9.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--t3);margin-bottom:7px}
+.sc.mid .sc-l{color:var(--accent)}
+.sc-v{font-family:var(--mono);font-weight:500;font-size:19px;letter-spacing:-.02em}
+.sc-p{font-family:var(--mono);font-size:10.5px;color:var(--t2);margin-top:6px}
+
+.wf{display:grid;grid-template-columns:auto 1fr auto;gap:9px;align-items:center;font-size:13px;padding:7px 0;border-bottom:1px solid #F0EFEA}
+.wf:last-child{border-bottom:0}
+.wf-k{font-family:var(--mono);font-size:11.5px;color:var(--t2);white-space:nowrap}
+
+.qbox{display:flex;gap:9px;align-items:center;border:1px solid var(--line-2);border-radius:6px;padding:9px 12px;background:#FBFAF7}
+.qbox span{font-family:var(--mono);font-size:10px;color:var(--t3)}
+.qbox b{font-weight:400;font-size:14px;flex:1}
+
+.mtx{width:100%;border-collapse:collapse;font-size:12px}
+.mtx th{font-family:var(--mono);font-size:9px;letter-spacing:.06em;text-transform:uppercase;color:var(--t3);font-weight:400;padding:0 4px 7px;text-align:center}
+.mtx th:first-child{text-align:left}
+.mtx td{padding:3px 4px;text-align:center}
+.mtx td:first-child{text-align:left;font-size:12.5px;white-space:nowrap;padding-right:10px}
+.cell{display:block;height:22px;border-radius:3px;font-family:var(--mono);font-size:9.5px;line-height:22px;color:var(--t3);background:#F2F1EC}
+.cell.has{background:var(--ink);color:#fff}
+.cell.gap{background:var(--accent-soft);color:var(--accent);border:1px dashed var(--accent)}
+.cell.na{background:transparent;color:#C9C7BE}
+
+.legend{display:flex;flex-wrap:wrap;gap:14px;margin-top:13px;font-family:var(--mono);font-size:10px;color:var(--t2)}
+.legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+
+@media (max-width:900px){
+  .app{flex-direction:column}
+  .rail{width:100%;flex:none;height:auto;position:static;padding-bottom:12px}
+  .wordmark{padding-bottom:14px}
+  .rail-lbl{padding-top:14px}
+  .navbtn{padding:8px 20px}
+  .view{padding:22px 18px 60px}
+  .topbar{padding:12px 18px}
+  h1.vt{font-size:26px}
+  .scen{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="app">
+<aside class="rail">
+  <div class="wordmark">
+    <b>Neurones Intelligence</b>
+    <span>Cockpit décisionnel · Odoo</span>
+  </div>
+
+  <div class="rail-lbl">Postes de pilotage</div>
+  <div role="tablist" aria-label="Profils">
+    <button class="navbtn" role="tab" aria-selected="true" data-v="dg"><i>DG</i>Direction générale</button>
+    <button class="navbtn" role="tab" aria-selected="false" data-v="dc"><i>DC</i>Direction commerciale</button>
+    <button class="navbtn" role="tab" aria-selected="false" data-v="do"><i>DO</i>Direction opérations</button>
+    <button class="navbtn" role="tab" aria-selected="false" data-v="df"><i>DF</i>Direction financière</button>
+    <button class="navbtn" role="tab" aria-selected="false" data-v="am"><i>AM</i>Account manager</button>
+  </div>
+
+  <div class="rail-lbl">Référentiel</div>
+  <div role="tablist" aria-label="Référentiel">
+    <button class="navbtn" role="tab" aria-selected="false" data-v="cov"><i>25</i>Couverture</button>
+    <button class="navbtn" role="tab" aria-selected="false" data-v="eng"><i>5</i>Moteurs &amp; données</button>
+  </div>
+
+  <div class="rail-foot">
+    Source : Odoo 17<br>
+    6 objets · réplica lecture<br>
+    Snapshot quotidien 04:00<br>
+    Données de démonstration
+  </div>
+</aside>
+
+<main class="stage">
+  <div class="topbar">
+    <div class="crumb" id="crumb">Direction générale · semaine 31</div>
+    <div class="topbar-r">
+      <span class="chip">Exercice 2026 · S1 clos</span>
+      <span class="chip chip--live">Sync 04:12</span>
+    </div>
+  </div>
+
+<!-- ================= DG ================= -->
+<section class="view is-on" id="v-dg">
+  <p class="eyebrow">Profil 01 · arbitrage et vision</p>
+  <h1 class="vt">Direction générale</h1>
+  <p class="vsub">Cinq modules orientés décision : ce qui a changé cette semaine, où atterrit l'exercice, quelles dépendances fragilisent l'entreprise.</p>
+
+  <div class="kpis">
+    <div class="kpi"><div class="kpi-l">Atterrissage 2026</div><div class="kpi-v">4 180</div><div class="kpi-d">M FCFA · <span class="dn">&minus;6,2 % vs budget</span></div></div>
+    <div class="kpi"><div class="kpi-l">Facturé YTD</div><div class="kpi-v">2 316</div><div class="kpi-d">M FCFA · 55 % du budget</div></div>
+    <div class="kpi"><div class="kpi-l">Carnet de commandes</div><div class="kpi-v">1 402</div><div class="kpi-d">M FCFA · <span class="up">+11 % vs T1</span></div></div>
+    <div class="kpi"><div class="kpi-l">Visibilité</div><div class="kpi-v">3,6</div><div class="kpi-d">mois · <span class="wa">seuil interne 4,0</span></div></div>
+    <div class="kpi"><div class="kpi-l">Concentration top 5</div><div class="kpi-v">51 %</div><div class="kpi-d"><span class="dn">+7 pts sur 12 mois</span></div></div>
+  </div>
+
+  <div class="mods">
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">01</div>
+        <div class="mod-t"><h3>Briefing de direction</h3><p>Une page rédigée chaque lundi. La valeur est dans le delta commenté, pas dans l'état.</p></div>
+        <div class="eng eng--llm">Narration</div>
+      </div>
+      <div class="mod-b">
+        <div class="narr">
+          <p><b>Semaine 31 — ce qui a bougé.</b> Le carnet de commandes progresse de 11 % grâce à deux signatures Cybersécurité, mais la <span class="mk-r">visibilité recule à 3,6 mois</span> : le backlog se concentre sur des affaires courtes. L'atterrissage médian passe de 4 260 à <span class="mk">4 180 M FCFA</span>, l'écart au budget se creusant de 1,9 pt en une semaine.</p>
+          <p><b>Trois risques.</b> <span class="mk-r">SGCI</span> n'a pas commandé depuis 94 jours contre un rythme habituel de 41 — première fois en trois ans. Le délai de paiement moyen de <span class="mk-r">CIE</span> glisse de 38 à 61 jours sur quatre mois. La practice Intégration applicative tombe à 2,1 mois de visibilité.</p>
+          <p><b>Trois opportunités.</b> 312 M FCFA de parc réseau atteignent leur fin de cycle d'ici mars. Onze comptes de taille comparable n'ont aucune ligne Cybersécurité alors que leurs pairs sectoriels en achètent. Le renouvellement TMA de <span class="mk-s">NSIA Banque</span> arrive à échéance avec un historique sans incident.</p>
+          <p><b>Point d'attention.</b> 34 % du pipeline pondéré porte une date de clôture déjà dépassée. L'atterrissage haut ci-dessous ne tient que si cette hygiène est reprise avant fin août.</p>
+        </div>
+        <div class="acts">
+          <button class="btn btn--p">Ouvrir le brief complet</button>
+          <button class="btn">Comparer à S30</button>
+          <button class="btn">Diffuser au comex</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">02</div>
+        <div class="mod-t"><h3>Atterrissage et scénarios</h3><p>Facturé YTD + carnet de commandes + pipeline pondéré. Hypothèses explicites, variables de bascule nommées.</p></div>
+        <div class="eng">M3 · M5</div>
+      </div>
+      <div class="mod-b">
+        <div class="scen">
+          <div class="sc"><div class="sc-l">Scénario bas</div><div class="sc-v">3 905</div><div class="sc-p">M FCFA · &minus;12,4 % budget<br>Aucune affaire &gt; 90 j ne se signe</div></div>
+          <div class="sc mid"><div class="sc-l">Médian · retenu</div><div class="sc-v">4 180</div><div class="sc-p">M FCFA · &minus;6,2 % budget<br>Conversion au taux historique 31 %</div></div>
+          <div class="sc"><div class="sc-l">Scénario haut</div><div class="sc-v">4 520</div><div class="sc-p">M FCFA · +1,6 % budget<br>Les 3 affaires &gt; 100 M signent en T3</div></div>
+        </div>
+        <p class="mini-l" style="margin-top:18px">Variables de bascule</p>
+        <div class="rows">
+          <div class="row-m"><div><div class="row-n">Renouvellement TMA NSIA Banque</div><div class="row-s">Échéance 30/09 · non arbitré</div></div><div class="nums">impact &plusmn;180 M</div><span class="tag tag--w">à sécuriser</span></div>
+          <div class="row-m"><div><div class="row-n">Migration datacenter Port Autonome</div><div class="row-s">Décision budgétaire client repoussée deux fois</div></div><div class="nums">impact &plusmn;145 M</div><span class="tag tag--r">risque élevé</span></div>
+          <div class="row-m"><div><div class="row-n">Rythme de facturation Intégration</div><div class="row-s">Backlog consommé à 68 % du plan théorique</div></div><div class="nums">impact &plusmn;95 M</div><span class="tag tag--w">à surveiller</span></div>
+        </div>
+        <p class="note">Hypothèses : pondération par étape calibrée sur 26 mois d'historique de snapshots. Le carnet de commandes est réputé consommé linéairement sur la durée contractuelle, faute de feuilles de temps dans le périmètre.</p>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">03</div>
+        <div class="mod-t"><h3>Radar de dépendance</h3><p>Concentration client, dépendance fournisseur, poids du récurrent : une lecture unique de la fragilité.</p></div>
+        <div class="eng">M1 · M4</div>
+      </div>
+      <div class="mod-b">
+        <div class="split">
+          <div>
+            <p class="mini-l">Exposition</p>
+            <div class="wf"><span class="wf-k">Top 1 · SGCI</span><div class="meter"><i class="r" style="width:19%"></i></div><span class="num">19 %</span></div>
+            <div class="wf"><span class="wf-k">Top 5 cumulé</span><div class="meter"><i class="r" style="width:51%"></i></div><span class="num">51 %</span></div>
+            <div class="wf"><span class="wf-k">Top 10 cumulé</span><div class="meter"><i class="w" style="width:71%"></i></div><span class="num">71 %</span></div>
+            <div class="wf"><span class="wf-k">Sous-traitance / CA</span><div class="meter"><i class="w" style="width:24%"></i></div><span class="num">24 %</span></div>
+            <div class="wf"><span class="wf-k">CA récurrent</span><div class="meter"><i class="s" style="width:38%"></i></div><span class="num">38 %</span></div>
+          </div>
+          <div>
+            <p class="mini-l">Concentration top 5 · 8 trimestres</p>
+            <div class="comb">
+              <div class="tooth s" style="height:44%"></div><div class="tooth s" style="height:47%"></div>
+              <div class="tooth s" style="height:45%"></div><div class="tooth w" style="height:52%"></div>
+              <div class="tooth w" style="height:56%"></div><div class="tooth w" style="height:61%"></div>
+              <div class="tooth r" style="height:68%"></div><div class="tooth r" style="height:74%"></div>
+            </div>
+            <div class="comb-ax"><span>T3</span><span>T4</span><span>T1</span><span>T2</span><span>T3</span><span>T4</span><span>T1</span><span>T2</span></div>
+            <p class="note" style="margin-top:15px">Tendance sur deux ans : +7 pts. La croissance provient du top 5, pas de l'élargissement du portefeuille. Deux fournisseurs sont en situation mono-source sur des compétences facturées.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">04</div>
+        <div class="mod-t"><h3>Explication d'écart budgétaire</h3><p>Décomposition volume / mix / prix / comptes perdus, restituée en prose plutôt qu'en cascade illisible.</p></div>
+        <div class="eng eng--llm">Narration · M4</div>
+      </div>
+      <div class="mod-b">
+        <table class="tb">
+          <tr><th>Effet</th><th class="r">M FCFA</th><th class="r">Part de l'écart</th><th>Lecture</th></tr>
+          <tr><td>Volume</td><td class="r mono dn">&minus;148</td><td class="r mono">54 %</td><td>Moins de jours vendus sur Intégration applicative</td></tr>
+          <tr><td>Mix</td><td class="r mono dn">&minus;72</td><td class="r mono">26 %</td><td>Bascule vers le négoce, moins margé que la prestation</td></tr>
+          <tr><td>Prix</td><td class="r mono dn">&minus;41</td><td class="r mono">15 %</td><td>Remises consenties sur trois renouvellements</td></tr>
+          <tr><td>Comptes perdus</td><td class="r mono dn">&minus;63</td><td class="r mono">23 %</td><td>Bolloré Transport et deux comptes moyens</td></tr>
+          <tr><td>Comptes gagnés</td><td class="r mono up">+49</td><td class="r mono">&minus;18 %</td><td>Deux entrées Cybersécurité en T2</td></tr>
+        </table>
+        <div class="narr" style="margin-top:16px">
+          <p>L'écart de <span class="mk-r">&minus;275 M FCFA</span> n'est pas un problème de prix, contrairement à la lecture spontanée du comité. Plus de la moitié vient du volume sur une seule practice, et un quart d'une bascule de mix vers le négoce — dont le chiffre d'affaires masque une contribution nettement plus faible. Un plan d'action sur les tarifs traiterait 15 % du problème.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">05</div>
+        <div class="mod-t"><h3>Interrogation en langage naturel</h3><p>Adossée à la couche sémantique validée, non à la base brute. Chaque réponse expose sa définition et sa requête.</p></div>
+        <div class="eng eng--llm">Sémantique</div>
+      </div>
+      <div class="mod-b">
+        <div class="qbox"><span>?</span><b>Quels comptes ont reculé de plus de 20 % sur 12 mois glissants ?</b><button class="btn">Exécuter</button></div>
+        <div class="rows" style="margin-top:13px">
+          <div class="row-m"><div><div class="row-n">Bolloré Transport &amp; Logistics</div><div class="row-s">412 &rarr; 118 M FCFA · dernière commande il y a 218 j</div></div><div class="num dn">&minus;71 %</div><span class="tag tag--r">perdu</span></div>
+          <div class="row-m"><div><div class="row-n">SIR</div><div class="row-s">286 &rarr; 201 M FCFA · périmètre TMA réduit au renouvellement</div></div><div class="num dn">&minus;30 %</div><span class="tag tag--w">érosion</span></div>
+          <div class="row-m"><div><div class="row-n">Loyale Assurances</div><div class="row-s">94 &rarr; 71 M FCFA · fin d'un projet non remplacé</div></div><div class="num dn">&minus;24 %</div><span class="tag tag--w">érosion</span></div>
+        </div>
+        <p class="note">Définition appliquée · « CA » = lignes de factures validées hors avoirs, hors refacturation de débours. Périmètre : 12 mois glissants au 26/07/2026 vs 12 mois précédents. 3 comptes sur 147 dépassent le seuil.</p>
+        <div class="acts">
+          <button class="btn">Voir la requête générée</button>
+          <button class="btn">Changer la définition de CA</button>
+          <button class="btn">Exporter</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ================= DC ================= -->
+<section class="view" id="v-dc">
+  <p class="eyebrow">Profil 02 · pilotage commercial</p>
+  <h1 class="vt">Direction commerciale</h1>
+  <p class="vsub">Le pipeline tel qu'il est, non tel qu'il est déclaré. L'écart entre les deux est le premier livrable de ce poste.</p>
+
+  <div class="kpis">
+    <div class="kpi"><div class="kpi-l">Pipeline brut</div><div class="kpi-v">2 840</div><div class="kpi-d">M FCFA · 61 opportunités</div></div>
+    <div class="kpi"><div class="kpi-l">Pipeline pondéré</div><div class="kpi-v">874</div><div class="kpi-d">M FCFA · au taux historique</div></div>
+    <div class="kpi"><div class="kpi-l">Forecast annoncé</div><div class="kpi-v">1 190</div><div class="kpi-d"><span class="dn">+36 % vs probable</span></div></div>
+    <div class="kpi"><div class="kpi-l">Hygiène pipeline</div><div class="kpi-v">34 %</div><div class="kpi-d"><span class="dn">dates dépassées</span></div></div>
+    <div class="kpi"><div class="kpi-l">Cycle moyen</div><div class="kpi-v">87</div><div class="kpi-d">jours · <span class="wa">+12 j vs N-1</span></div></div>
+  </div>
+
+  <div class="mods">
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">06</div>
+        <div class="mod-t"><h3>Crédibilité du forecast</h3><p>Fiabilité individuelle calibrée sur l'historique des snapshots : ce qui a été annoncé, ce qui s'est réellement signé.</p></div>
+        <div class="eng">M5</div>
+      </div>
+      <div class="mod-b">
+        <table class="tb">
+          <tr><th>Commercial</th><th class="r">Annoncé T3</th><th class="r">Probable</th><th class="r">Fiabilité 8 trim.</th><th>Biais dominant</th></tr>
+          <tr><td>K. Assamoi</td><td class="r mono">420</td><td class="r mono">252</td><td class="r mono dn">60 %</td><td>Dates de clôture optimistes de 6 semaines</td></tr>
+          <tr><td>M. Diallo</td><td class="r mono">310</td><td class="r mono">288</td><td class="r mono up">93 %</td><td>Aucun biais mesurable</td></tr>
+          <tr><td>P. Koné</td><td class="r mono">265</td><td class="r mono">190</td><td class="r mono wa">72 %</td><td>Montants révisés à la baisse en fin de cycle</td></tr>
+          <tr><td>A. Tanoh</td><td class="r mono">195</td><td class="r mono">144</td><td class="r mono wa">74 %</td><td>Affaires maintenues ouvertes trop longtemps</td></tr>
+        </table>
+        <div class="narr" style="margin-top:16px">
+          <p>Le forecast consolidé de <span class="mk">1 190 M FCFA</span> corrigé des biais individuels ressort à <span class="mk-r">874 M</span>. L'écart est concentré sur un seul portefeuille : appliquer la fiabilité historique de K. Assamoi retire à lui seul 168 M du forecast annoncé.</p>
+        </div>
+        <p class="note">Calcul possible uniquement grâce à l'historisation quotidienne du pipeline. Sans snapshot, Odoo n'aurait conservé que l'état courant et cette page n'existerait pas.</p>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">07</div>
+        <div class="mod-t"><h3>Opportunités à risque</h3><p>Classées par motif et action attendue, pas en liste brute. Chaque ligne a un propriétaire.</p></div>
+        <div class="eng">M5 · M1</div>
+      </div>
+      <div class="mod-b">
+        <div class="rows">
+          <div class="row-m"><div><div class="row-n">Migration datacenter · Port Autonome d'Abidjan</div><div class="row-s">145 M · clôture annoncée 30/06, jamais mise à jour · 41 j sans activité</div></div><span class="tag tag--r">date dépassée</span><span class="tag tag--n">P. Koné</span></div>
+          <div class="row-m"><div><div class="row-n">Refonte réseau agences · Ecobank</div><div class="row-s">88 M · en négociation depuis 154 j, cycle médian 87 j</div></div><span class="tag tag--r">âge anormal</span><span class="tag tag--n">K. Assamoi</span></div>
+          <div class="row-m"><div><div class="row-n">Licences collaboratives · MTN CI</div><div class="row-s">62 M · aucune activité depuis 67 j, bloquée en qualification</div></div><span class="tag tag--w">dormante</span><span class="tag tag--n">A. Tanoh</span></div>
+          <div class="row-m"><div><div class="row-n">Extension SOC · SGCI</div><div class="row-s">130 M · interlocuteur technique remplacé, sponsor non identifié</div></div><span class="tag tag--w">sponsor absent</span><span class="tag tag--n">M. Diallo</span></div>
+          <div class="row-m"><div><div class="row-n">TMA applicative · Petro Ivoire</div><div class="row-s">45 M · montant divisé par deux en trois révisions</div></div><span class="tag tag--w">périmètre qui glisse</span><span class="tag tag--n">P. Koné</span></div>
+        </div>
+        <div class="acts">
+          <button class="btn btn--p">Assigner les 5 actions</button>
+          <button class="btn">Purger le pipeline</button>
+          <button class="btn">Revue avec les commerciaux</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">08</div>
+        <div class="mod-t"><h3>Ciblage cross-sell chiffré</h3><p>Matrice compte &times; famille. Les cases vides chez les comptes dont les pairs achètent sont des cibles, avec potentiel estimé.</p></div>
+        <div class="eng">M1 · sémantique</div>
+      </div>
+      <div class="mod-b">
+        <table class="mtx">
+          <tr><th>Compte</th><th>Infra<br>cloud</th><th>Cyber<br>sécu</th><th>Intég.<br>applic.</th><th>TMA<br>support</th><th>Négoce<br>licences</th><th style="text-align:right">Potentiel</th></tr>
+          <tr><td>SGCI</td><td><span class="cell has">✓</span></td><td><span class="cell has">✓</span></td><td><span class="cell has">✓</span></td><td><span class="cell has">✓</span></td><td><span class="cell has">✓</span></td><td class="mono" style="text-align:right;color:var(--t3)">—</td></tr>
+          <tr><td>NSIA Banque</td><td><span class="cell has">✓</span></td><td><span class="cell has">✓</span></td><td><span class="cell gap">cible</span></td><td><span class="cell has">✓</span></td><td><span class="cell has">✓</span></td><td class="mono" style="text-align:right">74 M</td></tr>
+          <tr><td>Ecobank</td><td><span class="cell has">✓</span></td><td><span class="cell gap">cible</span></td><td><span class="cell"></span></td><td><span class="cell has">✓</span></td><td><span class="cell has">✓</span></td><td class="mono" style="text-align:right">112 M</td></tr>
+          <tr><td>CIE</td><td><span class="cell has">✓</span></td><td><span class="cell gap">cible</span></td><td><span class="cell has">✓</span></td><td><span class="cell"></span></td><td><span class="cell has">✓</span></td><td class="mono" style="text-align:right">96 M</td></tr>
+          <tr><td>Port Autonome</td><td><span class="cell has">✓</span></td><td><span class="cell"></span></td><td><span class="cell"></span></td><td><span class="cell gap">cible</span></td><td><span class="cell has">✓</span></td><td class="mono" style="text-align:right">58 M</td></tr>
+          <tr><td>Petro Ivoire</td><td><span class="cell"></span></td><td><span class="cell gap">cible</span></td><td><span class="cell has">✓</span></td><td><span class="cell has">✓</span></td><td><span class="cell"></span></td><td class="mono" style="text-align:right">41 M</td></tr>
+          <tr><td>SIR</td><td><span class="cell has">✓</span></td><td><span class="cell has">✓</span></td><td><span class="cell"></span></td><td><span class="cell gap">cible</span></td><td><span class="cell na">n/a</span></td><td class="mono" style="text-align:right">67 M</td></tr>
+        </table>
+        <div class="legend">
+          <span><i style="background:var(--ink)"></i>famille déjà achetée</span>
+          <span><i style="background:var(--accent-soft);border:1px dashed var(--accent)"></i>cible : les pairs sectoriels achètent</span>
+          <span><i style="background:#F2F1EC"></i>absente, pas de signal</span>
+          <span><i style="background:transparent;border:1px solid var(--line-2)"></i>hors périmètre contractuel</span>
+        </div>
+        <p class="note">Potentiel estimé par analogie : médiane dépensée sur la famille par les comptes du même secteur et de taille comparable, pondérée par la part de portefeuille déjà captée. Total identifié : 448 M FCFA sur 14 comptes.</p>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">09</div>
+        <div class="mod-t"><h3>Analyse des motifs de perte</h3><p>Les causes récurrentes formulées en recommandations d'argumentaire, par segment et par concurrent.</p></div>
+        <div class="eng eng--llm">Narration · M5</div>
+      </div>
+      <div class="mod-b">
+        <div class="split">
+          <div>
+            <p class="mini-l">Motifs · 12 mois · 23 affaires perdues</p>
+            <div class="wf"><span class="wf-k">Prix</span><div class="meter"><i class="r" style="width:39%"></i></div><span class="num">9</span></div>
+            <div class="wf"><span class="wf-k">Concurrent en place</span><div class="meter"><i class="r" style="width:26%"></i></div><span class="num">6</span></div>
+            <div class="wf"><span class="wf-k">Budget gelé</span><div class="meter"><i class="w" style="width:17%"></i></div><span class="num">4</span></div>
+            <div class="wf"><span class="wf-k">Périmètre inadapté</span><div class="meter"><i class="w" style="width:13%"></i></div><span class="num">3</span></div>
+            <div class="wf"><span class="wf-k">Non renseigné</span><div class="meter"><i style="width:5%"></i></div><span class="num">1</span></div>
+          </div>
+          <div>
+            <p class="mini-l">Lecture</p>
+            <div class="narr" style="font-size:13.5px">
+              <p>Les pertes sur le prix se concentrent sur une seule configuration : les affaires de négoce et licences en dessous de 30 M, où la remise moyenne consentie avant perte atteint 14 %. Sur la prestation pure, le prix n'apparaît que deux fois.</p>
+              <p>Le même concurrent revient sur cinq des six pertes « concurrent en place », toutes sur le secteur bancaire, toutes sur des renouvellements TMA. Le cycle de ces affaires est 40 % plus court que la moyenne : elles sont décidées avant même d'entrer au pipeline.</p>
+            </div>
+          </div>
+        </div>
+        <p class="note">Recommandation générée · engager les renouvellements TMA bancaires 120 jours avant échéance plutôt que 60, et sortir le négoce sous 30 M du circuit de remise commerciale.</p>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">10</div>
+        <div class="mod-t"><h3>Coaching de portefeuille</h3><p>Note de préparation d'entretien mensuel : couverture du quota, mix, vélocité comparée aux pairs.</p></div>
+        <div class="eng eng--llm">M5 · narration</div>
+      </div>
+      <div class="mod-b">
+        <div class="rows">
+          <div class="row-m"><div><div class="row-n">K. Assamoi · couverture 1,4&times;</div><div class="row-s">Pipeline suffisant mais 62 % concentré sur deux affaires. Vélocité 118 j contre 87 j pour ses pairs.</div></div><div class="meter"><i class="w" style="width:47%"></i></div><span class="tag tag--w">à recadrer</span></div>
+          <div class="row-m"><div><div class="row-n">M. Diallo · couverture 3,1&times;</div><div class="row-s">Mix équilibré, prévisions fiables. Sous-utilisé sur les grands comptes : aucune affaire &gt; 100 M.</div></div><div class="meter"><i class="s" style="width:88%"></i></div><span class="tag tag--s">à faire monter</span></div>
+          <div class="row-m"><div><div class="row-n">P. Koné · couverture 1,9&times;</div><div class="row-s">Bonne prospection, mais 4 affaires sur 11 ont vu leur montant divisé. Cadrage du besoin à travailler.</div></div><div class="meter"><i class="w" style="width:58%"></i></div><span class="tag tag--w">à accompagner</span></div>
+          <div class="row-m"><div><div class="row-n">A. Tanoh · couverture 0,8&times;</div><div class="row-s">Pipeline insuffisant pour son objectif. Aucune nouvelle opportunité créée depuis 5 semaines.</div></div><div class="meter"><i class="r" style="width:26%"></i></div><span class="tag tag--r">alerte</span></div>
+        </div>
+        <div class="acts">
+          <button class="btn btn--p">Générer les 4 notes d'entretien</button>
+          <button class="btn">Comparer à M-1</button>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ================= DO ================= -->
+<section class="view" id="v-do">
+  <p class="eyebrow">Profil 03 · livraison et charge</p>
+  <h1 class="vt">Direction des opérations</h1>
+  <p class="vsub">Sans feuilles de temps dans le périmètre, tout ce poste raisonne par proxy sur le carnet de commandes. C'est utile, indirect, et signalé comme tel sur chaque module.</p>
+
+  <div class="kpis">
+    <div class="kpi"><div class="kpi-l">Backlog total</div><div class="kpi-v">1 402</div><div class="kpi-d">M FCFA · 38 affaires actives</div></div>
+    <div class="kpi"><div class="kpi-l">Consommation vs plan</div><div class="kpi-v">82 %</div><div class="kpi-d"><span class="dn">retard de 254 M</span></div></div>
+    <div class="kpi"><div class="kpi-l">Practice la plus tendue</div><div class="kpi-v">2,1</div><div class="kpi-d">mois · Intégration applicative</div></div>
+    <div class="kpi"><div class="kpi-l">Affaires en dérive</div><div class="kpi-v">6</div><div class="kpi-d"><span class="wa">412 M exposés</span></div></div>
+    <div class="kpi"><div class="kpi-l">Fournisseurs hors délai</div><div class="kpi-v">4</div><div class="kpi-d">sur 22 actifs</div></div>
+  </div>
+
+  <div class="mods">
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">11</div>
+        <div class="mod-t"><h3>Consommation du backlog vs plan</h3><p>Une commande signée qui ne se facture pas au rythme prévu signale un retard de démarrage ou un périmètre qui glisse.</p></div>
+        <div class="eng">M3</div>
+      </div>
+      <div class="mod-b">
+        <table class="tb">
+          <tr><th>Affaire</th><th class="r">Montant</th><th class="r">Facturé</th><th class="r">Attendu</th><th class="r">Écart</th><th>Diagnostic</th></tr>
+          <tr><td>Refonte SI · CIE</td><td class="r mono">340</td><td class="r mono">122</td><td class="r mono">204</td><td class="r mono dn">&minus;82</td><td>Démarrage décalé de 7 semaines</td></tr>
+          <tr><td>TMA · SIR</td><td class="r mono">201</td><td class="r mono">148</td><td class="r mono">168</td><td class="r mono dn">&minus;20</td><td>Périmètre réduit sans avenant</td></tr>
+          <tr><td>SOC managé · NSIA Banque</td><td class="r mono">186</td><td class="r mono">186</td><td class="r mono">174</td><td class="r mono up">+12</td><td>Avance conforme, prestations additionnelles</td></tr>
+          <tr><td>Réseau agences · Ecobank</td><td class="r mono">154</td><td class="r mono">39</td><td class="r mono">108</td><td class="r mono dn">&minus;69</td><td>Attente livraison matériel fournisseur</td></tr>
+          <tr><td>Cloud privé · Port Autonome</td><td class="r mono">128</td><td class="r mono">96</td><td class="r mono">102</td><td class="r mono">&minus;6</td><td>Nominal</td></tr>
+        </table>
+        <p class="note">Proxy assumé · le « attendu » est la courbe théorique de facturation, calculée au prorata temporel de la durée contractuelle. Un écart signale un décalage réel, mais n'en donne pas la cause — l'affaire Ecobank ci-dessus tient à un fournisseur, celle de CIE à un staffing.</p>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">12</div>
+        <div class="mod-t"><h3>Mois de visibilité par practice</h3><p>Backlog divisé par le rythme de facturation mensuel. Meilleur proxy d'inter-contrat disponible dans le périmètre.</p></div>
+        <div class="eng">M3</div>
+      </div>
+      <div class="mod-b">
+        <div class="split">
+          <div>
+            <div class="wf"><span class="wf-k">Infrastructure &amp; cloud</span><div class="meter"><i class="s" style="width:82%"></i></div><span class="num">4,9 m</span></div>
+            <div class="wf"><span class="wf-k">Cybersécurité</span><div class="meter"><i class="s" style="width:95%"></i></div><span class="num">5,7 m</span></div>
+            <div class="wf"><span class="wf-k">TMA &amp; support</span><div class="meter"><i class="s" style="width:73%"></i></div><span class="num">4,4 m</span></div>
+            <div class="wf"><span class="wf-k">Négoce &amp; licences</span><div class="meter"><i class="w" style="width:52%"></i></div><span class="num">3,1 m</span></div>
+            <div class="wf"><span class="wf-k">Intégration applicative</span><div class="meter"><i class="r" style="width:35%"></i></div><span class="num">2,1 m</span></div>
+          </div>
+          <div>
+            <p class="mini-l">Intégration applicative · 12 mois</p>
+            <div class="comb">
+              <div class="tooth s" style="height:84%"></div><div class="tooth s" style="height:88%"></div>
+              <div class="tooth s" style="height:80%"></div><div class="tooth s" style="height:76%"></div>
+              <div class="tooth w" style="height:66%"></div><div class="tooth w" style="height:61%"></div>
+              <div class="tooth w" style="height:57%"></div><div class="tooth w" style="height:50%"></div>
+              <div class="tooth r" style="height:44%"></div><div class="tooth r" style="height:39%"></div>
+              <div class="tooth r" style="height:35%"></div><div class="tooth r" style="height:30%"></div>
+            </div>
+            <div class="comb-ax"><span>A</span><span>S</span><span>O</span><span>N</span><span>D</span><span>J</span><span>F</span><span>M</span><span>A</span><span>M</span><span>J</span><span>J</span></div>
+            <p class="note" style="margin-top:15px">Dégradation continue sur onze mois, sans rupture brutale — donc invisible en revue mensuelle. Sous le seuil de 3 mois depuis mars. Aucune affaire &gt; 50 M au pipeline sur cette practice.</p>
+          </div>
+        </div>
+        <div class="acts"><button class="btn btn--p">Alerter la direction commerciale</button><button class="btn">Voir les affaires de la practice</button></div>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">13</div>
+        <div class="mod-t"><h3>Détection de dérive d'affaire</h3><p>Écart entre courbe de facturation réelle et courbe théorique, ordonné par montant à risque plutôt que par pourcentage.</p></div>
+        <div class="eng">M3</div>
+      </div>
+      <div class="mod-b">
+        <div class="rows">
+          <div class="row-m"><div><div class="row-n">Refonte SI · CIE</div><div class="row-s">Facturation à 36 % à mi-parcours contre 60 % attendus. Deux jalons contractuels non atteints.</div></div><div class="num dn">82 M exposés</div><span class="tag tag--r">dérive forte</span></div>
+          <div class="row-m"><div><div class="row-n">Réseau agences · Ecobank</div><div class="row-s">Blocage amont : bon de commande fournisseur émis il y a 71 j, réception partielle.</div></div><div class="num dn">69 M exposés</div><span class="tag tag--r">dérive forte</span></div>
+          <div class="row-m"><div><div class="row-n">Déploiement postes · MTN CI</div><div class="row-s">Facturation par lots irrégulière, dernier lot il y a 54 j.</div></div><div class="num wa">48 M exposés</div><span class="tag tag--w">à surveiller</span></div>
+          <div class="row-m"><div><div class="row-n">TMA · SIR</div><div class="row-s">Réduction de périmètre constatée sans avenant : risque de litige au solde.</div></div><div class="num wa">20 M exposés</div><span class="tag tag--w">contractuel</span></div>
+        </div>
+        <p class="note">Total exposé : 412 M FCFA sur 6 affaires. Deux causes racines distinctes derrière les six lignes : staffing interne (3) et amont fournisseur (3). Le module 14 traite la seconde.</p>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">14</div>
+        <div class="mod-t"><h3>Fiabilité fournisseurs</h3><p>Écarts entre date de commande, réception et facturation. Scoring et commentaire par fournisseur critique.</p></div>
+        <div class="eng">M2</div>
+      </div>
+      <div class="mod-b">
+        <table class="tb">
+          <tr><th>Fournisseur</th><th>Nature</th><th class="r">Délai annoncé</th><th class="r">Délai constaté</th><th class="r">Dérive</th><th>Affaires impactées</th></tr>
+          <tr><td>Westcon (Cisco)</td><td>Matériel réseau</td><td class="r mono">21 j</td><td class="r mono dn">58 j</td><td class="r mono dn">+37 j</td><td>Ecobank, MTN CI</td></tr>
+          <tr><td>Exclusive Networks</td><td>Sécurité</td><td class="r mono">14 j</td><td class="r mono wa">26 j</td><td class="r mono wa">+12 j</td><td>NSIA Banque</td></tr>
+          <tr><td>ITX Consulting</td><td>Sous-traitance</td><td class="r mono">—</td><td class="r mono wa">—</td><td class="r mono wa">n/a</td><td>CIE, Petro Ivoire</td></tr>
+          <tr><td>Ingram Micro</td><td>Licences</td><td class="r mono">7 j</td><td class="r mono up">6 j</td><td class="r mono up">&minus;1 j</td><td>—</td></tr>
+          <tr><td>Dell Technologies</td><td>Serveurs</td><td class="r mono">30 j</td><td class="r mono">32 j</td><td class="r mono">+2 j</td><td>Port Autonome</td></tr>
+        </table>
+        <div class="narr" style="margin-top:16px">
+          <p>La dérive de <span class="mk-r">Westcon</span> explique à elle seule 117 M FCFA de facturation client décalée sur deux affaires. Le délai constaté a doublé sur les six derniers mois sans que le délai contractuel soit renégocié : les engagements pris au client reposent encore sur 21 jours.</p>
+        </div>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">15</div>
+        <div class="mod-t"><h3>Tension sur la sous-traitance</h3><p>Poids et prix de la sous-traitance par compétence, avec identification des situations mono-fournisseur.</p></div>
+        <div class="eng">M4</div>
+      </div>
+      <div class="mod-b">
+        <div class="rows">
+          <div class="row-m"><div><div class="row-n">Expertise SAP · ITX Consulting</div><div class="row-s">Mono-fournisseur · 100 % du besoin · TJA achat +18 % sur 12 mois</div></div><div class="num dn">184 M / an</div><span class="tag tag--r">dépendance critique</span></div>
+          <div class="row-m"><div><div class="row-n">Ingénierie réseau · 2 partenaires</div><div class="row-s">Répartition 78 / 22 · TJA achat +9 %</div></div><div class="num wa">96 M / an</div><span class="tag tag--w">quasi mono-source</span></div>
+          <div class="row-m"><div><div class="row-n">Analystes SOC · 3 partenaires</div><div class="row-s">Répartition équilibrée · TJA achat stable</div></div><div class="num">72 M / an</div><span class="tag tag--s">sain</span></div>
+          <div class="row-m"><div><div class="row-n">Développement mobile · 1 partenaire</div><div class="row-s">Mono-fournisseur mais volume faible et non récurrent</div></div><div class="num">21 M / an</div><span class="tag tag--n">à surveiller</span></div>
+        </div>
+        <p class="note">La compétence SAP cumule les deux risques : dépendance totale à un partenaire et hausse du prix d'achat non répercutée. Le module 19 chiffre l'effet sur la marge de revente.</p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ================= DF ================= -->
+<section class="view" id="v-df">
+  <p class="eyebrow">Profil 04 · cash et marge</p>
+  <h1 class="vt">Direction financière</h1>
+  <p class="vsub">Le poste où l'outil se paie de lui-même. Les modules 16 et 20 sortent du cash dès le premier mois d'exploitation.</p>
+
+  <div class="kpis">
+    <div class="kpi"><div class="kpi-l">Encours client</div><div class="kpi-v">1 128</div><div class="kpi-d">M FCFA · 214 factures</div></div>
+    <div class="kpi"><div class="kpi-l">DSO global</div><div class="kpi-v">67</div><div class="kpi-d">jours · <span class="dn">+9 j sur 12 mois</span></div></div>
+    <div class="kpi"><div class="kpi-l">Échu &gt; 90 j</div><div class="kpi-v">186</div><div class="kpi-d">M FCFA · <span class="dn">16 % de l'encours</span></div></div>
+    <div class="kpi"><div class="kpi-l">Encaissement 30 j</div><div class="kpi-v">412</div><div class="kpi-d">M FCFA prévus · <span class="wa">vs 528 contractuel</span></div></div>
+    <div class="kpi"><div class="kpi-l">Anomalies ouvertes</div><div class="kpi-v">31</div><div class="kpi-d"><span class="up">154 M récupérables</span></div></div>
+  </div>
+
+  <div class="mods">
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">16</div>
+        <div class="mod-t"><h3>Prévision d'encaissement comportementale</h3><p>Échéancier pondéré par le comportement de paiement réel de chaque client, non par les conditions contractuelles.</p></div>
+        <div class="eng">M2</div>
+      </div>
+      <div class="mod-b">
+        <div class="split">
+          <div>
+            <p class="mini-l">Encaissements prévus · 4 mois</p>
+            <div class="comb" style="height:56px">
+              <div class="tooth a" style="height:74%;width:16px"></div><div class="tooth" style="height:88%;width:16px"></div>
+              <div class="tooth a" style="height:61%;width:16px"></div><div class="tooth" style="height:79%;width:16px"></div>
+              <div class="tooth a" style="height:52%;width:16px"></div><div class="tooth" style="height:66%;width:16px"></div>
+              <div class="tooth a" style="height:44%;width:16px"></div><div class="tooth" style="height:57%;width:16px"></div>
+            </div>
+            <div class="comb-ax"><span style="width:35px">août</span><span style="width:35px">sept</span><span style="width:35px">oct</span><span style="width:35px">nov</span></div>
+            <div class="legend"><span><i style="background:var(--accent)"></i>prévision comportementale</span><span><i style="background:var(--line-2)"></i>échéancier contractuel</span></div>
+          </div>
+          <div>
+            <p class="mini-l">Écart par client</p>
+            <div class="wf"><span class="wf-k">CIE</span><div class="meter"><i class="r" style="width:78%"></i></div><span class="num dn">&minus;61 M</span></div>
+            <div class="wf"><span class="wf-k">Port Autonome</span><div class="meter"><i class="r" style="width:44%"></i></div><span class="num dn">&minus;34 M</span></div>
+            <div class="wf"><span class="wf-k">Petro Ivoire</span><div class="meter"><i class="w" style="width:26%"></i></div><span class="num wa">&minus;18 M</span></div>
+            <div class="wf"><span class="wf-k">NSIA Banque</span><div class="meter"><i class="s" style="width:12%"></i></div><span class="num up">+8 M</span></div>
+          </div>
+        </div>
+        <p class="note">Sur 30 jours, la prévision comportementale ressort 116 M FCFA sous l'échéancier contractuel — soit 22 %. Trois clients expliquent 96 % de l'écart. C'est le chiffre à porter en comité de trésorerie, pas le solde des factures ouvertes.</p>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">17</div>
+        <div class="mod-t"><h3>Dérive du délai de paiement</h3><p>Glissement du délai réel mois après mois. Le signal faible le plus fiable disponible dans ce périmètre de données.</p></div>
+        <div class="eng">M2</div>
+      </div>
+      <div class="mod-b">
+        <div class="split">
+          <div>
+            <p class="mini-l">CIE · délai réel constaté, 8 mois</p>
+            <div class="comb">
+              <div class="tooth s" style="height:38%"></div><div class="tooth s" style="height:36%"></div>
+              <div class="tooth s" style="height:41%"></div><div class="tooth w" style="height:48%"></div>
+              <div class="tooth w" style="height:55%"></div><div class="tooth r" style="height:64%"></div>
+              <div class="tooth r" style="height:72%"></div><div class="tooth r" style="height:78%"></div>
+            </div>
+            <div class="comb-ax"><span>D</span><span>J</span><span>F</span><span>M</span><span>A</span><span>M</span><span>J</span><span>J</span></div>
+            <p class="note" style="margin-top:14px">38 &rarr; 61 jours en cinq mois. Condition contractuelle : 30 jours. Aucun litige déclaré, aucune contestation de facture. Le rythme de commande, lui, reste normal.</p>
+          </div>
+          <div>
+            <p class="mini-l">Comptes en dérive</p>
+            <div class="rows">
+              <div class="row"><div><div class="row-n">CIE</div><div class="row-s">38 &rarr; 61 j · encours 214 M</div></div><span class="tag tag--r">+23 j</span></div>
+              <div class="row"><div><div class="row-n">Port Autonome d'Abidjan</div><div class="row-s">45 &rarr; 62 j · encours 148 M</div></div><span class="tag tag--r">+17 j</span></div>
+              <div class="row"><div><div class="row-n">Petro Ivoire</div><div class="row-s">30 &rarr; 41 j · encours 62 M</div></div><span class="tag tag--w">+11 j</span></div>
+              <div class="row"><div><div class="row-n">Loyale Assurances</div><div class="row-s">34 &rarr; 40 j · encours 28 M</div></div><span class="tag tag--w">+6 j</span></div>
+            </div>
+            <div class="acts"><button class="btn btn--p">Escalader les 2 comptes rouges</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">18</div>
+        <div class="mod-t"><h3>Surveillance de l'exposition</h3><p>Encours contre plafond de crédit, croisé avec ancienneté et rythme de commande, pour arbitrer les blocages de livraison.</p></div>
+        <div class="eng">M1 · M2</div>
+      </div>
+      <div class="mod-b">
+        <table class="tb">
+          <tr><th>Compte</th><th class="r">Encours</th><th class="r">Plafond</th><th class="r">Taux</th><th class="r">Échu &gt; 60 j</th><th>Arbitrage proposé</th></tr>
+          <tr><td>CIE</td><td class="r mono">214</td><td class="r mono">200</td><td class="r mono dn">107 %</td><td class="r mono dn">88</td><td>Bloquer les nouvelles livraisons, client stratégique : arbitrage DG</td></tr>
+          <tr><td>Port Autonome</td><td class="r mono">148</td><td class="r mono">150</td><td class="r mono wa">99 %</td><td class="r mono wa">41</td><td>Conditionner la prochaine commande à un acompte</td></tr>
+          <tr><td>MTN CI</td><td class="r mono">96</td><td class="r mono">180</td><td class="r mono up">53 %</td><td class="r mono">0</td><td>Nominal</td></tr>
+          <tr><td>Petro Ivoire</td><td class="r mono">62</td><td class="r mono">80</td><td class="r mono wa">78 %</td><td class="r mono wa">14</td><td>Relever le plafond : rythme de commande en hausse</td></tr>
+          <tr><td>Loyale Assurances</td><td class="r mono">28</td><td class="r mono">60</td><td class="r mono up">47 %</td><td class="r mono">0</td><td>Nominal</td></tr>
+        </table>
+        <p class="note">Le croisement évite deux erreurs symétriques : bloquer un compte sain dont le plafond est simplement obsolète, et livrer un compte au plafond dépassé dont le délai de paiement dérive en parallèle. CIE cumule les deux signaux.</p>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">19</div>
+        <div class="mod-t"><h3>Effet ciseau achat / vente</h3><p>Évolution du prix d'achat contre le prix de vente sur une même référence ou compétence. C'est là que la marge se perd sans bruit.</p></div>
+        <div class="eng">M4</div>
+      </div>
+      <div class="mod-b">
+        <table class="tb">
+          <tr><th>Référence / compétence</th><th class="r">Prix achat N-1</th><th class="r">Prix achat N</th><th class="r">Prix vente N</th><th class="r">Marge N-1</th><th class="r">Marge N</th></tr>
+          <tr><td>Expertise SAP · j/h</td><td class="r mono">210 000</td><td class="r mono dn">248 000</td><td class="r mono">310 000</td><td class="r mono">32 %</td><td class="r mono dn">20 %</td></tr>
+          <tr><td>Ingénierie réseau · j/h</td><td class="r mono">145 000</td><td class="r mono dn">158 000</td><td class="r mono">225 000</td><td class="r mono">36 %</td><td class="r mono wa">30 %</td></tr>
+          <tr><td>Switch cœur de réseau</td><td class="r mono">4 210 000</td><td class="r mono dn">4 890 000</td><td class="r mono">5 400 000</td><td class="r mono">22 %</td><td class="r mono dn">9 %</td></tr>
+          <tr><td>Licences collaboratives</td><td class="r mono">32 000</td><td class="r mono">33 500</td><td class="r mono">44 000</td><td class="r mono">27 %</td><td class="r mono">24 %</td></tr>
+          <tr><td>Analystes SOC · j/h</td><td class="r mono">120 000</td><td class="r mono">121 000</td><td class="r mono up">195 000</td><td class="r mono">38 %</td><td class="r mono up">38 %</td></tr>
+        </table>
+        <div class="narr" style="margin-top:16px">
+          <p>Deux lignes concentrent l'érosion. Sur <span class="mk-r">l'expertise SAP</span>, le prix d'achat a progressé de 18 % quand le tarif de vente est resté figé : 12 points de marge perdus sur 184 M de volume annuel, soit environ 22 M FCFA. Sur le <span class="mk-r">switch cœur de réseau</span>, la marge tombe à 9 % — sous le seuil de rentabilité du négoce une fois la logistique imputée.</p>
+        </div>
+        <p class="note">Ces deux dérives n'apparaissent nulle part dans le suivi de chiffre d'affaires : le CA de ces lignes est stable ou en hausse. Seul le rapprochement ligne d'achat / ligne de vente les révèle.</p>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">20</div>
+        <div class="mod-t"><h3>Détection d'anomalies de facturation</h3><p>Retour cash immédiat. C'est habituellement l'accroche qui fait accepter le projet.</p></div>
+        <div class="eng">M3 · M4</div>
+      </div>
+      <div class="mod-b">
+        <div class="rows">
+          <div class="row-m"><div><div class="row-n">Commandes livrées non facturées</div><div class="row-s">9 commandes · réception validée depuis plus de 30 j · pas de facture rattachée</div></div><div class="num up">+82 M</div><span class="tag tag--r">action immédiate</span></div>
+          <div class="row-m"><div><div class="row-n">Écarts commande / facture</div><div class="row-s">11 factures sous-facturées par rapport aux lignes de commande signées</div></div><div class="num up">+37 M</div><span class="tag tag--r">à corriger</span></div>
+          <div class="row-m"><div><div class="row-n">Remises hors norme</div><div class="row-s">6 lignes au-delà de 15 % sans validation tracée</div></div><div class="num wa">24 M</div><span class="tag tag--w">à régulariser</span></div>
+          <div class="row-m"><div><div class="row-n">Doublons fournisseurs</div><div class="row-s">3 factures d'achat avec même montant, même référence, même fournisseur</div></div><div class="num up">+11 M</div><span class="tag tag--w">à vérifier</span></div>
+          <div class="row-m"><div><div class="row-n">Débours non refacturés</div><div class="row-s">2 affaires · frais engagés prévus refacturables au contrat</div></div><div class="num up">+4 M</div><span class="tag tag--n">à instruire</span></div>
+        </div>
+        <p class="note">Total identifié : 158 M FCFA, dont 119 M de récupération directe. Détection par règles explicites et rapprochement, sans modèle statistique : chaque anomalie est vérifiable ligne à ligne, donc opposable en interne.</p>
+        <div class="acts"><button class="btn btn--p">Générer les 9 factures manquantes</button><button class="btn">Exporter le dossier de régularisation</button></div>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ================= AM ================= -->
+<section class="view" id="v-am">
+  <p class="eyebrow">Profil 05 · terrain</p>
+  <h1 class="vt">Account manager</h1>
+  <p class="vsub">Le poste qui décide de l'adoption. Si ces cinq modules ne sont pas utilisés chaque semaine, le projet reste un tableau de bord que personne n'ouvre.</p>
+
+  <div class="kpis">
+    <div class="kpi"><div class="kpi-l">Portefeuille</div><div class="kpi-v">18</div><div class="kpi-d">comptes actifs</div></div>
+    <div class="kpi"><div class="kpi-l">CA 12 mois</div><div class="kpi-v">684</div><div class="kpi-d">M FCFA · <span class="up">+6 %</span></div></div>
+    <div class="kpi"><div class="kpi-l">Alertes ouvertes</div><div class="kpi-v">4</div><div class="kpi-d"><span class="wa">2 à traiter cette semaine</span></div></div>
+    <div class="kpi"><div class="kpi-l">Potentiel identifié</div><div class="kpi-v">213</div><div class="kpi-d">M FCFA · 7 actions</div></div>
+    <div class="kpi"><div class="kpi-l">Renouvellements 90 j</div><div class="kpi-v">3</div><div class="kpi-d">186 M FCFA en jeu</div></div>
+  </div>
+
+  <div class="mods">
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">21</div>
+        <div class="mod-t"><h3>Fiche compte avant rendez-vous</h3><p>Une page rédigée à la demande : historique, mix, tendance, encours, affaires en cours, points de vigilance.</p></div>
+        <div class="eng eng--llm">Narration</div>
+      </div>
+      <div class="mod-b">
+        <div class="qbox" style="margin-bottom:14px"><span>compte</span><b>NSIA Banque · RDV le 29/07 avec le DSI</b><button class="btn">Régénérer</button></div>
+        <div class="split">
+          <div>
+            <p class="mini-l">Repères</p>
+            <div class="wf"><span class="wf-k">CA 12 mois</span><div></div><span class="num">241 M FCFA</span></div>
+            <div class="wf"><span class="wf-k">Tendance</span><div></div><span class="num up">+14 %</span></div>
+            <div class="wf"><span class="wf-k">Récurrent</span><div></div><span class="num">62 %</span></div>
+            <div class="wf"><span class="wf-k">Encours</span><div></div><span class="num">74 M</span></div>
+            <div class="wf"><span class="wf-k">Délai de paiement</span><div></div><span class="num up">28 j</span></div>
+            <div class="wf"><span class="wf-k">Affaires ouvertes</span><div></div><span class="num">2 · 178 M</span></div>
+            <p class="mini-l" style="margin-top:18px">Rythme de commande · 18 mois</p>
+            <div class="comb" style="height:34px">
+              <div class="tooth s" style="height:56%"></div><div class="tooth s" style="height:40%"></div>
+              <div class="tooth s" style="height:72%"></div><div class="tooth s" style="height:48%"></div>
+              <div class="tooth s" style="height:60%"></div><div class="tooth s" style="height:88%"></div>
+              <div class="tooth s" style="height:44%"></div><div class="tooth s" style="height:64%"></div>
+              <div class="tooth s" style="height:52%"></div><div class="tooth s" style="height:76%"></div>
+              <div class="tooth s" style="height:48%"></div><div class="tooth s" style="height:68%"></div>
+            </div>
+          </div>
+          <div>
+            <p class="mini-l">Synthèse</p>
+            <div class="narr" style="font-size:13.5px">
+              <p>Compte sain et régulier : intervalle de commande de 34 jours, jamais dépassé de plus d'une semaine en trois ans. Paiement systématiquement en avance sur l'échéance.</p>
+              <p>Le SOC managé est facturé légèrement au-dessus du contrat grâce à des prestations additionnelles acceptées sans négociation — signal de satisfaction, et argument pour le renouvellement.</p>
+              <p><b>À préparer :</b> le renouvellement TMA arrive à échéance le 30/09 et n'est pas engagé. L'analyse des pertes montre que ce type de renouvellement bancaire se décide 120 jours à l'avance, souvent hors pipeline. Il reste 64 jours.</p>
+              <p><b>Angle de développement :</b> aucune ligne Intégration applicative, alors que trois banques comparables du portefeuille en achètent. Potentiel estimé 74 M FCFA.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">22</div>
+        <div class="mod-t"><h3>Next best action</h3><p>Trois recommandations classées par compte, avec justification chiffrée et montant potentiel. La brique la plus utilisée en pratique.</p></div>
+        <div class="eng eng--llm">M1 · M3 · narration</div>
+      </div>
+      <div class="mod-b">
+        <div class="rows">
+          <div class="row-m"><div><div class="row-n">1 · Engager le renouvellement TMA de NSIA Banque</div><div class="row-s">64 j avant échéance. Les renouvellements bancaires se décident 120 j à l'avance : vous êtes déjà en retard sur le cycle de décision.</div></div><div class="num">180 M</div><span class="tag tag--r">cette semaine</span></div>
+          <div class="row-m"><div><div class="row-n">2 · Appeler SGCI sans attendre un motif commercial</div><div class="row-s">94 j sans commande contre 41 j habituels. Première rupture en trois ans, aucune explication dans les données.</div></div><div class="num">à qualifier</div><span class="tag tag--r">cette semaine</span></div>
+          <div class="row-m"><div><div class="row-n">3 · Proposer le renouvellement du parc réseau de CIE</div><div class="row-s">42 équipements atteignent 5 ans d'ici mars. Mais encours à 107 % du plafond : cadrer le financement avant la proposition.</div></div><div class="num">112 M</div><span class="tag tag--w">sous 30 j</span></div>
+          <div class="row-m"><div><div class="row-n">4 · Ouvrir la Cybersécurité chez Ecobank</div><div class="row-s">Seule banque du portefeuille sans ligne Cybersécurité. Trois pairs sectoriels équipés.</div></div><div class="num">112 M</div><span class="tag tag--n">ce trimestre</span></div>
+          <div class="row-m"><div><div class="row-n">5 · Régulariser le périmètre TMA de SIR</div><div class="row-s">Réduction constatée sans avenant. Risque de litige au solde de 20 M.</div></div><div class="num">20 M</div><span class="tag tag--w">sous 30 j</span></div>
+        </div>
+        <p class="note">Chaque recommandation porte sa source : moteur de détection, chiffre déclencheur, seuil appliqué. Une action refusée alimente le calibrage — au bout de trois refus du même motif, la règle est révisée.</p>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">23</div>
+        <div class="mod-t"><h3>Alerte rupture de rythme</h3><p>Notification nominative dès qu'un compte dépasse son intervalle habituel, avec le contexte pour appeler utilement.</p></div>
+        <div class="eng">M1</div>
+      </div>
+      <div class="mod-b">
+        <div class="split">
+          <div>
+            <p class="mini-l">SGCI · commandes sur 18 mois</p>
+            <div class="comb">
+              <div class="tooth a" style="height:62%"></div><div class="tooth a" style="height:48%"></div>
+              <div class="tooth a" style="height:80%"></div><div class="tooth a" style="height:54%"></div>
+              <div class="tooth a" style="height:70%"></div><div class="tooth a" style="height:44%"></div>
+              <div class="tooth a" style="height:88%"></div><div class="tooth a" style="height:58%"></div>
+              <div class="tooth a" style="height:66%"></div>
+              <div class="tooth void" style="height:66%"></div><div class="tooth void" style="height:66%"></div>
+              <div class="tooth void" style="height:66%"></div>
+            </div>
+            <div class="comb-ax"><span>F</span><span>M</span><span>A</span><span>M</span><span>J</span><span>J</span><span>A</span><span>S</span><span>O</span><span>N</span><span>D</span><span>J</span></div>
+            <p class="note" style="margin-top:14px">Intervalle habituel 41 j &plusmn; 9. Dernière commande il y a 94 j. Trois créneaux manqués, matérialisés par les dents vides.</p>
+          </div>
+          <div>
+            <p class="mini-l">Contexte disponible</p>
+            <div class="rows">
+              <div class="row"><div><div class="row-n">Paiements</div><div class="row-s">Toujours dans les délais, aucun litige</div></div><span class="tag tag--s">sain</span></div>
+              <div class="row"><div><div class="row-n">Pipeline</div><div class="row-s">Extension SOC 130 M, sponsor non identifié depuis le changement d'interlocuteur</div></div><span class="tag tag--w">bloqué</span></div>
+              <div class="row"><div><div class="row-n">Affaires livrées</div><div class="row-s">Dernier projet clos sans incident en mars</div></div><span class="tag tag--s">sain</span></div>
+              <div class="row"><div><div class="row-n">Poids du compte</div><div class="row-s">19 % du CA · première exposition de l'entreprise</div></div><span class="tag tag--r">critique</span></div>
+            </div>
+            <div class="acts"><button class="btn btn--p">Préparer l'appel</button><button class="btn">Marquer comme expliqué</button></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">24</div>
+        <div class="mod-t"><h3>Radar renouvellement et obsolescence de parc</h3><p>Échéances contractuelles et matériel arrivant en fin de cycle, avec montant de renouvellement estimé.</p></div>
+        <div class="eng">M1 · M3</div>
+      </div>
+      <div class="mod-b">
+        <table class="tb">
+          <tr><th>Compte</th><th>Objet</th><th class="r">Installé / signé</th><th class="r">Fin de cycle</th><th class="r">Renouvellement est.</th><th>État</th></tr>
+          <tr><td>NSIA Banque</td><td>Contrat TMA applicative</td><td class="r mono">10/2023</td><td class="r mono">30/09/2026</td><td class="r mono">180 M</td><td><span class="tag tag--r">64 j · non engagé</span></td></tr>
+          <tr><td>CIE</td><td>42 switchs d'accès · 5 ans</td><td class="r mono">03/2021</td><td class="r mono">03/2026</td><td class="r mono">112 M</td><td><span class="tag tag--w">échu · à proposer</span></td></tr>
+          <tr><td>MTN CI</td><td>Licences collaboratives · 3 ans</td><td class="r mono">12/2023</td><td class="r mono">12/2026</td><td class="r mono">64 M</td><td><span class="tag tag--n">148 j</span></td></tr>
+          <tr><td>Port Autonome</td><td>18 serveurs · 6 ans</td><td class="r mono">06/2020</td><td class="r mono">06/2026</td><td class="r mono">96 M</td><td><span class="tag tag--w">échu · financement à cadrer</span></td></tr>
+          <tr><td>SIR</td><td>Contrat SOC · 2 ans</td><td class="r mono">01/2025</td><td class="r mono">01/2027</td><td class="r mono">72 M</td><td><span class="tag tag--s">nominal</span></td></tr>
+        </table>
+        <p class="note">Obsolescence de parc, calculée sur date de facture et durée de vie par famille — entièrement dans Odoo. À ne pas confondre avec les tendances technologiques de marché, qui restent hors périmètre et relèveraient d'un module distinct alimenté par des sources externes.</p>
+      </div>
+    </div>
+
+    <div class="mod">
+      <div class="mod-h">
+        <div class="mod-n">25</div>
+        <div class="mod-t"><h3>Aide à la rédaction contextualisée</h3><p>Relance, proposition de renouvellement, reprise de contact : pré-remplis avec les données réelles du compte.</p></div>
+        <div class="eng eng--llm">Narration</div>
+      </div>
+      <div class="mod-b">
+        <div class="acts" style="margin:0 0 14px">
+          <button class="btn btn--p">Reprise de contact</button>
+          <button class="btn">Relance d'encours</button>
+          <button class="btn">Proposition de renouvellement</button>
+          <button class="btn">Compte rendu de RDV</button>
+        </div>
+        <div class="narr">
+          <p style="font-family:var(--mono);font-size:11.5px;color:var(--t3);letter-spacing:.04em">Brouillon · reprise de contact · SGCI · à relire avant envoi</p>
+          <p style="margin-top:12px">Bonjour Monsieur Bamba,</p>
+          <p>Nous avons livré la phase 2 du projet de segmentation réseau en mars et je n'ai pas eu l'occasion d'échanger avec vous depuis. Je souhaitais faire un point, notamment sur l'extension du périmètre SOC dont nous avions parlé au premier trimestre : le dossier est resté en attente de votre côté et je préfère vérifier qu'il correspond toujours à vos priorités plutôt que de le laisser courir.</p>
+          <p>Auriez-vous une disponibilité la semaine prochaine, mardi ou jeudi matin ?</p>
+        </div>
+        <p class="note">Le brouillon reprend le dernier projet livré, l'affaire en attente et le changement d'interlocuteur détecté. Aucune donnée financière du compte n'est insérée dans un message sortant sans validation explicite.</p>
+      </div>
+    </div>
+
+  </div>
+</section>
+
+<!-- ================= COUVERTURE ================= -->
+<section class="view" id="v-cov">
+  <p class="eyebrow">Référentiel · contrôle de couverture</p>
+  <h1 class="vt">Couverture 25 / 25</h1>
+  <p class="vsub">Les vingt-cinq fonctionnalités validées, rattachées à leur profil, à leur moteur de détection et aux objets Odoo mobilisés. Un module non couvert apparaîtrait en rouge dans cette table.</p>
+
+  <div class="kpis">
+    <div class="kpi"><div class="kpi-l">Fonctionnalités</div><div class="kpi-v">25 / 25</div><div class="kpi-d"><span class="up">couverture complète</span></div></div>
+    <div class="kpi"><div class="kpi-l">Profils</div><div class="kpi-v">5 / 5</div><div class="kpi-d">5 modules chacun</div></div>
+    <div class="kpi"><div class="kpi-l">Moteurs</div><div class="kpi-v">5</div><div class="kpi-d">+ 1 couche narration</div></div>
+    <div class="kpi"><div class="kpi-l">Objets Odoo</div><div class="kpi-v">6</div><div class="kpi-d">périmètre initial confirmé</div></div>
+    <div class="kpi"><div class="kpi-l">Hors périmètre</div><div class="kpi-v">1</div><div class="kpi-d"><span class="wa">tendances techno marché</span></div></div>
+  </div>
+
+  <div class="mod">
+    <div class="mod-h">
+      <div class="mod-n">—</div>
+      <div class="mod-t"><h3>Table de couverture</h3><p>Chaque ligne renvoie au module correspondant dans la maquette.</p></div>
+      <div class="eng">contrôle</div>
+    </div>
+    <div class="mod-b">
+      <table class="tb">
+        <tr><th>N°</th><th>Profil</th><th>Fonctionnalité</th><th>Moteur</th><th>Objets Odoo</th><th>État</th></tr>
+        <tr><td class="mono">01</td><td>DG</td><td>Briefing de direction hebdomadaire</td><td class="mono">narration</td><td class="mono">tous</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">02</td><td>DG</td><td>Atterrissage et scénarios</td><td class="mono">M3 · M5</td><td class="mono">sale.order · account.move · crm.lead</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">03</td><td>DG</td><td>Radar de dépendance</td><td class="mono">M1 · M4</td><td class="mono">account.move · purchase.order</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">04</td><td>DG</td><td>Explication d'écart budgétaire</td><td class="mono">M4 · narration</td><td class="mono">account.move.line · product</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">05</td><td>DG</td><td>Interrogation en langage naturel</td><td class="mono">sémantique</td><td class="mono">couche sémantique</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">06</td><td>DC</td><td>Crédibilité du forecast</td><td class="mono">M5</td><td class="mono">crm.lead + snapshots</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">07</td><td>DC</td><td>Opportunités à risque</td><td class="mono">M5 · M1</td><td class="mono">crm.lead · mail.activity</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">08</td><td>DC</td><td>Ciblage cross-sell chiffré</td><td class="mono">M1 · sémantique</td><td class="mono">sale.order.line · res.partner</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">09</td><td>DC</td><td>Analyse des motifs de perte</td><td class="mono">M5 · narration</td><td class="mono">crm.lead · crm.lost.reason</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">10</td><td>DC</td><td>Coaching de portefeuille</td><td class="mono">M5 · narration</td><td class="mono">crm.lead + snapshots</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">11</td><td>DO</td><td>Consommation du backlog vs plan</td><td class="mono">M3</td><td class="mono">sale.order.line · account.move.line</td><td><span class="tag tag--w">proxy</span></td></tr>
+        <tr><td class="mono">12</td><td>DO</td><td>Mois de visibilité par practice</td><td class="mono">M3</td><td class="mono">sale.order · account.move</td><td><span class="tag tag--w">proxy</span></td></tr>
+        <tr><td class="mono">13</td><td>DO</td><td>Détection de dérive d'affaire</td><td class="mono">M3</td><td class="mono">sale.order.line · account.move.line</td><td><span class="tag tag--w">proxy</span></td></tr>
+        <tr><td class="mono">14</td><td>DO</td><td>Fiabilité fournisseurs</td><td class="mono">M2</td><td class="mono">purchase.order · account.move</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">15</td><td>DO</td><td>Tension sur la sous-traitance</td><td class="mono">M4</td><td class="mono">purchase.order.line</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">16</td><td>DF</td><td>Prévision d'encaissement comportementale</td><td class="mono">M2</td><td class="mono">account.move · account.payment</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">17</td><td>DF</td><td>Dérive du délai de paiement</td><td class="mono">M2</td><td class="mono">account.move · payment.term</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">18</td><td>DF</td><td>Surveillance de l'exposition</td><td class="mono">M1 · M2</td><td class="mono">res.partner · account.move</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">19</td><td>DF</td><td>Effet ciseau achat / vente</td><td class="mono">M4</td><td class="mono">purchase.order.line · sale.order.line</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">20</td><td>DF</td><td>Détection d'anomalies de facturation</td><td class="mono">M3 · M4</td><td class="mono">sale.order · account.move · purchase.order</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">21</td><td>AM</td><td>Fiche compte avant rendez-vous</td><td class="mono">narration</td><td class="mono">tous</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">22</td><td>AM</td><td>Next best action</td><td class="mono">M1 · M3 · narration</td><td class="mono">tous</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">23</td><td>AM</td><td>Alerte rupture de rythme</td><td class="mono">M1</td><td class="mono">sale.order · account.move</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">24</td><td>AM</td><td>Radar renouvellement et obsolescence</td><td class="mono">M1 · M3</td><td class="mono">account.move.line · product.template</td><td><span class="tag tag--s">couvert</span></td></tr>
+        <tr><td class="mono">25</td><td>AM</td><td>Aide à la rédaction contextualisée</td><td class="mono">narration</td><td class="mono">tous</td><td><span class="tag tag--s">couvert</span></td></tr>
+      </table>
+      <div class="legend">
+        <span><i style="background:var(--signal-soft);border:1px solid #C3D6CE"></i>couvert par le périmètre Odoo confirmé</span>
+        <span><i style="background:var(--watch-soft);border:1px solid #E6D3A8"></i>proxy assumé, faute de feuilles de temps</span>
+      </div>
+      <p class="note">Trois modules sur vingt-cinq reposent sur un proxy et non sur une mesure directe. Ils sont signalés comme tels dans l'interface, sur chaque écran concerné, plutôt que présentés comme une mesure de charge réelle. Ouvrir les feuilles de temps et la comptabilité analytique les transformerait en mesures exactes et ajouterait la marge par affaire.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ================= MOTEURS ================= -->
+<section class="view" id="v-eng">
+  <p class="eyebrow">Référentiel · architecture fonctionnelle</p>
+  <h1 class="vt">Cinq moteurs, vingt-cinq vues</h1>
+  <p class="vsub">Les vingt-cinq fonctionnalités ne sont pas vingt-cinq développements. Elles reposent sur cinq détecteurs et une couche de narration : construire les moteurs une fois, décliner les vues ensuite.</p>
+
+  <div class="mods">
+    <div class="mod">
+      <div class="mod-h"><div class="mod-n">M1</div><div class="mod-t"><h3>Rupture de rythme</h3><p>Écart entre le délai depuis le dernier événement et l'intervalle habituel du compte.</p></div><div class="eng">6 modules</div></div>
+      <div class="mod-b">
+        <p class="mini-l">Alimente</p>
+        <div class="rows"><div class="row"><div class="row-n">03 radar de dépendance · 08 cross-sell · 18 exposition · 22 next best action · 23 alerte rythme · 24 renouvellement</div></div></div>
+        <p class="note">Entrées : sale.order, account.move. Paramètre unique par compte : intervalle médian et dispersion sur 24 mois. Seuil de départ : dernier délai &gt; médiane + 1,5 écart, minimum 3 commandes d'historique.</p>
+      </div>
+    </div>
+    <div class="mod">
+      <div class="mod-h"><div class="mod-n">M2</div><div class="mod-t"><h3>Dérive de délai</h3><p>Glissement d'un délai réel constaté par rapport à son engagement et à son propre historique.</p></div><div class="eng">4 modules</div></div>
+      <div class="mod-b">
+        <p class="mini-l">Alimente</p>
+        <div class="rows"><div class="row"><div class="row-n">14 fiabilité fournisseurs · 16 encaissement comportemental · 17 dérive de paiement · 18 exposition</div></div></div>
+        <p class="note">Entrées : account.move et dates de paiement côté client, purchase.order et dates de réception côté fournisseur. Même calcul, deux sens. Seuil de départ : pente positive sur 3 mois consécutifs et écart &gt; 10 jours.</p>
+      </div>
+    </div>
+    <div class="mod">
+      <div class="mod-h"><div class="mod-n">M3</div><div class="mod-t"><h3>Écart backlog / facturation</h3><p>Différence entre la courbe de facturation réelle et la courbe théorique du contrat.</p></div><div class="eng">7 modules</div></div>
+      <div class="mod-b">
+        <p class="mini-l">Alimente</p>
+        <div class="rows"><div class="row"><div class="row-n">02 atterrissage · 11 consommation backlog · 12 visibilité · 13 dérive d'affaire · 20 anomalies · 22 next best action · 24 renouvellement</div></div></div>
+        <p class="note">Entrées : sale.order.line, account.move.line, rattachement commande / facture. C'est le moteur le plus transverse, et celui dont la qualité dépend le plus du taux de rattachement mesuré au profiling.</p>
+      </div>
+    </div>
+    <div class="mod">
+      <div class="mod-h"><div class="mod-n">M4</div><div class="mod-t"><h3>Écart prix achat / vente</h3><p>Évolution comparée du prix d'achat et du prix de vente sur une même référence ou compétence.</p></div><div class="eng">5 modules</div></div>
+      <div class="mod-b">
+        <p class="mini-l">Alimente</p>
+        <div class="rows"><div class="row"><div class="row-n">03 radar de dépendance · 04 écart budgétaire · 15 tension sous-traitance · 19 effet ciseau · 20 anomalies</div></div></div>
+        <p class="note">Entrées : purchase.order.line, sale.order.line, référentiel de familles normalisé. Prérequis bloquant : sans normalisation des libellés, ce moteur ne produit rien d'exploitable.</p>
+      </div>
+    </div>
+    <div class="mod">
+      <div class="mod-h"><div class="mod-n">M5</div><div class="mod-t"><h3>Scoring pipeline</h3><p>Probabilité et crédibilité d'une opportunité, calibrées sur la fiabilité historique observée.</p></div><div class="eng">5 modules</div></div>
+      <div class="mod-b">
+        <p class="mini-l">Alimente</p>
+        <div class="rows"><div class="row"><div class="row-n">02 atterrissage · 06 crédibilité forecast · 07 opportunités à risque · 09 motifs de perte · 10 coaching</div></div></div>
+        <p class="note">Entrées : crm.lead et surtout les snapshots quotidiens. Seul moteur dont l'existence dépend d'une décision à prendre immédiatement : Odoo écrase les états, l'historique non capté aujourd'hui est définitivement perdu.</p>
+      </div>
+    </div>
+    <div class="mod">
+      <div class="mod-h"><div class="mod-n">LLM</div><div class="mod-t"><h3>Couche de narration</h3><p>Ni détecteur ni prédicteur : elle met en mots, hiérarchise et rédige ce que les cinq moteurs ont détecté.</p></div><div class="eng eng--llm">9 modules</div></div>
+      <div class="mod-b">
+        <p class="mini-l">Alimente</p>
+        <div class="rows"><div class="row"><div class="row-n">01 briefing · 04 écart budgétaire · 05 langage naturel · 06 crédibilité · 09 motifs de perte · 10 coaching · 21 fiche compte · 22 next best action · 25 rédaction</div></div></div>
+        <p class="note">Choix assumé · pas de prévision chiffrée par apprentissage. Le volume de données — quelques milliers d'opportunités et de factures — ne le justifie pas, et un score non explicable ne survit pas à un comité de direction. Chaque affirmation produite par cette couche cite son moteur, son chiffre déclencheur et son seuil.</p>
+      </div>
+    </div>
+  </div>
+
+  <p class="note" style="margin-top:24px;border-left-color:var(--accent)">Deux décisions restent à prendre avant le développement · lancer le snapshot quotidien cette semaine, avant toute autre chose. Et cadrer deux à trois semaines de profiling qualité : taux de remplissage des dates et montants d'opportunités, cohérence des libellés produits, taux de rattachement facture / commande. Ces trois pourcentages déterminent lesquels des vingt-cinq modules sont honnêtement livrables.</p>
+</section>
+
+</main>
+</div>
+
+<script>
+(function(){
+  var labels={dg:"Direction générale · semaine 31",dc:"Direction commerciale · pipeline T3",
+    "do":"Direction des opérations · juillet 2026",df:"Direction financière · encours au 26/07",
+    am:"Account manager · K. Assamoi",cov:"Référentiel · couverture 25 / 25",
+    eng:"Référentiel · moteurs et données"};
+  var tabs=[].slice.call(document.querySelectorAll('.navbtn'));
+  var crumb=document.getElementById('crumb');
+  function show(v){
+    tabs.forEach(function(t){t.setAttribute('aria-selected',t.dataset.v===v?'true':'false');});
+    [].slice.call(document.querySelectorAll('.view')).forEach(function(s){
+      s.classList.toggle('is-on',s.id==='v-'+v);
+    });
+    if(labels[v])crumb.textContent=labels[v];
+    window.scrollTo(0,0);
+  }
+  tabs.forEach(function(t){t.addEventListener('click',function(){show(t.dataset.v);});});
+})();
+</script>
