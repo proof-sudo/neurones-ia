@@ -363,28 +363,10 @@ const MOCK_RESULT: ScoringResult = {
 
 // ── Shared mini-components ────────────────────────────────────────────────────
 
-function SectionCard({ title, icon, children, className, collapsible = false, defaultOpen = false, headerRight }: {
+function SectionCard({ title, icon, children, className, headerRight }: {
   title: string; icon?: React.ReactNode; children: React.ReactNode; className?: string;
-  collapsible?: boolean; defaultOpen?: boolean; headerRight?: React.ReactNode;
+  headerRight?: React.ReactNode;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
-  if (collapsible) {
-    return (
-      <div className={cn("bg-panel rounded-xl", className)}>
-        <button
-          type="button"
-          onClick={() => setOpen(o => !o)}
-          className="w-full flex items-center gap-2 p-4 text-left"
-        >
-          {icon && <span className="text-muted shrink-0">{icon}</span>}
-          <h3 className="text-sm font-semibold text-text flex-1">{title}</h3>
-          {headerRight}
-          <ChevronDown size={16} className={cn("text-muted shrink-0 transition-transform", open && "rotate-180")} />
-        </button>
-        {open && <div className="px-4 pb-4">{children}</div>}
-      </div>
-    );
-  }
   return (
     <div className={cn("bg-panel rounded-xl p-4", className)}>
       <h3 className="text-sm font-semibold text-text mb-3 flex items-center gap-2">
@@ -577,7 +559,6 @@ function RequiredProfilesCard({ profils }: { profils?: RequiredProfile[] }) {
     <SectionCard
       title={`Profils demandés (${profils.length})`}
       icon={<Briefcase size={15} />}
-      collapsible
       headerRight={totalPostes > 0 ? (
         <span className="text-[11px] font-bold text-text bg-panel-2 border border-line rounded-full px-2.5 py-0.5 shrink-0">
           {totalPostes} poste{totalPostes > 1 ? "s" : ""} au total
@@ -749,29 +730,34 @@ function DecisionBtn({ label, colorKey, selected, onClick }: {
 
 // ── Score Ring ────────────────────────────────────────────────────────────────
 
-function ScoreRing({ score }: { score: number }) {
-  const radius = 38;
-  const stroke = 8;
+function ScoreRing({ score, size = 104, caption = "/100", color, textColor, displayValue }: {
+  score: number; size?: number; caption?: string; color?: string; textColor?: string; displayValue?: number | string;
+}) {
+  const radius = (size / 104) * 38;
+  const stroke = (size / 104) * 8;
+  const center = size / 2;
   const circumference = 2 * Math.PI * radius;
   const progress = (score / 100) * circumference;
-  const color = score >= 70 ? "#0ea37a" : score >= 40 ? "#c77d00" : "#d64545";
-  const textColor = score >= 70 ? "text-good" : score >= 40 ? "text-warn" : "text-bad";
+  const ringColor = color ?? (score >= 70 ? "#0ea37a" : score >= 40 ? "#c77d00" : "#d64545");
+  const numberColor = textColor ?? (score >= 70 ? "text-good" : score >= 40 ? "text-warn" : "text-bad");
 
   return (
-    <div className="relative flex items-center justify-center shrink-0" style={{ width: 104, height: 104 }}>
-      <svg width="104" height="104" viewBox="0 0 104 104" className="-rotate-90">
-        <circle cx="52" cy="52" r={radius} fill="none" stroke="#deded7" strokeWidth={stroke} />
+    <div className="relative flex items-center justify-center shrink-0" style={{ width: size, height: size }}>
+      <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
+        <circle cx={center} cy={center} r={radius} fill="none" stroke="#deded7" strokeWidth={stroke} />
         <circle
-          cx="52" cy="52" r={radius} fill="none"
-          stroke={color} strokeWidth={stroke}
+          cx={center} cy={center} r={radius} fill="none"
+          stroke={ringColor} strokeWidth={stroke}
           strokeDasharray={`${progress} ${circumference}`}
           strokeLinecap="round"
           style={{ transition: "stroke-dasharray 0.6s ease" }}
         />
       </svg>
       <div className="absolute text-center">
-        <span className={cn("text-3xl font-bold leading-none", textColor)}>{score}</span>
-        <span className="text-xs text-muted block mt-0.5">/100</span>
+        <span className={cn("font-bold leading-none", numberColor)} style={{ fontSize: size * 0.29 }}>
+          {displayValue ?? score}
+        </span>
+        {caption && <span className="text-xs text-muted block mt-0.5">{caption}</span>}
       </div>
     </div>
   );
@@ -798,63 +784,60 @@ function SubScoreBar({ label, score, rationale }: { label: string; score: number
 
 // ── Décomposition du score : grille d'évaluation détaillée ──────────────────────
 
-const RISK_LEVEL_STYLE: Record<string, string> = {
+const RISK_LEVEL_TEXT: Record<string, string> = {
+  FAIBLE: "text-good",
+  "MODÉRÉ": "text-warn",
+  "ÉLEVÉ": "text-good",
+  CRITIQUE: "text-bad",
+};
+const RISK_LEVEL_BADGE: Record<string, string> = {
   FAIBLE: "bg-good/15 text-good",
   "MODÉRÉ": "bg-warn/15 text-warn",
-  "ÉLEVÉ": "bg-ai/15 text-warn",
+  "ÉLEVÉ": "bg-good/15 text-good",
   CRITIQUE: "bg-bad/15 text-bad",
-};
-const RISK_LEVEL_BAR: Record<string, string> = {
-  FAIBLE: "bg-good",
-  "MODÉRÉ": "bg-warn",
-  "ÉLEVÉ": "bg-ai",
-  CRITIQUE: "bg-bad",
 };
 
 function ScoreBreakdown({ criteria }: { criteria: ScoringCriterion[] }) {
   if (!criteria.length) {
     return <p className="text-sm text-muted italic">Pas de grille d'évaluation décomposée disponible.</p>;
   }
-  const totalMax = criteria.reduce((s, c) => s + c.max_points, 0);
-  const totalEst = criteria.reduce((s, c) => s + c.estimated_score, 0);
+
   return (
-    <div className="space-y-3">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
       {criteria.map((c) => {
-        const pct = c.max_points > 0 ? (c.estimated_score / c.max_points) * 100 : 0;
+        const tooltip = [
+          c.rationale,
+          c.sources_ged.length > 0 ? `Sources : ${c.sources_ged.join(", ")}` : "",
+        ].filter(Boolean).join("\n\n");
         return (
-          <div key={c.id}>
-            <div className="flex items-baseline justify-between gap-2 mb-1">
-              <span className={cn("text-sm text-text", c.is_inferred && "italic text-muted")}>
-                {c.label}
-                {c.is_inferred && (
-                  <span className="ml-1.5 text-[10px] font-medium px-1.5 py-0.5 rounded-full bg-panel-2 text-muted not-italic align-middle">
-                    estimé
-                  </span>
-                )}
+          <div
+            key={c.id}
+            title={tooltip || undefined}
+            className="flex flex-col items-center text-center gap-1.5 rounded-xl bg-panel-2 p-3"
+          >
+            <div className="w-full flex items-center justify-between gap-1">
+              <span className="text-[9px] font-bold uppercase tracking-wide text-muted bg-panel rounded-full px-2 py-0.5 truncate">
+                {c.category}
               </span>
-              <span className="text-xs font-semibold text-text shrink-0">
-                {c.estimated_score}/{c.max_points}
-              </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="flex-1 h-2 rounded-full bg-panel-2 overflow-hidden">
-                <div
-                  className={cn("h-full rounded-full transition-all", RISK_LEVEL_BAR[c.risk_level] ?? "bg-muted")}
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-              <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0", RISK_LEVEL_STYLE[c.risk_level] ?? "bg-panel-2 text-muted")}>
+              <span className={cn("text-[9px] font-bold uppercase tracking-wide rounded-full px-2 py-0.5 shrink-0", RISK_LEVEL_BADGE[c.risk_level] ?? "bg-panel text-muted")}>
                 {c.risk_level}
               </span>
             </div>
-            {c.rationale && <p className="text-[11px] text-muted mt-0.5">{c.rationale}</p>}
+            <div className="leading-none">
+              <span className={cn("text-2xl font-bold", RISK_LEVEL_TEXT[c.risk_level] ?? "text-text")}>
+                {c.estimated_score}
+              </span>
+              <span className="text-sm font-medium text-muted"> / {c.max_points}</span>
+            </div>
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-text leading-snug line-clamp-2">
+                {c.label}
+              </div>
+              {c.is_inferred && <div className="text-[10px] text-muted italic mt-0.5">estimé</div>}
+            </div>
           </div>
         );
       })}
-      <div className="flex items-center justify-between pt-2 mt-1 border-t border-line">
-        <span className="text-sm font-semibold text-text">Total estimé</span>
-        <span className="text-sm font-bold text-text">{totalEst} / {totalMax} pts</span>
-      </div>
     </div>
   );
 }
@@ -1242,25 +1225,140 @@ function StepperBar({ ao, viewStep, onStepClick, steps }: {
 
 // ── Step content ──────────────────────────────────────────────────────────────
 
+type SectionTab = { id: string; label: string; icon: React.ReactNode; show: boolean };
+
+// Sections de l'analyse AO (Step 1), affichées une à la fois façon onglets.
+function getSectionTabs(r: ScoringResult): SectionTab[] {
+  const ev = r.evaluation_modalities;
+  return [
+    { id: "sec-key-elements", label: "Points clés", icon: <BarChart2 size={12} />, show: (r.key_elements?.length ?? 0) > 0 },
+    {
+      id: "sec-evaluation", label: "Modalités d'évaluation", icon: <Scale size={12} />,
+      show: !!ev && (
+        ev.ponderation_technique > 0 || ev.ponderation_financiere > 0 || ev.seuil_minimum_technique > 0 ||
+        !!ev.formule_notation_financiere || (ev.modalites?.length ?? 0) > 0
+      ),
+    },
+    { id: "sec-profils", label: "Profils demandés", icon: <Briefcase size={12} />, show: (r.profils_demandes?.length ?? 0) > 0 },
+    {
+      id: "sec-ressources", label: "Ressources demandées", icon: <Users size={12} />,
+      show: (r.profils_demandes?.length ?? 0) === 0 && (r.ressources_demandees?.length ?? 0) > 0,
+    },
+    { id: "sec-seuils", label: "Seuils d'éligibilité", icon: <Scale size={12} />, show: (r.seuils_eligibilite?.length ?? 0) > 0 },
+    /* Masqué à la demande utilisateur (27/07/2026) : onglet retiré du menu, section conservée mais non affichée.
+    {
+      id: "sec-financier", label: "Données financières", icon: <Coins size={12} />,
+      show: !!fin && (!!fin.budget_estime || !!fin.modalites_paiement || !!fin.garantie_soumission || !!fin.penalites),
+    },
+    */
+    { id: "sec-vigilance", label: "Points de vigilance", icon: <Eye size={12} />, show: (r.points_vigilance?.length ?? 0) > 0 },
+  ].filter(it => it.show);
+}
+
+// Sections de l'étape Score & Décision (Step 2), affichées une à la fois façon onglets.
+function getScoreDecisionSectionTabs(r: ScoringResult): SectionTab[] {
+  return [
+    { id: "sec2-score", label: "Score de matching", icon: <Layers size={12} />, show: true },
+    { id: "sec2-equipe", label: "Équipe proposable", icon: <Users size={12} />, show: true },
+    { id: "sec2-projets", label: "Projets similaires", icon: <FileText size={12} />, show: true },
+    { id: "sec2-grille", label: "Grille d'évaluation", icon: <BarChart2 size={12} />, show: (r.criteria_breakdown?.length ?? 0) > 0 },
+    { id: "sec2-prealables", label: "Préalables conditionnels", icon: <ClipboardList size={12} />, show: r.recommendation === "CONDITIONAL" },
+    { id: "sec2-forces-risques", label: "Forces & Risques", icon: <CheckCircle size={12} />, show: true },
+    {
+      id: "sec2-ecarts", label: "Analyse des écarts", icon: <Target size={12} />,
+      show: !!r.gaps_analysis && !r.gaps_analysis.startsWith("{") && !r.gaps_analysis.startsWith("```"),
+    },
+  ].filter(it => it.show);
+}
+
+function IconActionButton({ onClick, disabled, title, children }: {
+  onClick: () => void; disabled?: boolean; title: string; children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      title={title}
+      className="p-1.5 rounded-full text-muted bg-panel border border-line hover:border-ai hover:text-ai disabled:opacity-50 transition-colors shrink-0"
+    >
+      {children}
+    </button>
+  );
+}
+
+function QuickNav({ items, active, onSelect, actions }: {
+  items: SectionTab[]; active: string; onSelect: (id: string) => void; actions?: React.ReactNode;
+}) {
+  if (items.length === 0) return null;
+
+  return (
+    <div className="sticky top-0 z-10 -mx-1 px-1 py-1.5 bg-panel-2/95 backdrop-blur rounded-lg flex items-center gap-2">
+      <div className="flex items-center gap-1.5 w-max overflow-x-auto">
+        {items.map(it => (
+          <button
+            key={it.id}
+            type="button"
+            onClick={() => onSelect(it.id)}
+            className={cn(
+              "flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium transition-colors whitespace-nowrap border",
+              active === it.id
+                ? "bg-ai border-ai text-white"
+                : "text-muted bg-panel border-line hover:border-ai hover:text-ai"
+            )}
+          >
+            {it.icon}
+            {it.label}
+          </button>
+        ))}
+      </div>
+      {actions && <div className="flex items-center gap-1 shrink-0 ml-auto">{actions}</div>}
+    </div>
+  );
+}
+
 function Step1({ ao, onExport, exporting, onExportMatrix, exportingMatrix, onNext, onReanalyze }: {
   ao: AOEntry; onExport: () => void; exporting: boolean;
   onExportMatrix: () => void; exportingMatrix: boolean; onNext: () => void; onReanalyze: () => void;
 }) {
   const r = ao.scoringResult!;
+  const sectionTabs = getSectionTabs(r);
+  const [activeSection, setActiveSection] = useState(sectionTabs[0]?.id ?? "");
   return (
     <div className="space-y-4">
+      <QuickNav
+        items={sectionTabs}
+        active={activeSection}
+        onSelect={setActiveSection}
+        actions={
+          <>
+            <IconActionButton onClick={onExport} disabled={exporting} title="Exporter en Word">
+              {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+            </IconActionButton>
+            <IconActionButton onClick={onReanalyze} title="Refaire l'analyse (ignore le cache)">
+              <Play size={14} />
+            </IconActionButton>
+          </>
+        }
+      />
+      {/* Masquée à la demande utilisateur (27/07/2026) : composant conservé, non affiché.
       <MarketIdentityCard identity={r.market_identity} />
+      */}
 
+      {/* Masquée à la demande utilisateur (27/07/2026) : section conservée, non affichée.
       <SectionCard title="Résumé exécutif" icon={<FileText size={15} />} collapsible>
         <div className="prose prose-sm max-w-none text-text leading-relaxed">
           <ReactMarkdown remarkPlugins={[remarkGfm]}>{r.summary}</ReactMarkdown>
         </div>
       </SectionCard>
+      */}
 
+      {/* Masquée à la demande utilisateur (27/07/2026) : composant conservé, non affiché.
       <CalendarCard events={r.calendar} />
+      */}
 
-      {(r.key_elements?.length ?? 0) > 0 && (
-        <SectionCard title="Points clés identifiés" icon={<BarChart2 size={15} />} collapsible>
+      {activeSection === "sec-key-elements" && (r.key_elements?.length ?? 0) > 0 && (
+        <SectionCard title="Points clés identifiés" icon={<BarChart2 size={15} />}>
           <table className="w-full text-xs">
             <tbody className="divide-y divide-line">
               {r.key_elements.map((el, i) => (
@@ -1274,8 +1372,9 @@ function Step1({ ao, onExport, exporting, onExportMatrix, exportingMatrix, onNex
         </SectionCard>
       )}
 
-      <EvaluationModalitiesCard evaluation={r.evaluation_modalities} />
+      {activeSection === "sec-evaluation" && <EvaluationModalitiesCard evaluation={r.evaluation_modalities} />}
 
+      {/* Masquées à la demande utilisateur (27/07/2026) : sections conservées, non affichées.
       {(r.criteres_selection?.length ?? 0) > 0 && (
         <SectionCard title="Critères de sélection" icon={<ClipboardList size={15} />}>
           <BulletList items={r.criteres_selection} bulletColor="text-ai" />
@@ -1293,20 +1392,23 @@ function Step1({ ao, onExport, exporting, onExportMatrix, exportingMatrix, onNex
           <BulletList items={r.prerequis} bulletColor="text-muted" />
         </SectionCard>
       )}
+      */}
 
-      <RequiredProfilesCard profils={r.profils_demandes} />
+      {activeSection === "sec-profils" && <RequiredProfilesCard profils={r.profils_demandes} />}
 
-      {(r.profils_demandes?.length ?? 0) === 0 && (r.ressources_demandees?.length ?? 0) > 0 && (
+      {activeSection === "sec-ressources" && (r.profils_demandes?.length ?? 0) === 0 && (r.ressources_demandees?.length ?? 0) > 0 && (
         <SectionCard title="Ressources demandées" icon={<Users size={15} />}>
           <BulletList items={r.ressources_demandees} bulletColor="text-muted" />
         </SectionCard>
       )}
 
-      <EligibilityThresholdsCard seuils={r.seuils_eligibilite} />
+      {activeSection === "sec-seuils" && <EligibilityThresholdsCard seuils={r.seuils_eligibilite} />}
 
-      <FinancialDataCard data={r.donnees_financieres} />
+      {/* Masquée à la demande utilisateur (27/07/2026) : section conservée, non affichée.
+      {activeSection === "sec-financier" && <FinancialDataCard data={r.donnees_financieres} />}
+      */}
 
-      {(r.points_vigilance?.length ?? 0) > 0 && (
+      {activeSection === "sec-vigilance" && (r.points_vigilance?.length ?? 0) > 0 && (
         <SectionCard title="Points de vigilance" icon={<Eye size={15} />}>
           <WarningList items={r.points_vigilance} />
         </SectionCard>
@@ -1314,15 +1416,8 @@ function Step1({ ao, onExport, exporting, onExportMatrix, exportingMatrix, onNex
 
       <div className="flex items-center justify-between pt-1">
         <div className="flex items-center gap-2">
+          {/* Exporter en Word et Refaire l'analyse : déplacés en icônes au-dessus des onglets (27/07/2026). */}
           <button
-            onClick={onExport}
-            disabled={exporting}
-            className="flex items-center gap-2 px-4 py-2 bg-panel hover:bg-panel-2 text-text rounded-lg text-sm font-medium border border-line hover:border-line disabled:opacity-50 transition-colors"
-          >
-            {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-            Exporter en Word
-          </button>
-          {/* <button
             onClick={onExportMatrix}
             disabled={exportingMatrix}
             title="Matrice de conformité exhaustive (toutes les exigences, classées par domaine, avec leur référence source) — Excel"
@@ -1330,15 +1425,9 @@ function Step1({ ao, onExport, exporting, onExportMatrix, exportingMatrix, onNex
           >
             {exportingMatrix ? <Loader2 size={14} className="animate-spin" /> : <FileCheck size={14} />}
             Matrice de conformité
-          </button> */}
-          <button
-            onClick={onReanalyze}
-            title="Relancer une analyse fraîche de l'AO (ignore le cache)"
-            className="flex items-center gap-2 px-4 py-2 bg-panel hover:bg-panel-2 text-muted rounded-lg text-sm font-medium border border-line hover:border-ai hover:text-ai transition-colors"
-          >
-            <Play size={14} /> Refaire l&apos;analyse
           </button>
         </div>
+        {/* Masqué à la demande utilisateur (27/07/2026) : passage à l'étape suivante désactivé.
         <button
           onClick={onNext}
           className="flex items-center gap-2 px-5 py-2 bg-ai hover:brightness-95 text-white rounded-lg text-sm font-medium transition-colors"
@@ -1346,6 +1435,7 @@ function Step1({ ao, onExport, exporting, onExportMatrix, exportingMatrix, onNex
           Score & Décision
           <ArrowRight size={14} />
         </button>
+        */}
       </div>
     </div>
   );
@@ -1465,6 +1555,8 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
   exporting: boolean;
 }) {
   const r = ao.scoringResult!;
+  const sectionTabs = getScoreDecisionSectionTabs(r);
+  const [activeSection, setActiveSection] = useState(sectionTabs[0]?.id ?? "");
   const [previewDoc, setPreviewDoc] = useState<{ doc_id: string; filename: string } | null>(null);
 
   const docTypeLabel: Record<string, string> = {
@@ -1494,7 +1586,19 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
 
   return (
     <div className="space-y-4">
+      <QuickNav
+        items={sectionTabs}
+        active={activeSection}
+        onSelect={setActiveSection}
+        actions={
+          <IconActionButton onClick={onExport} disabled={exporting} title="Exporter le scoring">
+            {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
+          </IconActionButton>
+        }
+      />
+
       {/* Score principal */}
+      {activeSection === "sec2-score" && (
       <SectionCard title="Score de matching GED" icon={<Layers size={15} />}>
         <div className="flex items-center gap-8 flex-wrap">
           <div className="flex flex-col items-center gap-1">
@@ -1533,8 +1637,10 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
           </div>
         )}
       </SectionCard>
+      )}
 
       {/* Matching équipe — CVs depuis la GED */}
+      {activeSection === "sec2-equipe" && (
       <SectionCard
         title={`Équipe proposable (${teamMatches.length} CV${teamMatches.length !== 1 ? "s" : ""} matchés)`}
         icon={<Users size={15} className="text-muted" />}
@@ -1573,8 +1679,10 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
           </div>
         )}
       </SectionCard>
+      )}
 
       {/* Projets similaires — offres / ABE / PV recette */}
+      {activeSection === "sec2-projets" && (
       <SectionCard
         title={`Projets similaires dans la GED (${similarProjects.length})`}
         icon={<FileText size={15} className="text-ai" />}
@@ -1631,46 +1739,38 @@ function Step2({ ao, onUpdate, onValidate, validating, onExport, exporting }: {
           </div>
         )}
       </SectionCard>
+      )}
 
       {/* Grille d'évaluation décomposée */}
-      {(r.criteria_breakdown?.length ?? 0) > 0 && (
-        <SectionCard title="Grille d'évaluation détaillée" icon={<BarChart2 size={15} className="text-ai" />} collapsible>
+      {activeSection === "sec2-grille" && (r.criteria_breakdown?.length ?? 0) > 0 && (
+        <SectionCard title="Grille d'évaluation détaillée" icon={<BarChart2 size={15} className="text-ai" />}>
           <ScoreBreakdown criteria={r.criteria_breakdown!} />
         </SectionCard>
       )}
 
       {/* Préalables conditionnels — uniquement si CONDITIONAL */}
-      {r.recommendation === "CONDITIONAL" && (
+      {activeSection === "sec2-prealables" && r.recommendation === "CONDITIONAL" && (
         <SectionCard title="Préalables conditionnels" icon={<ClipboardList size={15} className="text-warn" />} className="border-warn/25">
           <PreconditionChecklist preconditions={r.preconditions ?? []} incomplete={r.preconditions_incomplete} />
         </SectionCard>
       )}
 
+      {activeSection === "sec2-forces-risques" && (
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <SectionCard title="Nos forces" icon={<CheckCircle size={15} />} className="border-good/25">
           <BulletList items={r.strengths} bulletColor="text-good" />
         </SectionCard>
-        <SectionCard title="Risques & mitigation" icon={<AlertTriangle size={15} />} className="border-bad/25" collapsible>
+        <SectionCard title="Risques & mitigation" icon={<AlertTriangle size={15} />} className="border-bad/25">
           <RiskList risks={r.risks} />
         </SectionCard>
       </div>
+      )}
 
-      {r.gaps_analysis && !r.gaps_analysis.startsWith("{") && !r.gaps_analysis.startsWith("```") && (
+      {activeSection === "sec2-ecarts" && r.gaps_analysis && !r.gaps_analysis.startsWith("{") && !r.gaps_analysis.startsWith("```") && (
         <SectionCard title="Analyse des écarts">
           <NumberedAnalysis text={r.gaps_analysis} />
         </SectionCard>
       )}
-
-      <div className="flex justify-end">
-        <button
-          onClick={onExport}
-          disabled={exporting}
-          className="flex items-center gap-2 px-4 py-2 bg-panel hover:bg-panel-2 text-text rounded-lg text-sm font-medium border border-line hover:border-line disabled:opacity-50 transition-colors"
-        >
-          {exporting ? <Loader2 size={14} className="animate-spin" /> : <Download size={14} />}
-          Exporter le scoring
-        </button>
-      </div>
 
       {!ao.decisionValidated ? (
         <SectionCard title="Ma décision commerciale" className="border-[#deded7] bg-[#ececee]/30">
@@ -1779,13 +1879,13 @@ function Step3({ ao, generatingStrategy, onValidate, onExport, exporting, onRege
       )}
 
       {(ao.bidStrategy.phases?.length ?? 0) > 0 && (
-        <SectionCard title="Plan de réponse en phases" icon={<ClipboardList size={15} />} collapsible>
+        <SectionCard title="Plan de réponse en phases" icon={<ClipboardList size={15} />}>
           <PhasesView phases={ao.bidStrategy.phases} />
         </SectionCard>
       )}
 
       {(ao.bidStrategy.appendices?.length ?? 0) > 0 && (
-        <SectionCard title="Pièces & annexes à fournir" icon={<FileText size={15} className="text-ai" />} collapsible>
+        <SectionCard title="Pièces & annexes à fournir" icon={<FileText size={15} className="text-ai" />}>
           <AppendixChecklist appendices={ao.bidStrategy.appendices} />
         </SectionCard>
       )}

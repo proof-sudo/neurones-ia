@@ -721,35 +721,40 @@ async def export_analysis(body: AnalysisExportRequest, request: Request):
         return str(section_num)
 
     # ── FICHE D'IDENTITÉ DU MARCHÉ ────────────────────────────────────────────
-    identity = scoring.market_identity
-    identity_rows = [
-        ("Type de marché", identity.type_marche),
-        ("Référence", identity.reference),
-        ("Autorité contractante", identity.autorite_contractante),
-        ("Durée du contrat", identity.duree_contrat),
-        ("Date de démarrage", identity.date_demarrage),
-        ("Deadline de soumission", identity.deadline_soumission),
-        ("Validité de l'offre", identity.validite_offre),
-        ("Périmètre géographique", identity.perimetre_geographique),
-        ("Éligibilité candidat", identity.eligibilite_candidat),
-    ]
-    identity_rows = [(lbl, val) for lbl, val in identity_rows if val and val.strip()]
-    if identity_rows:
-        h["section_title"]("Fiche d'identité du marché", num=_next_num())
-        conf_p = doc.add_paragraph()
-        conf_p.paragraph_format.space_after = Pt(4)
-        conf_r = conf_p.add_run(f"Fiabilité de l'extraction : {int(identity.confidence * 100)}%")
-        conf_r.italic = True; conf_r.font.size = Pt(9); conf_r.font.color.rgb = h["C_GRAY"]
-        h["cover_table"](identity_rows)
-        doc.add_paragraph("")
+    # Masquée à la demande utilisateur (27/07/2026) : code conservé, non écrite dans le Word.
+    if False:
+        identity = scoring.market_identity
+        identity_rows = [
+            ("Type de marché", identity.type_marche),
+            ("Référence", identity.reference),
+            ("Autorité contractante", identity.autorite_contractante),
+            ("Durée du contrat", identity.duree_contrat),
+            ("Date de démarrage", identity.date_demarrage),
+            ("Deadline de soumission", identity.deadline_soumission),
+            ("Validité de l'offre", identity.validite_offre),
+            ("Périmètre géographique", identity.perimetre_geographique),
+            ("Éligibilité candidat", identity.eligibilite_candidat),
+        ]
+        identity_rows = [(lbl, val) for lbl, val in identity_rows if val and val.strip()]
+        if identity_rows:
+            h["section_title"]("Fiche d'identité du marché", num=_next_num())
+            conf_p = doc.add_paragraph()
+            conf_p.paragraph_format.space_after = Pt(4)
+            conf_r = conf_p.add_run(f"Fiabilité de l'extraction : {int(identity.confidence * 100)}%")
+            conf_r.italic = True; conf_r.font.size = Pt(9); conf_r.font.color.rgb = h["C_GRAY"]
+            h["cover_table"](identity_rows)
+            doc.add_paragraph("")
 
     # ── RÉSUMÉ EXÉCUTIF ───────────────────────────────────────────────────────
-    h["section_title"]("Résumé exécutif", num=_next_num())
-    if scoring.summary:
-        h["body_para"](scoring.summary)
+    # Masquée à la demande utilisateur (27/07/2026) : code conservé, non écrite dans le Word.
+    if False:
+        h["section_title"]("Résumé exécutif", num=_next_num())
+        if scoring.summary:
+            h["body_para"](scoring.summary)
 
     # ── CALENDRIER DE L'AO ────────────────────────────────────────────────────
-    if scoring.calendar:
+    # Masquée à la demande utilisateur (27/07/2026) : code conservé, non écrite dans le Word.
+    if False and scoring.calendar:
         h["section_title"]("Calendrier de l'AO", num=_next_num())
         cal_t = doc.add_table(rows=1, cols=3)
         cal_t.style = "Table Grid"
@@ -964,10 +969,9 @@ async def export_analysis(body: AnalysisExportRequest, request: Request):
         doc.add_paragraph("")
 
     # ── SECTIONS DOSSIER ──────────────────────────────────────────────────────
+    # "Critères de sélection", "Besoins identifiés" et "Prérequis" masquées à la
+    # demande utilisateur (27/07/2026) : champs scoring.* conservés, non écrits dans le Word.
     sections = [
-        ("Critères de sélection", scoring.criteres_selection, h["C_BLUE"]),
-        ("Besoins identifiés", scoring.besoins, h["C_BLUE"]),
-        ("Prérequis", scoring.prerequis, h["C_NAVY"]),
         ("Ressources demandées", scoring.ressources_demandees, h["C_NAVY"]),
         ("Points de vigilance", scoring.points_vigilance, h["C_AMBER"]),
     ]
