@@ -303,50 +303,6 @@ class OpportunityModel(Base):
     synced_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
-class OpportunitySnapshotModel(Base):
-    """Photographie QUOTIDIENNE d'une opportunité (Lot 0, portage maquette Neurones
-    Intelligence) — jamais écrasée, contrairement à OpportunityModel qui ne reflète
-    que l'état courant. Odoo n'historise pas stage/probability/expected_revenue/
-    deadline en natif (confirmé en Phase 1 : accès à mail.tracking.value refusé) et
-    notre propre synchro écrase l'état précédent à chaque cycle — sans cette capture,
-    tout changement antérieur est perdu DÉFINITIVEMENT. Alimente le moteur M5
-    (scoring pipeline calibré sur fiabilité historique)."""
-    __tablename__ = "opportunity_snapshots"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    snapshot_date: Mapped[str] = mapped_column(String(10), index=True)  # "YYYY-MM-DD" (UTC)
-    opp_id: Mapped[str] = mapped_column(String, index=True)
-    odoo_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    client_name: Mapped[str] = mapped_column(String(255), default="")
-    stage: Mapped[str] = mapped_column(String(100), default="")
-    expected_revenue: Mapped[float] = mapped_column(Float, default=0.0)
-    probability: Mapped[float] = mapped_column(Float, default=0.0)
-    salesperson_name: Mapped[str] = mapped_column(String(255), default="")
-    deadline: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
-    captured_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-    __table_args__ = (Index("ix_opp_snapshot_date_opp", "snapshot_date", "opp_id"),)
-
-
-class SaleOrderSnapshotModel(Base):
-    """Photographie QUOTIDIENNE du carnet de commandes (Lot 0) — même rationale que
-    OpportunitySnapshotModel : `state`/`amount` sont réassignés sans trace de l'état
-    précédent à chaque synchro (confirmé Phase 0). Alimente le moteur M1 (rupture de
-    rythme) pour la dimension "évolution du carnet dans le temps"."""
-    __tablename__ = "sale_order_snapshots"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    snapshot_date: Mapped[str] = mapped_column(String(10), index=True)
-    order_id: Mapped[str] = mapped_column(String, index=True)
-    odoo_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    client_name: Mapped[str] = mapped_column(String(255), default="")
-    state: Mapped[str] = mapped_column(String(50), default="")
-    amount: Mapped[float] = mapped_column(Float, default=0.0)
-    captured_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-    __table_args__ = (Index("ix_so_snapshot_date_order", "snapshot_date", "order_id"),)
-
-
 class QuarantineModel(Base):
     """Fichiers rejetés par le QualityValidator — en attente de correction manuelle."""
     __tablename__ = "quarantine"

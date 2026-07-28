@@ -100,21 +100,10 @@ def build_scheduler(
         max_instances=1,
     )
 
-    scheduler.add_job(
-        _daily_snapshot_job,
-        trigger=CronTrigger(hour=1, minute=0),
-        id="daily_snapshot",
-        name="Snapshot quotidien pipeline + carnet de commandes (Lot 0 portage maquette)",
-        replace_existing=True,
-        misfire_grace_time=600,
-        coalesce=True,
-        max_instances=1,
-    )
-
     logger.info(
         "Scheduler configuré : sync Odoo toutes les %d min (coalesce, max 1), scan GED à 2h00, "
         "veille AO toutes les 6h, purge quarantaine à 3h30 (rétention %d j), briefing quotidien à 0h00, "
-        "purge dossiers présale expirés à 4h00, snapshot quotidien pipeline/carnet à 1h00",
+        "purge dossiers présale expirés à 4h00",
         sync_interval, settings.quarantine_retention_days,
     )
     return scheduler
@@ -173,10 +162,3 @@ async def _presales_expiry_purge_job():
     """Supprime (base + fichier) les dossiers présale dont l'échéance est dépassée."""
     from modules.uc10_presales import dossier_store
     await dossier_store.purge_expired()
-
-
-async def _daily_snapshot_job():
-    """Lot 0 (portage maquette) : capture l'état courant du pipeline et du carnet de
-    commandes avant qu'il ne soit écrasé par le prochain cycle de synchro Odoo."""
-    from jobs.snapshot_job import run_daily_snapshot
-    await run_daily_snapshot()
